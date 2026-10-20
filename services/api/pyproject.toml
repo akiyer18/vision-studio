@@ -4,7 +4,13 @@ version = "0.1.0"
 description = "Vision Studio API."
 requires-python = ">=3.12"
 dependencies = [
+    "agent",
     "contracts",
+    "fastapi>=0.115",
+    "librosa>=0.10",
+    "numpy>=2",
+    "python-multipart>=0.0.9",
+    "uvicorn>=0.32",
 ]
 
 [build-system]
@@ -12,4 +18,5 @@ requires = ["uv_build>=0.8.4,<0.9.0"]
 build-backend = "uv_build"
 
 [tool.uv.sources]
+agent = { workspace = true }
 contracts = { workspace = true }
