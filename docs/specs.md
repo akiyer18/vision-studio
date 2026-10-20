@@ -6,7 +6,7 @@ If something is not covered here or in .cursor/rules, ask before deciding.
 ## 1. Contracts (packages/contracts)
 
 ```
-SlotSource      = "you" | "detected" | "guessed"
+SlotSource      = "you" | "detected" | "guessed" | "reference"
 OutputChoice    = "drums" | "chords" | "bass" | "melody" | "texture" | "all_layers" | "full_mix"
 AnswerAction    = "answer" | "you_decide" | "skip" | "skip_all"
 InputType       = "text_only" | "hum" | "vocal" | "instrument_loop" | "drum_loop" | "full_track" | "midi"
@@ -16,10 +16,10 @@ TraceStep       { step: string, detail: string }            // shown in the agen
 AudioFeatures   { input_type: InputType, key?: string, mode?: string, bpm?: number,
                   chords?: string[], instruments?: string[], confidence: number }
 
-SongBrief       { slots: Record<SlotName, SlotValue>, output: OutputChoice[],
-                  questions_asked: number, skipped: SlotName[] }
+SongBrief       { slots: Partial<Record<SlotName, SlotValue>>, output: OutputChoice[],
+                  questions_asked: integer, skipped: SlotName[] }
 
-Question        { slot: SlotName, text: string, options: string[], index: number, max: number }
+Question        { slot: SlotName, text: string, options: string[], index: integer, max: integer }
 
 TurnRequest     { session_id: string, text?: string, audio_features?: AudioFeatures,
                   answer?: { slot: SlotName, action: AnswerAction, value?: string },
@@ -32,12 +32,13 @@ TurnResponse    { status: "question" | "ready", question?: Question, brief: Song
                   prompts?: LayerPrompt[], progression?: { roman: string[], chords: string[] },
                   trace: TraceStep[] }
 
-RenderJob       { session_id, layer, prompt, negative, bpm, bars (default 8), seed, variant,
-                  init_audio?, noise?, lora? }
-RenderResult    { layer, variant, path, seconds, bpm, detected_key?, detected_bpm? }
+RenderJob       { session_id, layer, prompt, negative, bpm: integer, bars: integer (default 8),
+                  seed: integer, variant: integer, init_audio?, noise?: number, lora? }
+RenderResult    { layer, variant: integer, path, seconds, bpm: integer, detected_key?, detected_bpm?: number }
 ```
 
 Semantics:
+- An absent SongBrief slot means that slot is not yet known.
 - "you_decide" fills the slot with the default, source "guessed", reason from the default rule.
 - "skip" does the same and prefixes the reason with "skipped: ".
 - "skip_all" fills every remaining slot with defaults and returns status "ready".

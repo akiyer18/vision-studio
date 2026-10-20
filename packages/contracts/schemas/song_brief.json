@@ -8,7 +8,6 @@
     "slots": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["output", "mood", "energy", "world", "key", "style", "palette", "structure", "must_keep"],
       "properties": {
         "output": { "$ref": "slot_value.json" },
         "mood": { "$ref": "slot_value.json" },
@@ -25,7 +24,7 @@
       "type": "array",
       "items": { "$ref": "output_choice.json" }
     },
-    "questions_asked": { "type": "number" },
+    "questions_asked": { "type": "integer" },
     "skipped": {
       "type": "array",
       "items": { "$ref": "slot_name.json" }

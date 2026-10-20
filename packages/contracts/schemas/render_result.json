@@ -6,10 +6,10 @@
   "required": ["layer", "variant", "path", "seconds", "bpm"],
   "properties": {
     "layer": { "type": "string" },
-    "variant": { "type": "number" },
+    "variant": { "type": "integer" },
     "path": { "type": "string" },
     "seconds": { "type": "number" },
-    "bpm": { "type": "number" },
+    "bpm": { "type": "integer" },
     "detected_key": { "type": "string" },
     "detected_bpm": { "type": "number" }
   }

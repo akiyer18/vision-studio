@@ -14,10 +14,10 @@ class RenderJob(BaseModel):
     layer: str
     prompt: str
     negative: str
-    bpm: float
-    bars: float = 8
-    seed: float
-    variant: float
+    bpm: int
+    bars: int = 8
+    seed: int
+    variant: int
     init_audio: str | None = Field(
         None,
         description="Path to initial audio, when the renderer should start from a file.",

@@ -51,3 +51,20 @@ def test_ready_turn_response_validates() -> None:
     assert response.prompts[0].seeds == (1, 2, 3)
     assert api.TurnResponse is TurnResponse
     assert agent.TurnResponse is TurnResponse
+
+
+def test_absent_slot_is_not_yet_known() -> None:
+    response = TurnResponse.model_validate(
+        {
+            "status": "ready",
+            "brief": {
+                "slots": {},
+                "output": [],
+                "questions_asked": 0,
+                "skipped": [],
+            },
+            "trace": [],
+        }
+    )
+
+    assert response.brief.slots.mood is None

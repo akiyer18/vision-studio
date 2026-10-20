@@ -13,6 +13,8 @@ class SlotValue(BaseModel):
         extra="forbid",
     )
     value: str
-    source: Literal["you", "detected", "guessed"] = Field(..., title="SlotSource")
+    source: Literal["you", "detected", "guessed", "reference"] = Field(
+        ..., title="SlotSource"
+    )
     reason: str
     confidence: float = Field(..., ge=0.0, le=1.0)

@@ -11,7 +11,7 @@
       "type": "array",
       "items": { "type": "string" }
     },
-    "index": { "type": "number" },
-    "max": { "type": "number" }
+    "index": { "type": "integer" },
+    "max": { "type": "integer" }
   }
 }

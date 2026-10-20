@@ -14,15 +14,15 @@ class Slots(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    output: SlotValue
-    mood: SlotValue
-    energy: SlotValue
-    world: SlotValue
-    key: SlotValue
-    style: SlotValue
-    palette: SlotValue
-    structure: SlotValue
-    must_keep: SlotValue
+    output: SlotValue | None = None
+    mood: SlotValue | None = None
+    energy: SlotValue | None = None
+    world: SlotValue | None = None
+    key: SlotValue | None = None
+    style: SlotValue | None = None
+    palette: SlotValue | None = None
+    structure: SlotValue | None = None
+    must_keep: SlotValue | None = None
 
 
 class SongBrief(BaseModel):
@@ -31,5 +31,5 @@ class SongBrief(BaseModel):
     )
     slots: Slots
     output: list[Literal["drums", "chords", "bass", "melody", "texture", "all_layers", "full_mix"]]
-    questions_asked: float
+    questions_asked: int
     skipped: list[Literal["output", "mood", "energy", "world", "key", "style", "palette", "structure", "must_keep"]]

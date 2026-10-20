@@ -17,5 +17,5 @@ class Question(BaseModel):
     )
     text: str
     options: list[str]
-    index: float
-    max: float
+    index: int
+    max: int

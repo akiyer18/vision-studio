@@ -9,10 +9,10 @@
     "layer": { "type": "string" },
     "prompt": { "type": "string" },
     "negative": { "type": "string" },
-    "bpm": { "type": "number" },
-    "bars": { "type": "number", "default": 8 },
-    "seed": { "type": "number" },
-    "variant": { "type": "number" },
+    "bpm": { "type": "integer" },
+    "bars": { "type": "integer", "default": 8 },
+    "seed": { "type": "integer" },
+    "variant": { "type": "integer" },
     "init_audio": {
       "type": "string",
       "description": "Path to initial audio, when the renderer should start from a file."

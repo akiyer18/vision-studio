@@ -6,15 +6,15 @@ import type { SlotValue } from "./slot_value.ts";
 
 export interface SongBrief {
   slots: {
-    output: SlotValue;
-    mood: SlotValue;
-    energy: SlotValue;
-    world: SlotValue;
-    key: SlotValue;
-    style: SlotValue;
-    palette: SlotValue;
-    structure: SlotValue;
-    must_keep: SlotValue;
+    output?: SlotValue;
+    mood?: SlotValue;
+    energy?: SlotValue;
+    world?: SlotValue;
+    key?: SlotValue;
+    style?: SlotValue;
+    palette?: SlotValue;
+    structure?: SlotValue;
+    must_keep?: SlotValue;
   };
   output: OutputChoice[];
   questions_asked: number;

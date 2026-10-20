@@ -11,9 +11,9 @@ class RenderResult(BaseModel):
         extra="forbid",
     )
     layer: str
-    variant: float
+    variant: int
     path: str
     seconds: float
-    bpm: float
+    bpm: int
     detected_key: str | None = None
     detected_bpm: float | None = None

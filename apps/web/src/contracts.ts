@@ -1,3 +1,4 @@
+import type { SongBrief } from "./types/song_brief.ts";
 import type { TurnResponse } from "./types/turn_response.ts";
 
 function slot(value: string) {
@@ -38,3 +39,10 @@ export const readyTurn = {
   ],
   trace: [{ step: "defaults", detail: "filled from the peaceful preset" }],
 } satisfies TurnResponse;
+
+export const unknownSlots = {
+  slots: {},
+  output: [],
+  questions_asked: 0,
+  skipped: [],
+} satisfies SongBrief;

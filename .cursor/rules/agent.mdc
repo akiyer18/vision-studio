@@ -12,5 +12,5 @@ Slot priority: output, mood, energy, sonic world, key, style, palette, structure
 
 - Ask a slot only if impact times uncertainty is above the threshold.
 - At most 5 questions.
-- Every value records source (`you`, `detected`, `guessed`) and a one-line reason.
+- Every value records source (`you`, `detected`, `guessed`, `reference`) and a one-line reason.
 - Write tests for this logic.
