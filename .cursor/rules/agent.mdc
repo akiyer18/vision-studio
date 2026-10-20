@@ -1,0 +1,16 @@
+---
+description: Song agent asking rules, slot priority, and value provenance
+globs: services/agent/**/*
+alwaysApply: false
+---
+
+# Agent
+
+The asking rule and defaults are plain code, not LLM decisions.
+
+Slot priority: output, mood, energy, sonic world, key, style, palette, structure, must keep.
+
+- Ask a slot only if impact times uncertainty is above the threshold.
+- At most 5 questions.
+- Every value records source (`you`, `detected`, `guessed`) and a one-line reason.
+- Write tests for this logic.

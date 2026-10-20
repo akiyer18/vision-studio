@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TurnRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["session_id"],
+  "properties": {
+    "session_id": { "type": "string" },
+    "text": { "type": "string" },
+    "audio_features": { "$ref": "audio_features.json" },
+    "answer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slot", "action"],
+      "properties": {
+        "slot": { "$ref": "slot_name.json" },
+        "action": { "$ref": "answer_action.json" },
+        "value": { "type": "string" }
+      }
+    },
+    "output": {
+      "type": "array",
+      "items": { "$ref": "output_choice.json" }
+    },
+    "overrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "output": { "type": "string" },
+        "mood": { "type": "string" },
+        "energy": { "type": "string" },
+        "world": { "type": "string" },
+        "key": { "type": "string" },
+        "style": { "type": "string" },
+        "palette": { "type": "string" },
+        "structure": { "type": "string" },
+        "must_keep": { "type": "string" }
+      }
+    }
+  }
+}

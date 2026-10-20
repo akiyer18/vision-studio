@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TurnResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "brief", "trace"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["question", "ready"]
+    },
+    "question": { "$ref": "question.json" },
+    "brief": { "$ref": "song_brief.json" },
+    "prompts": {
+      "type": "array",
+      "items": { "$ref": "layer_prompt.json" }
+    },
+    "progression": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["roman", "chords"],
+      "properties": {
+        "roman": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "chords": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "trace": {
+      "type": "array",
+      "items": { "$ref": "trace_step.json" }
+    }
+  }
+}

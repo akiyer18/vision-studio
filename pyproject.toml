@@ -1,0 +1,29 @@
+[project]
+name = "vision-studio"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv.workspace]
+members = [
+    "packages/contracts",
+    "services/api",
+    "services/agent",
+]
+
+[tool.uv.sources]
+contracts = { workspace = true }
+api = { workspace = true }
+agent = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "agent",
+    "api",
+    "contracts",
+    "datamodel-code-generator>=0.86.0",
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["services"]

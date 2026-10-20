@@ -1,0 +1,10 @@
+---
+description: How to work in Vision Studio — ask first, small commits, agent tests
+alwaysApply: true
+---
+
+# Working style
+
+- Ask before assuming anything not stated in the project rules.
+- Small commits per feature. Commit only when asked.
+- Write tests for agent logic.

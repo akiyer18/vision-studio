@@ -1,0 +1,19 @@
+.PHONY: dev test contracts
+
+# The web app is served on port 5173. The API on port 8000 starts once it exists.
+dev:
+	@set -e; \
+	if [ -f services/api/src/api/main.py ]; then \
+		uv run --package api uvicorn api.main:app --host 127.0.0.1 --port 8000 & \
+		api_pid=$$!; \
+		trap 'kill $$api_pid 2>/dev/null' EXIT INT TERM; \
+	fi; \
+	npm --prefix apps/web run dev
+
+test:
+	uv run pytest
+	npm --prefix apps/web run typecheck
+	npm --prefix apps/web run lint
+
+contracts:
+	node packages/contracts/generate.mjs

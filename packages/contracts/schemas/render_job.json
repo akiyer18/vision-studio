@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RenderJob",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["session_id", "layer", "prompt", "negative", "bpm", "seed", "variant"],
+  "properties": {
+    "session_id": { "type": "string" },
+    "layer": { "type": "string" },
+    "prompt": { "type": "string" },
+    "negative": { "type": "string" },
+    "bpm": { "type": "number" },
+    "bars": { "type": "number", "default": 8 },
+    "seed": { "type": "number" },
+    "variant": { "type": "number" },
+    "init_audio": {
+      "type": "string",
+      "description": "Path to initial audio, when the renderer should start from a file."
+    },
+    "noise": {
+      "type": "number",
+      "description": "Noise amount for this render, when set."
+    },
+    "lora": {
+      "type": "string",
+      "description": "LoRA name, when set."
+    }
+  }
+}

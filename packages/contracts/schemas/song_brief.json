@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SongBrief",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["slots", "output", "questions_asked", "skipped"],
+  "properties": {
+    "slots": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["output", "mood", "energy", "world", "key", "style", "palette", "structure", "must_keep"],
+      "properties": {
+        "output": { "$ref": "slot_value.json" },
+        "mood": { "$ref": "slot_value.json" },
+        "energy": { "$ref": "slot_value.json" },
+        "world": { "$ref": "slot_value.json" },
+        "key": { "$ref": "slot_value.json" },
+        "style": { "$ref": "slot_value.json" },
+        "palette": { "$ref": "slot_value.json" },
+        "structure": { "$ref": "slot_value.json" },
+        "must_keep": { "$ref": "slot_value.json" }
+      }
+    },
+    "output": {
+      "type": "array",
+      "items": { "$ref": "output_choice.json" }
+    },
+    "questions_asked": { "type": "number" },
+    "skipped": {
+      "type": "array",
+      "items": { "$ref": "slot_name.json" }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OutputChoice",
+  "type": "string",
+  "enum": ["drums", "chords", "bass", "melody", "texture", "all_layers", "full_mix"]
+}

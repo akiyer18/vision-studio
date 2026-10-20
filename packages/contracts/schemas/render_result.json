@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RenderResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["layer", "variant", "path", "seconds", "bpm"],
+  "properties": {
+    "layer": { "type": "string" },
+    "variant": { "type": "number" },
+    "path": { "type": "string" },
+    "seconds": { "type": "number" },
+    "bpm": { "type": "number" },
+    "detected_key": { "type": "string" },
+    "detected_bpm": { "type": "number" }
+  }
+}

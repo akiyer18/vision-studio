@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Question",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["slot", "text", "options", "index", "max"],
+  "properties": {
+    "slot": { "$ref": "slot_name.json" },
+    "text": { "type": "string" },
+    "options": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "index": { "type": "number" },
+    "max": { "type": "number" }
+  }
+}

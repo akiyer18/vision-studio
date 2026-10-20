@@ -1,0 +1,16 @@
+---
+description: Vision Studio dark-glass visual system for the web app
+globs: apps/web/**/*
+alwaysApply: false
+---
+
+# Design
+
+Dark glass: near-black background with a slow blurred warm gradient, frosted panels, 16px radius, high-contrast text.
+
+- Accent amber for user actions.
+- Violet for agent elements.
+- Monospace for the agent trace.
+- No text on busy images.
+- Accessible contrast.
+- Smooth but subtle motion.

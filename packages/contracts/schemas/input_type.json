@@ -1,0 +1,6 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "InputType",
+  "type": "string",
+  "enum": ["text_only", "hum", "vocal", "instrument_loop", "drum_loop", "full_track", "midi"]
+}

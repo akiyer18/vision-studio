@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LayerPrompt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["layer", "prompt", "negative", "seeds", "kb_sources"],
+  "properties": {
+    "layer": { "type": "string" },
+    "prompt": { "type": "string" },
+    "negative": { "type": "string" },
+    "seeds": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": [{ "type": "number" }, { "type": "number" }, { "type": "number" }],
+      "additionalItems": false
+    },
+    "kb_sources": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

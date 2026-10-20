@@ -1,0 +1,12 @@
+---
+description: Vision Studio repo layout, stacks, and shared contracts
+alwaysApply: true
+---
+
+# Architecture
+
+- `apps/web`: React, Vite, TypeScript, Tailwind, framer-motion, wavesurfer.js
+- `services/api`: FastAPI, Python 3.12, managed with uv
+- `services/agent`: the song agent. Providers: MockProvider now, BedrockProvider later. Deployed to AgentCore later.
+- `packages/contracts`: one JSON Schema source for SongBrief, Slot, Question, TurnRequest, TurnResponse, and RenderJob. Generate TypeScript types and Pydantic models from that schema.
+- `kb`: knowledge base documents (producer notes, sonic worlds, presets, prompt examples)
