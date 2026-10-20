@@ -1,1 +1,74 @@
 @import "tailwindcss";
+@import "@fontsource/instrument-sans/latin-400.css";
+@import "@fontsource/instrument-sans/latin-500.css";
+@import "@fontsource/instrument-serif/latin-400.css";
+@import "@fontsource/jetbrains-mono/latin-400.css";
+
+:root {
+  --studio-night: #16131a;
+  --walnut-glass: rgba(242, 233, 220, 0.06);
+  --walnut-line: rgba(242, 233, 220, 0.1);
+  --tape-cream: #f2e9dc;
+  --dust: #a89f95;
+  --vu-amber: #f2a541;
+  --signal-violet: #9b8cff;
+  --clip-red: #f0624d;
+  --chip-radius: 6px;
+  --button-radius: 10px;
+  --panel-radius: 16px;
+  color-scheme: dark;
+}
+
+@theme {
+  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Instrument Serif", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --breakpoint-desk: 900px;
+}
+
+@theme inline {
+  --color-studio-night: var(--studio-night);
+  --color-walnut-glass: var(--walnut-glass);
+  --color-walnut-line: var(--walnut-line);
+  --color-tape-cream: var(--tape-cream);
+  --color-dust: var(--dust);
+  --color-vu-amber: var(--vu-amber);
+  --color-signal-violet: var(--signal-violet);
+  --color-clip-red: var(--clip-red);
+  --radius-chip: var(--chip-radius);
+  --radius-button: var(--button-radius);
+  --radius-panel: var(--panel-radius);
+}
+
+body {
+  margin: 0;
+  min-height: 100svh;
+  background: var(--studio-night);
+  color: var(--tape-cream);
+  font-family: var(--font-sans);
+}
+
+@keyframes drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(1.5rem, -2rem, 0);
+  }
+}
+
+.drift {
+  animation: drift 36s ease-in-out infinite alternate;
+}
+
+.vu-fill {
+  transition: height 700ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drift,
+  .vu-fill {
+    animation: none;
+    transition: none;
+  }
+}

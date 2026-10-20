@@ -1,7 +1,13 @@
+import { Shell } from "./components/Shell.tsx"
+import { StudioGlow } from "./components/StudioGlow.tsx"
+import { Styleguide } from "./components/Styleguide.tsx"
+
 export default function App() {
+  const route = window.location.pathname.replace(/\/+$/, "") || "/"
   return (
-    <main className="min-h-svh bg-[#16131A] text-[#F2E9DC]">
-      <h1 className="p-8 text-2xl">Vision Studio</h1>
-    </main>
+    <>
+      <StudioGlow />
+      <div className="relative z-10">{route === "/styleguide" ? <Styleguide /> : <Shell />}</div>
+    </>
   )
 }
