@@ -78,10 +78,10 @@ def default_slot(slot: str, mood: str, *, audio: bool) -> SlotValue:
         return _guess("8 bars", "8 bars is the default length", 0.3)
     if slot == "must_keep":
         if audio:
-            return _guess("everything", "Nothing was marked, so the whole reference stays", 0.3)
+            return _guess("everything", "Nothing was marked, so the whole recording stays", 0.3)
         return _guess("nothing", "There is no audio to keep", 0.3)
     if slot == "output":
-        return _guess("full song", "Full song is the default output")
+        return _guess("all layers separately", "All layers separately is the default output")
     raise KeyError(slot)
 
 

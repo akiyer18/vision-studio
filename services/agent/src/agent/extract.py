@@ -86,13 +86,6 @@ def extract_audio(features: AudioFeatures) -> dict[str, SlotValue]:
             reason="Detected from the audio",
             confidence=features.confidence,
         )
-    if features.input_type == "full_track":
-        found["style"] = SlotValue(
-            value="full track",
-            source="reference",
-            reason="A full track was given as the reference",
-            confidence=features.confidence,
-        )
     return found
 
 

@@ -9,6 +9,7 @@ export interface RenderJob {
   bars?: number;
   seed: number;
   variant: number;
+  take?: number;
   /**
    * Path to initial audio, when the renderer should start from a file.
    */

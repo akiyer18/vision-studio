@@ -63,6 +63,7 @@ def compile_prompts(
     world: str,
     key: str,
     bpm: int,
+    take: int = 1,
 ) -> list[LayerPrompt]:
     mood_words = MOOD_WORDS[mood]
     energy_words = ENERGY_WORDS[energy]
@@ -85,7 +86,7 @@ def compile_prompts(
                 layer=layer,
                 prompt=prompt,
                 negative=negative,
-                seeds=_seeds(layer, mood, world, key, bpm),
+                seeds=seeds_for(layer, mood, world, key, bpm, take),
                 kb_sources=sources,
             )
         )
@@ -109,6 +110,7 @@ def _negative(layer: str) -> str:
     return ", ".join([*others, "vocals"])
 
 
-def _seeds(layer: str, mood: str, world: str, key: str, bpm: int) -> tuple[float, float, float]:
-    digest = hashlib.sha256(f"{layer}|{mood}|{world}|{key}|{bpm}".encode()).digest()
+def seeds_for(layer: str, mood: str, world: str, key: str, bpm: int, take: int = 1) -> tuple[float, float, float]:
+    """Hash of the layer and brief, plus the take. Take 1 stays reproducible."""
+    digest = hashlib.sha256(f"{layer}|{mood}|{world}|{key}|{bpm}|{take}".encode()).digest()
     return tuple(float(int.from_bytes(digest[index * 4 : index * 4 + 4], "big") % 1_000_000) for index in range(3))

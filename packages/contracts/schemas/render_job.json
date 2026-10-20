@@ -13,6 +13,7 @@
     "bars": { "type": "integer", "default": 8 },
     "seed": { "type": "integer" },
     "variant": { "type": "integer" },
+    "take": { "type": "integer", "default": 1 },
     "init_audio": {
       "type": "string",
       "description": "Path to initial audio, when the renderer should start from a file."

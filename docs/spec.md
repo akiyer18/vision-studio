@@ -33,12 +33,13 @@ TurnResponse    { status: "question" | "ready", question?: Question, brief: Song
                   trace: TraceStep[] }
 
 RenderJob       { session_id, layer, prompt, negative, bpm: integer, bars: integer (default 8),
-                  seed: integer, variant: integer, init_audio?, noise?: number, lora? }
+                  seed: integer, variant: integer, take: integer (default 1), init_audio?, noise?: number, lora? }
 RenderResult    { layer, variant: integer, path, seconds, bpm: integer, detected_key?, detected_bpm?: number }
 ```
 
 Semantics:
 - An absent SongBrief slot means that slot is not yet known.
+- Source "detected" is for values read from uploaded audio, including a full track. Source "reference" is reserved for a song looked up by name later.
 - "you_decide" fills the slot with the default, source "guessed", reason from the default rule.
 - "skip" does the same and prefixes the reason with "skipped: ".
 - "skip_all" fills every remaining slot with defaults and returns status "ready".
@@ -61,6 +62,8 @@ Semantics:
 Asking rule: score = impact x (1 - confidence). Ask the highest score above 0.35. Max 5 questions.
 Tempo is never asked. It is detected from audio or derived (section 3).
 First question when the input is almost empty: "What is this song about?" (free text, then re run extraction).
+Almost empty means no audio and no MIDI, and the text is blank or a single word that matches no keyword.
+The question is filed under the mood slot, because a question has to name a slot. Answering major or minor on the key question keeps the preset root and changes the mode. "not sure" uses the preset key.
 
 ## 3. Defaults and presets
 
@@ -72,8 +75,13 @@ First question when the input is almost empty: "What is this song about?" (free 
 | tense | steady | dark and electronic | E minor (Phrygian colour) | 110 | i bII |
 
 Tempo derivation when not detected: slow and breathing 76, steady 96, make people move 122,
-then nudge toward the mood preset BPM. Every default carries a one line reason, for example
-"76 BPM because slow tempos read as sad". Mood with no signal defaults to peaceful.
+then nudge halfway toward the mood preset BPM: round((energy BPM + preset BPM) / 2).
+When those two BPMs already agree and the mood is longing, the reason is
+"76 BPM because slow tempos read as sad". Every default carries a one line reason.
+Mood with no signal defaults to peaceful. Energy, world, and key then follow that preset.
+Output defaults to all_layers ("all layers separately"). full_mix is used only when chosen.
+Other empty slots: style "no reference", palette "no preference", structure "8 bars",
+must_keep "everything" when audio was uploaded and "nothing" otherwise.
 
 Mock text extraction keywords (MockProvider only, replaced by Bedrock later):
 - longing: miss, lonely, sad, rain, lost, heart, night drive
@@ -103,7 +111,9 @@ Energy words: slow "gentle dynamics, slow build"; steady "steady groove"; high "
 | dark and electronic | tight electronic kit, deep kick, crisp hats | dark analog synth pad chords | distorted sub bass | detuned saw lead | metallic hits and cold noise sweeps | dark synths, deep kick, distorted sub and cold reverb |
 | bright and danceable | four on the floor kick, open hats, claps | bright plucked synth chords | punchy synth bass | catchy vocal chop style synth lead | white noise risers and sparkles | bright plucks, punchy kick and synth bass, clean modern production |
 
-Each layer gets three seeds. kb_sources lists the documents used (in mock mode: the preset and world names).
+Each layer gets three seeds. The base is a hash of layer, mood, world, key, and BPM, plus RenderJob.take.
+Take 1 is the default and stays reproducible. A later take changes the seeds.
+kb_sources lists the documents used (in mock mode: the preset and world names).
 
 ## 5. Theory engine
 

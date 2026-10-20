@@ -196,7 +196,7 @@ def _use_default(session: Session, slot: str, *, mark_skipped: bool) -> None:
         if slot not in session.skipped:
             session.skipped.append(slot)
     if slot == "output":
-        _set_output(session, ["full_mix"], value.source, value.reason, value.confidence)
+        _set_output(session, ["all_layers"], value.source, value.reason, value.confidence)
     else:
         session.slots[slot] = value
     session.note("default", f"{slot}: {value.value} ({value.reason})")

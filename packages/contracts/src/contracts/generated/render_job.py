@@ -18,6 +18,7 @@ class RenderJob(BaseModel):
     bars: int = 8
     seed: int
     variant: int
+    take: int = 1
     init_audio: str | None = Field(
         None,
         description="Path to initial audio, when the renderer should start from a file.",

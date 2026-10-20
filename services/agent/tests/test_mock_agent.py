@@ -137,10 +137,10 @@ def test_detected_audio_features_then_skip_all() -> None:
     assert ready.status == "ready"
     assert ready.question is None
     assert ready.prompts is not None
-    assert ready.prompts[0].prompt == (
-        "TrackType: Music, felt piano, brushed drums and deep sub bass, warm tape production "
-        "instrumental in D minor, calm, tender, soft, gentle dynamics, slow build, 90 BPM"
-    )
+    assert [prompt.layer for prompt in ready.prompts] == ["drums", "chords", "bass", "melody", "texture"]
+    assert "90 BPM" in ready.prompts[0].prompt
+    assert "in D minor" in ready.prompts[1].prompt
+    assert "90 BPM" in ready.prompts[1].prompt
     assert ready.brief.slots.key is not None
     assert ready.brief.slots.key.source == "detected"
     assert ready.progression is not None
@@ -148,10 +148,10 @@ def test_detected_audio_features_then_skip_all() -> None:
     assert ready.progression.chords == ["Dmaj7", "Gmaj7"]
 
 
-def test_full_track_marks_style_as_reference() -> None:
+def test_full_track_values_are_detected() -> None:
     response = run_turn(
         request(
-            "reference",
+            "full-track",
             audio_features=AudioFeatures(
                 input_type="full_track",
                 key="A",
@@ -162,10 +162,7 @@ def test_full_track_marks_style_as_reference() -> None:
         )
     )
 
-    style = response.brief.slots.style
-    assert style is not None
-    assert style.value == "full track"
-    assert style.source == "reference"
+    assert response.brief.slots.style is None
     assert response.brief.slots.key is not None
     assert response.brief.slots.key.value == "A minor"
     assert response.brief.slots.key.source == "detected"
@@ -181,12 +178,16 @@ def test_skip_all_on_the_first_question_is_ready_with_prompts() -> None:
     assert ready.status == "ready"
     assert ready.question is None
     assert ready.prompts is not None
-    assert len(ready.prompts) == 1
+    assert [prompt.layer for prompt in ready.prompts] == ["drums", "chords", "bass", "melody", "texture"]
     assert ready.prompts[0].prompt == (
-        "TrackType: Music, felt piano, brushed drums and deep sub bass, warm tape production "
-        "instrumental in C major, calm, tender, soft, gentle dynamics, slow build, 74 BPM"
+        "TrackType: Instrument, soft brushed drum kit, sparse lazy groove, "
+        "calm, tender, soft, gentle dynamics, slow build, 74 BPM"
     )
-    assert ready.prompts[0].negative == "vocals"
+    assert ready.prompts[1].prompt == (
+        "TrackType: Instrument, warm felt piano chords with soft strings in C major, "
+        "calm, tender, soft, gentle dynamics, slow build, 74 BPM"
+    )
+    assert ready.prompts[0].negative == "chords, bass, melody, texture, vocals"
     assert ready.prompts[0].kb_sources == ["peaceful", "warm and intimate"]
     assert len(ready.prompts[0].seeds) == 3
     assert ready.brief.questions_asked == 1
@@ -211,7 +212,7 @@ def test_skip_all_without_a_prior_question_is_ready() -> None:
 
     assert ready.status == "ready"
     assert ready.prompts is not None
-    assert ready.prompts[0].layer == "full_mix"
+    assert [prompt.layer for prompt in ready.prompts] == ["drums", "chords", "bass", "melody", "texture"]
 
 
 def test_full_brief_asks_nothing() -> None:
@@ -254,9 +255,9 @@ def test_you_decide_and_skip_follow_the_default_rules() -> None:
     decided = run_turn(request("decide", answer={"slot": "output", "action": "you_decide"}))
     output = decided.brief.slots.output
     assert output is not None
-    assert output.value == "full song"
+    assert output.value == "all layers separately"
     assert output.source == "guessed"
-    assert output.reason == "Full song is the default output"
+    assert output.reason == "All layers separately is the default output"
     assert "output" not in decided.brief.skipped
     assert decided.question is not None
     assert decided.question.slot == "key"
@@ -320,3 +321,6 @@ def test_prompt_compiler_is_deterministic() -> None:
     assert first[0].seeds == second[0].seeds
     assert len(first[0].seeds) == 3
     assert first[0].seeds != first[1].seeds
+    retaken = compile_prompts(**kwargs, take=2)
+    assert retaken[0].seeds != first[0].seeds
+    assert compile_prompts(**kwargs, take=1)[0].seeds == first[0].seeds

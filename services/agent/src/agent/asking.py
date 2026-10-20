@@ -50,8 +50,6 @@ def _condition(slot: str, context: AskContext) -> bool:
     if slot == "key":
         text_input = context.input_type in {None, "text_only"}
         return text_input and not context.gave_key
-    if slot == "style":
-        return context.input_type != "full_track"
     if slot == "must_keep":
         return context.input_type in AUDIO_INPUTS
     return True
