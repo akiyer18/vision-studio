@@ -1,0 +1,71 @@
+# Ask conditions are enforced in code. This file is the slot table from the spec.
+output:
+  impact: 1.0
+  ask_when: only if the UI did not set it
+  question: What would help most right now?
+  options:
+    - drums
+    - chords
+    - all layers separately
+    - full song
+mood:
+  impact: 0.9
+  ask_when: not found in text, lyrics or reference
+  question: What feeling should this carry?
+  options:
+    - joyful
+    - peaceful
+    - longing
+    - tense
+energy:
+  impact: 0.8
+  ask_when: not found
+  question: Should it breathe slowly or make people move?
+  options:
+    - slow and breathing
+    - steady
+    - make people move
+world:
+  impact: 0.7
+  ask_when: not found
+  question: What sonic world do you imagine?
+  options:
+    - warm and intimate
+    - wide and cinematic
+    - dark and electronic
+    - bright and danceable
+key:
+  impact: 0.5
+  ask_when: text input only, never when audio or MIDI gave a key
+  question: Any colour in mind for the harmony?
+  options:
+    - minor
+    - major
+    - not sure
+style:
+  impact: 0.5
+  ask_when: no reference given
+  question: Is there an artist or song near this idea?
+  options: []
+palette:
+  impact: 0.3
+  ask_when: rarely
+  question: Any instruments you hear in it?
+  options: []
+structure:
+  impact: 0.2
+  ask_when: rarely
+  question: How long should it be?
+  options:
+    - 4 bars
+    - 8 bars
+    - 16 bars
+must_keep:
+  impact: 0.4
+  ask_when: audio input only
+  question: What must stay exactly as it is?
+  options:
+    - everything
+    - the melody
+    - the rhythm
+    - the chords
