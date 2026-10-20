@@ -44,6 +44,7 @@ def test_turn_render_and_export_match_the_bar_length(tmp_path: Path) -> None:
             _assert_wav(Path(item["path"]), expected_frames)
         drums = [item for item in results if item["layer"] == "drums"]
         assert Path(drums[0]["path"]).read_bytes() != Path(drums[1]["path"]).read_bytes()
+        assert Path(drums[0]["path"]).parent.name == "renders"
         assert Path(drums[0]["path"]).name == "verse_drums_76bpm_8bars_v1.wav"
 
         session = data / "sessions" / "phase2"
@@ -51,7 +52,7 @@ def test_turn_render_and_export_match_the_bar_length(tmp_path: Path) -> None:
             midi = session / "midi" / f"verse_{kind}_76bpm_8bars.mid"
             assert midi_span(midi.read_bytes()) == (round(60_000_000 / 76), 8 * 4 * 480)
 
-        served = client.get("/files/phase2/verse_drums_76bpm_8bars_v1.wav")
+        served = client.get("/files/phase2/renders/verse_drums_76bpm_8bars_v1.wav")
         assert served.status_code == 200
         assert served.content == Path(drums[0]["path"]).read_bytes()
 
@@ -104,7 +105,32 @@ def test_melody_and_full_mix_use_the_same_length(tmp_path: Path) -> None:
             ["C", "G", "Am", "F"],
         )
         assert result.seconds == 2
+        assert Path(result.path).parent.name == "renders"
         _assert_wav(Path(result.path), frames)
+
+
+def test_full_mix_peak_stays_below_full_scale(tmp_path: Path) -> None:
+    renderer = MockRenderer(tmp_path)
+    result = renderer.render(
+        RenderJob(
+            session_id="mix",
+            layer="full_mix",
+            prompt="TrackType: Music",
+            negative="vocals",
+            bpm=120,
+            bars=2,
+            seed=3,
+            variant=1,
+        ),
+        ["C", "G", "Am", "F"],
+    )
+    path = Path(result.path)
+    assert path.parent.name == "renders"
+    with wave.open(str(path)) as handle:
+        raw = handle.readframes(handle.getnframes())
+    peak = max(max(abs(left), abs(right)) for left, right in struct.iter_unpack("<hh", raw))
+    assert peak > 1000
+    assert peak < 32767
 
 
 def test_cors_allows_the_web_app(tmp_path: Path) -> None:

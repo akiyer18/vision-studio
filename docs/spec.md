@@ -125,12 +125,21 @@ bass as roots around C2, velocity 80 to 100. Detected audio keys replace the pre
 ## 6. Audio and files
 
 - WAV, 44.1 kHz, 16 bit, stereo. Length = bars x 4 x 60 / BPM (8 bars at 76 BPM = 25.26 s).
-- Names: {section}_{layer}_{bpm}bpm_{bars}bars_v{n}.wav, for example verse_drums_76bpm_8bars_v1.wav
-- Session folder: data/sessions/{session_id}/ with audio/, midi/ and export/
-- Browser recordings arrive as webm or opus; convert to WAV with ffmpeg on the server (brew install ffmpeg).
-- Upload limit 50 MB. Analysis: librosa for tempo and key; Basic Pitch for audio to MIDI later.
-- MockRenderer: synthesized drums, sine pad chords from section 5, root note bass, a filtered noise texture;
-  variations differ by seed (pattern density, voicing, filter).
+- The section name is verse. Names: verse_{layer}_{bpm}bpm_{bars}bars_v{n}.wav, for example verse_drums_76bpm_8bars_v1.wav.
+- Session folder data/sessions/{session_id}/:
+  - audio/: the upload. webm or opus is converted to 44.1 kHz stereo WAV with ffmpeg (brew install ffmpeg).
+  - renders/: rendered WAVs.
+  - midi/: verse_chords_{bpm}bpm_{bars}bars.mid and verse_bass_{bpm}bpm_{bars}bars.mid.
+  - export/: the picked variation of each layer, variation 1 when that layer was not picked, and both MIDI files.
+- POST /upload is multipart: session_id, input_type, and the file. Limit 50 MB. librosa reads tempo and key and the response is AudioFeatures. Basic Pitch for audio to MIDI comes later.
+- POST /turn sends a TurnRequest.
+- POST /render sends { session_id } and builds three RenderJobs per selected layer at take 1.
+- POST /regenerate sends { session_id, layer } and re-renders that layer at the next take.
+- POST /export sends { session_id, picks? }. picks maps a layer name to a variation number. The response is { files }.
+- GET /files/{session_id}/{path} serves a file from that session folder, including renders/, midi/ and export/.
+- Chords are close voiced: the lowest tone is the chord tone nearest C4 and the other tones stack above it. Bass is the root nearest C2. One chord per bar. A progression shorter than the bar count repeats. MIDI notes use velocity 90. Rendered bass moves velocity from 80 to 100 with the seed.
+- MockRenderer: synthesized drums, sine pad chords, root note bass, and a filtered noise texture. Melody is the top tone of the chord voicing. Variations differ by seed (pattern density, voicing, filter).
+- Full mix sums drums, chords, bass and texture. Each of those layers is peak-normalised to about −1 dBFS first. A limiter then holds the sum at about −0.1 dBFS, so the mix peak stays below 0 dBFS.
 
 ## 7. Design
 
@@ -168,13 +177,15 @@ Copy: plain verbs. Buttons say what happens: "Send to Stable Audio", "Another ta
 | phase | done when |
 | --- | --- |
 | 1 contracts and mock agent | pytest passes for the five inputs; skip_all always returns ready with prompts |
-| 2 API and mock renderer | curl from /turn to /export produces playable WAVs and a MIDI file of the right length |
+| 2 API and mock renderer | curl from /turn through /render to /export produces playable WAVs in renders/ and MIDI of the right length; the full mix peaks below 0 dBFS |
 | 3 design system and shell | /styleguide shows every component; layout works at 1440 px and 390 px |
 | 4 input panel | text, file drop and recording all reach /turn; empty submit shows an inline message |
 | 5 conversation and brief | a full run with one answer, one skip and skip all works; trace shows every step |
 | 6 prompt studio | edited prompts reach /render; output picker changes the prompt cards |
 | 7 results and export | three playable variations per layer; Pick and Another take work; export lists files |
 | 8 polish and demo mode | the three demo scenarios run end to end with no network |
+
+Phase 2 choices: the section name is verse. Uploads live in audio/, rendered WAVs in renders/, MIDI in midi/, and picked files in export/. Chord voicing puts the lowest tone nearest C4 with the other tones stacked above it. Bass roots sit nearest C2. One chord per bar, and a shorter progression repeats to fill the bars. MIDI velocity is 90. Rendered velocity stays inside 80 to 100. Melody is the top voice of that voicing. The full mix peak-normalises drums, chords, bass and texture to about −1 dBFS, sums them, and limits the sum to about −0.1 dBFS. POST /upload is a multipart form with session_id, input_type and the file. POST /turn sends a TurnRequest. POST /render sends { session_id }. POST /regenerate sends { session_id, layer }. POST /export sends { session_id, picks? } and returns { files }.
 
 ## 9. Dev commands
 

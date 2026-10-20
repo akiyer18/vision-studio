@@ -12,6 +12,9 @@ from contracts import RenderJob, RenderResult
 from api.audio import SR, bar_frames, session_dir, wav_name, write_wav
 
 _LAYERS = ("drums", "chords", "bass", "melody", "texture", "full_mix")
+_MIX_PARTS = ("drums", "chords", "bass", "texture")
+_MINUS_1_DB = 10 ** (-1 / 20)
+_LIMIT_DB = 10 ** (-0.1 / 20)
 
 
 class Renderer(Protocol):
@@ -29,7 +32,7 @@ class MockRenderer:
         audio = _synthesize(job.layer, chords, job.bpm, frames, job.seed)
         audio = _trim(audio, frames)
         name = wav_name(job.layer, job.bpm, job.bars, job.variant)
-        path = session_dir(self.data_root, job.session_id) / name
+        path = session_dir(self.data_root, job.session_id) / "renders" / name
         write_wav(path, audio)
         return RenderResult(
             layer=job.layer,
@@ -43,9 +46,9 @@ class MockRenderer:
 def _synthesize(layer: str, chords: list[str], bpm: int, frames: int, seed: int) -> np.ndarray:
     if layer == "full_mix":
         mixed = np.zeros((frames, 2), dtype=np.float64)
-        for part in ("drums", "chords", "bass", "texture"):
-            mixed += _synthesize(part, chords, bpm, frames, seed)
-        return mixed
+        for part in _MIX_PARTS:
+            mixed += _peak_normalize(_synthesize(part, chords, bpm, frames, seed), _MINUS_1_DB)
+        return _limit(mixed)
     if layer == "drums":
         return _drums(bpm, frames, seed)
     symbols = [chords[bar % len(chords)] for bar in range(_bars(bpm, frames))]
@@ -203,6 +206,21 @@ def _bar_span(bar: int, bpm: int, frames: int) -> tuple[int, int]:
     start = min(frames, int(round(bar * bar_length)))
     end = min(frames, int(round((bar + 1) * bar_length)))
     return start, end
+
+
+def _peak_normalize(audio: np.ndarray, level: float) -> np.ndarray:
+    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+    if peak == 0:
+        return audio
+    return audio * (level / peak)
+
+
+def _limit(audio: np.ndarray) -> np.ndarray:
+    """Hold the sum just under 0 dBFS."""
+    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+    if peak > _LIMIT_DB:
+        audio = audio * (_LIMIT_DB / peak)
+    return np.clip(audio, -_LIMIT_DB, _LIMIT_DB)
 
 
 def _trim(audio: np.ndarray, frames: int) -> np.ndarray:
