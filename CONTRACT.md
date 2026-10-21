@@ -82,3 +82,32 @@ File naming: `${slug(name)}-${Date.now()}.wav|.mid`
 - {"cmd":"select_track","track": int|name} -> {ok,index,name}   (song.view.selected_track = track)
 - load_sample: optional "track": int|name -> select it first; internal retry: poll browser roots for up to 3 s (every 0.25 s via schedule_message, non-blocking) before replying not found
 - create_clip: "track" accepts int|name|"selected"; optional "name" sets clip.name; replaces an existing clip in that slot (delete_clip first)
+
+# ---- v3: the producer agent (Claude with tools, like Claude Code for beats) ----
+
+## lib/agent.js
+- `runProducer({ history, userText, recordings, ctx }) -> { text, history }`
+   Uses @anthropic-ai/sdk `client.beta.messages.toolRunner` with `betaZodTool` tools (model "claude-opus-5-5", max_tokens 16000, omit `thinking`, output_config: { effort: 'medium' }, max_iterations ~24).
+   `history` is the Anthropic messages array from previous turns (append full `response.content` blocks, never just text); return the updated array.
+   `recordings` = { beat?: absolutePath(wav), hum?: absolutePath(wav) } for this turn (may be empty).
+   Every tool `run` calls `ctx.emit({ type:'tool', name, input, summary })` at start and `ctx.emit({ type:'tool_done', name, summary, data? })` at end so the UI can show progress; the model receives a concise JSON string result.
+- Tools (names exact):
+   - set_tempo { bpm } -> ctx.live.setTempo
+   - list_tracks {} -> ctx.live.listTracks
+   - analyze_recording { which:'beat'|'hum', bpm? } -> beat: ctx.beatboxToPattern(path,{bpm}) returns { pattern, onsets:[{time,instrument}] , bpm }; hum: ctx.humToNotes(path,{bpm}) returns { notes, bars, bpm }
+   - write_drum_pattern { description, bpm, bars } -> ctx.writePattern -> pattern JSON (Claude may instead author the pattern itself with build_drum_layer)
+   - write_melody { description, key, bpm, bars } -> ctx.writeMelody -> { notes, bars, key }
+   - synthesize_sound { role (kick|snare|clap|hat_closed|hat_open|rim|perc|tom_low|tom_high|synth|bass|pad|lead|pluck|keys), prompt, source:'text'|'beatbox'|'hum', offsetSeconds?, lengthSeconds? } -> ctx.synth(...) -> { path, name, durationSeconds, peakDb }
+   - build_drum_layer { name, instrument, samplePath, steps:[{step,velocity}], bars, swing? } -> ctx.live.buildLane(...) creates/reuses the track named `name`, loads sample via slot pool, creates+fires a one-note (C3) clip from steps (16ths) -> { track:{index,name}, notes }
+   - build_melody_layer { name, samplePath, notes:[{pitch,startBeats,durationBeats,velocity}], bars } -> ctx.live.buildMelody(...) -> { track, notes }
+   - update_layer { name, steps?|notes?, bars } -> replace the clip on the existing track (ctx.live.updateLayer)
+   - replace_sound { name, samplePath } -> ctx.live.loadSample onto that track
+   - remove_layer { name } -> ctx.live.deleteTrack
+   - show_live {} -> Session view; play {} / stop {}
+- System prompt (write it well): you are a producer sitting next to the user with Ableton open; build beats layer by layer (tempo -> kick -> snare/clap -> hats -> perc -> bass/chords/lead); use parallel tool calls for independent sounds; Stable Audio prompts are descriptive adjectives (no instructions), for drums add "dry one-shot", for tonal sounds "single sustained note, no drums"; when the user beatboxed, analyze_recording first and build sounds from their hits (source:'beatbox' + offsetSeconds of the first onset of that instrument); keep pattern grids 16 steps per bar with musical velocities (ghosts 35-55, accents 110-127); after building, reply in 3-6 short lines: what was added (track names), one thing you noticed, and 2-3 concrete next-step suggestions phrased as things the user can just say. Never claim something is in Live unless the tool returned ok.
+- Export also `PRODUCER_SYSTEM` and `makeTools(ctx, recordings)` for testing.
+
+## server.js glue
+- ctx built from existing internals: synth (wraps the /api/synth pipeline as a function), writePattern, writeMelody, beatboxToPattern, humToNotes, live.* (sendToLive wrappers + slot pool + lastBuild registry keyed by track name), emit -> SSE.
+- POST /api/upload multipart audio -> { id, path(wav) }   (converted with toWav)
+- POST /api/chat json { text, beatId?, humId?, reset? } -> text/event-stream: events {type:'tool'|'tool_done'|'text'|'error'|'done', ...}; history kept in server memory (single session), `reset:true` clears it.

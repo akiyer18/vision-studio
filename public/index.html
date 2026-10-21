@@ -211,7 +211,7 @@ const INSTR = ['kick','snare','clap','rim','hat_closed','hat_open','tom_low','to
 let recorder = null, chunks = [], blob = null, recStart = 0, recTimer = null;
 let lastSample = null, lastSamplePath = null;      // latest drum one-shot (AudioBuffer + path on disk)
 let melBlob = null, melody = null, sawBuffer = null, sawPath = null, melPlaying = null;
-let laneSamples = {}, lastOnsets = [], built = false, plan = null;
+let laneSamples = {}, lastOnsets = [], built = false, plan = null, beatBlob = null;
 const DEFAULT_DRUM_PROMPTS = { kick:'punchy kick drum, deep, tight, dry one-shot', snare:'punchy snare drum, tight, bright crack, dry one-shot', clap:'tight layered clap, short, bright, dry one-shot', hat_closed:'crisp closed hi-hat, short, metallic, dry one-shot', hat_open:'open hi-hat, sizzling, medium decay, dry one-shot', rim:'woody rimshot, short click, dry one-shot', perc:'short percussion hit, woody, dry one-shot', tom_low:'low floor tom, deep, round, dry one-shot', tom_high:'high tom, tight, punchy, dry one-shot', ride:'ride cymbal, bright ping, long decay', crash:'crash cymbal, bright, long decay' };
 const LANE_LABEL = { kick:'Kick', snare:'Snare', clap:'Clap', hat_closed:'Hats', hat_open:'Open Hats', rim:'Rim', perc:'Perc', tom_low:'Tom', tom_high:'Tom Hi', ride:'Ride', crash:'Crash' };
 let pattern = null, playing = null;
@@ -452,7 +452,7 @@ $('m-describe').onclick = () => {
 $('m-saw').onclick = async () => {
   $('m-saw').disabled = true; setStatus('m-status', 'Stability AI is making the synth sound… (5–15 s)');
   try {
-    const fd = new FormData(); fd.append('prompt', $('m-sound').value); fd.append('mode', 'text'); fd.append('name', $('m-name').value); fd.append('model', $('s-model').value);
+    const fd = new FormData(); fd.append('prompt', $('m-sound').value); fd.append('mode', 'text'); fd.append('kind', 'tone'); fd.append('oneshotSeconds', '2.5'); fd.append('name', $('m-name').value); fd.append('model', $('s-model').value);
     const r = await fetch('/api/synth', { method:'POST', body: fd }); const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
     const one = j.files.find(f => f.kind === 'oneshot') || j.files[0];
@@ -509,19 +509,19 @@ $('b-go').onclick = async () => {
 };
 
 // ---------- easy mode: one sentence -> everything in Live ----------
-makeRecorder('e-beat', 'e-beat-info', b => { blob = b; });
+makeRecorder('e-beat', 'e-beat-info', b => { beatBlob = b; });
 makeRecorder('e-hum', 'e-hum-info', b => { melBlob = b; });
 function stepEl(label) {
   const li = document.createElement('li'); li.textContent = label; $('e-steps').appendChild(li);
   return { ok: t => { li.className = 'ok'; li.textContent = label + (t ? ' — ' + t : ''); }, fail: t => { li.className = 'bad'; li.textContent = label + ' — ' + t; } };
 }
-async function synthStep(label, { prompt, name, audio, mode, oneshotSeconds, offsetSeconds }) {
+async function synthStep(label, { prompt, name, audio, mode, oneshotSeconds, offsetSeconds, kind }) {
   const s = stepEl(label);
   try {
     const fd = new FormData();
     if (audio) fd.append('audio', audio, 'rec.webm');
     fd.append('prompt', prompt); fd.append('mode', mode); fd.append('name', name); fd.append('model', $('s-model').value);
-    fd.append('strength', $('s-strength').value); if (oneshotSeconds) fd.append('oneshotSeconds', oneshotSeconds); if (offsetSeconds != null) fd.append('offsetSeconds', offsetSeconds);
+    fd.append('strength', $('s-strength').value); if (oneshotSeconds) fd.append('oneshotSeconds', oneshotSeconds); if (offsetSeconds != null) fd.append('offsetSeconds', offsetSeconds); if (kind) fd.append('kind', kind);
     const r = await fetch('/api/synth', { method:'POST', body: fd }); const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
     const one = j.files.find(f => f.kind === 'oneshot') || j.files[0];
@@ -531,11 +531,11 @@ async function synthStep(label, { prompt, name, audio, mode, oneshotSeconds, off
 }
 $('e-go').onclick = async () => {
   const text = $('e-text').value.trim();
-  if (!text && !blob && !melBlob) return setStatus('e-status', 'Type what you hear, or record something first.', true);
+  if (!text && !beatBlob && !melBlob) return setStatus('e-status', 'Type what you hear, or record something first.', true);
   $('e-go').disabled = true; $('e-steps').innerHTML = ''; setStatus('e-status', '');
   try {
     const st = stepEl('Planning');
-    const planR = await postJson('/api/plan', { text, hasBeatbox: !!blob, hasHum: !!melBlob });
+    const planR = await postJson('/api/plan', { text, hasBeatbox: !!beatBlob, hasHum: !!melBlob });
     if (!planR.ok) { st.fail(planR.error); throw new Error(planR.error); }
     plan = planR.plan;
     st.ok(`${plan.bpm} BPM · ${plan.drum.name}${plan.synth ? ' + ' + plan.synth.name : ''} · via ${planR.source}`);
@@ -545,13 +545,13 @@ $('e-go').onclick = async () => {
 
     // 1) pattern (from beatbox or text) and melody, in parallel
     const partTasks = [(async () => {
-      const s = stepEl(blob ? 'Listening to your beatbox' : 'Writing the drum pattern');
+      const s = stepEl(beatBlob ? 'Listening to your beatbox' : 'Writing the drum pattern');
       try {
         let r;
-        if (blob) { const fd = new FormData(); fd.append('audio', blob, 'beat.webm'); fd.append('bpm', plan.bpm); fd.append('mapping', 'single'); fd.append('name', 'beatbox'); r = await fetch('/api/rhythm', { method:'POST', body: fd }); }
+        if (beatBlob) { const fd = new FormData(); fd.append('audio', beatBlob, 'beat.webm'); if (/\d{2,3}\s*bpm/i.test(text)) fd.append('bpm', plan.bpm); fd.append('mapping', 'single'); fd.append('name', 'beatbox'); r = await fetch('/api/rhythm', { method:'POST', body: fd }); }
         else r = await fetch('/api/pattern', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ description: plan.pattern.description, bpm: plan.bpm, bars: plan.bars, mapping: 'single', name: 'pattern' }) });
         const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText);
-        pattern = j.pattern; lastOnsets = j.onsets || []; renderGrid(pattern); $('p-results').prepend(fileCard(j.midi)); $('p-play').disabled = false; $('p-live').disabled = false;
+        pattern = j.pattern; lastOnsets = j.onsets || []; if (beatBlob && pattern.bpm) { plan.bpm = pattern.bpm; $('p-bpm').value = pattern.bpm; $('m-bpm').value = pattern.bpm; } renderGrid(pattern); $('p-results').prepend(fileCard(j.midi)); $('p-play').disabled = false; $('p-live').disabled = false;
         s.ok(`${pattern.lanes.filter(l => l.steps.length).map(l => LANE_LABEL[l.instrument] || l.instrument).join(', ')} · ${pattern.bars} bar(s)`);
       } catch (e) { s.fail(e.message); throw e; }
     })()];
@@ -574,12 +574,13 @@ $('e-go').onclick = async () => {
       const planned = (plan.drums || []).find(d => d.role === lane.instrument || (d.role === 'hat_closed' && lane.instrument === 'hat_open'));
       const prompt = planned ? planned.prompt : DEFAULT_DRUM_PROMPTS[lane.instrument] || 'drum hit, dry one-shot';
       const onset = lastOnsets.find(o => o.instrument === lane.instrument);
-      return synthStep(`Synthesizing the ${LANE_LABEL[lane.instrument] || lane.instrument}${onset ? ' from your beatbox' : ''}`, { prompt, name: lane.instrument.replace('_', '-'), audio: onset ? blob : null, mode: onset ? 'oneshot' : 'text', offsetSeconds: onset ? onset.time : undefined })
+      return synthStep(`Synthesizing the ${LANE_LABEL[lane.instrument] || lane.instrument}${onset ? ' from your beatbox' : ''}`, { prompt, name: lane.instrument.replace('_', '-'), audio: onset ? beatBlob : null, mode: onset ? 'oneshot' : 'text', offsetSeconds: onset ? onset.time : undefined })
         .then(({ one, buf, files }) => { laneSamples[lane.instrument] = one.path; if (lane.instrument === 'snare' || !lastSamplePath) { lastSamplePath = one.path; lastSample = buf; } files.forEach(f => $('s-results').prepend(fileCard(f))); });
     });
-    if (plan.synth) soundTasks.push(synthStep(`Synthesizing the ${plan.synth.name} sound`, { prompt: plan.synth.prompt, name: plan.synth.name, mode: 'text', oneshotSeconds: 2.5 })
+    if (plan.synth) soundTasks.push(synthStep(`Synthesizing the ${plan.synth.name} sound`, { prompt: plan.synth.prompt, name: plan.synth.name, mode: 'text', kind: 'tone', oneshotSeconds: 2.5 })
       .then(({ one, buf, files }) => { sawPath = one.path; sawBuffer = buf; files.forEach(f => $('m-results').prepend(fileCard(f))); }));
-    await Promise.all(soundTasks);
+    const settled = await Promise.allSettled(soundTasks);
+    if (settled.every(x => x.status === 'rejected')) throw new Error('Every sound failed: ' + settled[0].reason.message);
 
     const b = stepEl('Building tracks in Live');
     const body = { bpm: plan.bpm, drums: { pattern, lanes: Object.entries(laneSamples).map(([instrument, samplePath]) => ({ instrument, samplePath })) } };
@@ -604,16 +605,25 @@ $('e-tweak-go').onclick = async () => {
     if (!r.ok) throw new Error(r.error);
     const c = r.changes, did = [];
     if (c.bpm) { await postJson('/api/live/tempo', { bpm: c.bpm }); if (pattern) pattern.bpm = c.bpm; if (melody) melody.bpm = c.bpm; $('p-bpm').value = c.bpm; did.push(`${c.bpm} BPM`); }
-    if (c.pattern) { pattern = c.pattern; renderGrid(pattern); const u = await postJson('/api/live/update', { pattern }); if (!u.ok) throw new Error(u.error); did.push('pattern'); }
-    if (c.melody) { melody = { ...(melody || {}), ...c.melody, bpm: (c.bpm || (melody && melody.bpm) || pattern.bpm) }; renderMelody(melody); const u = await postJson('/api/live/melody', { notes: melody.notes, bpm: melody.bpm, bars: melody.bars, name: 'Melody' }); if (!u.ok) throw new Error(u.error); did.push('melody'); }
+    if (c.pattern) {
+      pattern = c.pattern; renderGrid(pattern);
+      // new lanes need a sound before they can be heard
+      for (const lane of pattern.lanes) if (lane.steps.length && !laneSamples[lane.instrument]) {
+        try { const { one, files } = await synthStep(`Synthesizing the new ${LANE_LABEL[lane.instrument] || lane.instrument}`, { prompt: DEFAULT_DRUM_PROMPTS[lane.instrument] || 'drum hit, dry one-shot', name: lane.instrument.replace('_', '-'), mode: 'text' }); laneSamples[lane.instrument] = one.path; files.forEach(f => $('s-results').prepend(fileCard(f))); } catch (e) { console.warn(e); }
+      }
+      const u = await postJson('/api/live/update', { pattern }); if (!u.ok) throw new Error(u.error); did.push('pattern');
+      for (const lane of pattern.lanes) if (lane.steps.length && laneSamples[lane.instrument] && !(u.hadTracks || []).includes(lane.instrument)) { /* load sound onto any newly created track */ await postJson('/api/live/sample', { path: laneSamples[lane.instrument], instrument: lane.instrument }); }
+    }
+    if (c.melody) { melody = { notes: c.melody.notes, bars: c.melody.bars, key: c.melody.key, bpm: (c.bpm || (melody && melody.bpm) || (pattern && pattern.bpm) || Number($('m-bpm').value)) }; renderMelody(melody); const u = await postJson('/api/live/melody', { notes: melody.notes, bpm: melody.bpm, bars: melody.bars, name: 'Melody' }); if (!u.ok) throw new Error(u.error); did.push('melody'); }
     if (c.drums) for (const d of c.drums) {
-      const instrument = d.role === 'hat' ? 'hat_closed' : d.role;
+      const instrument = ({ hat: 'hat_closed', tom: 'tom_low' })[d.role] || d.role;
+      if (!laneSamples[instrument] && !(pattern && pattern.lanes.some(l => l.instrument === instrument))) { setStatus('e-tweak-status', `There is no ${d.role} in this beat yet. Say "add a ${d.role}" first.`, true); continue; }
       const { one, buf, files } = await synthStep(`Re-synthesizing the ${LANE_LABEL[instrument] || d.role}`, { prompt: d.prompt, name: instrument.replace('_', '-'), mode: 'text' });
       laneSamples[instrument] = one.path; files.forEach(f => $('s-results').prepend(fileCard(f)));
       const u = await postJson('/api/live/sample', { path: one.path, instrument }); if (!u.ok) throw new Error(u.error); did.push(d.role + ' sound');
     }
     if (c.synth) {
-      const { one, buf, files } = await synthStep('Re-synthesizing the synth sound', { prompt: c.synth.prompt, name: (plan && plan.synth ? plan.synth.name : 'synth'), mode: 'text', oneshotSeconds: 2.5 });
+      const { one, buf, files } = await synthStep('Re-synthesizing the synth sound', { prompt: c.synth.prompt, name: (plan && plan.synth ? plan.synth.name : 'synth'), mode: 'text', kind: 'tone', oneshotSeconds: 2.5 });
       sawPath = one.path; sawBuffer = buf; files.forEach(f => $('s-results').prepend(fileCard(f)));
       const u = await postJson('/api/live/sample', { path: one.path, instrument: 'synth', role: 'synth' }); if (!u.ok) throw new Error(u.error); did.push('synth sound');
     }

@@ -135,6 +135,18 @@ class ADEHack(ControlSurface):
             if cmd == 'stop':
                 self.song().stop_playing()
                 return {'ok': True, 'playing': False}
+            if cmd == 'list_devices':
+                return self._cmd_list_devices(msg)
+            if cmd == 'delete_track':
+                track = self._track(msg.get('track', 'selected'))
+                index = self._index_of(track)
+                name = track.name
+                self.song().delete_track(index)
+                return {'ok': True, 'index': index, 'name': name}
+            if cmd == 'rename_track':
+                track = self._track(msg.get('track', 'selected'))
+                track.name = u'%s' % (msg['name'],)
+                return {'ok': True, 'index': self._index_of(track), 'name': track.name}
             if cmd == 'list_tracks':
                 return self._cmd_list_tracks(msg)
             if cmd == 'create_midi_track':
@@ -175,6 +187,55 @@ class ADEHack(ControlSurface):
             if t == track:
                 return i
         return -1
+
+    INSTRUMENT_CLASSES = ('OriginalSimpler', 'Simpler', 'MultiSampler', 'DrumGroupDevice',
+                          'InstrumentImpulse', 'Operator', 'UltraAnalog', 'Collision',
+                          'InstrumentVector', 'StringStudio', 'LoungeLizard', 'Tension')
+
+    def _devices(self, track):
+        out = []
+        for i, d in enumerate(track.devices):
+            out.append({'index': i, 'name': d.name, 'class_name': getattr(d, 'class_name', ''),
+                        'type': int(getattr(d, 'type', 0) or 0)})
+        return out
+
+    def _instrument_device(self, track):
+        # DeviceType.instrument == 1 in the Live API; class_name as a fallback.
+        for i, d in enumerate(track.devices):
+            cls = getattr(d, 'class_name', '')
+            if int(getattr(d, 'type', 0) or 0) == 1 or cls in self.INSTRUMENT_CLASSES:
+                return i, d
+        return -1, None
+
+    def _cmd_list_devices(self, msg):
+        track = self._track(msg.get('track', 'selected'))
+        return {'ok': True, 'track': track.name, 'devices': self._devices(track)}
+
+    def _replace_target(self, browser, track):
+        """Prepare a MIDI track so load_item REPLACES its sampler instead of appending.
+        1) hot-swap: browser.hotswap_target = device (what Push does) -> load_item swaps the sample
+        2) fallback: delete the instrument device, load_item then creates a fresh Simpler.
+        Returns (how, device_name, hotswapped)."""
+        index, dev = self._instrument_device(track)
+        if dev is None:
+            return 'none', None, False
+        name = dev.name
+        try:
+            self.song().view.select_device(dev)
+        except Exception as e:
+            self.log_message('ADEHack: select_device failed: %r' % (e,))
+        try:
+            browser.hotswap_target = dev
+            if browser.hotswap_target is not None:
+                return 'hotswap', name, True
+        except Exception as e:
+            self.log_message('ADEHack: hotswap_target failed: %r' % (e,))
+        try:
+            track.delete_device(index)
+            return 'deleted', name, False
+        except Exception as e:
+            self.log_message('ADEHack: delete_device failed: %r' % (e,))
+        return 'none', name, False
 
     def _cmd_list_tracks(self, msg):
         song = self.song()
@@ -242,23 +303,37 @@ class ADEHack(ControlSurface):
                     slot_index = i
                     break
         slot = track.clip_slots[int(slot_index)]
-        if slot.has_clip:
-            slot.delete_clip()
-        slot.create_clip(length)
-        clip = slot.clip
         tup = tuple((int(n['pitch']), float(n['start']), float(n['duration']),
                      int(n.get('velocity', 100)), False) for n in notes)
-        if tup:
-            try:
-                clip.set_notes(tup)
-            except Exception as e:  # Live 10 alt path, same semantics on an empty clip
-                self.log_message('ADEHack: set_notes failed (%r), trying replace_selected_notes' % (e,))
-                clip.select_all_notes()
-                clip.replace_selected_notes(tup)
+        mode = 'created'
+        in_place = slot.has_clip and not msg.get('recreate') and getattr(slot.clip, 'is_midi_clip', True)
+        if in_place:
+            # Swap notes inside the existing clip: a playing clip keeps playing in sync,
+            # instead of delete_clip (stops it) + fire (waits for the next launch quantum).
+            clip = slot.clip
+            clip.select_all_notes()
+            clip.replace_selected_notes(tup)
+            self._set_clip_length(clip, length)
+            mode = 'replaced_in_place'
+        else:
+            if slot.has_clip:
+                slot.delete_clip()
+            slot.create_clip(length)
+            clip = slot.clip
+            if tup:
+                try:
+                    clip.set_notes(tup)
+                except Exception as e:  # Live 10 alt path, same semantics on an empty clip
+                    self.log_message('ADEHack: set_notes failed (%r), trying replace_selected_notes' % (e,))
+                    clip.select_all_notes()
+                    clip.replace_selected_notes(tup)
         if msg.get('name'):
             clip.name = str(msg['name'])
         clip.looping = True
-        if msg.get('fire'):
+        # ClipSlot.fire() obeys the global launch quantization while the transport runs,
+        # so a new clip lands on the next bar in sync. Don't re-fire a slot that is
+        # already playing (it would retrigger from 0 at the next quantum).
+        if msg.get('fire') and not getattr(slot, 'is_playing', False):
             slot.fire()
         # Make the new clip visible: Live often sits in Arrangement view.
         try:
@@ -267,7 +342,19 @@ class ADEHack(ControlSurface):
             self.log_message('ADEHack: highlighted_clip_slot failed: %r' % (e,))
         if msg.get('show', True):
             self._show_view('Session')
-        return {'ok': True, 'track': track.name, 'slot': int(slot_index), 'notes': len(tup)}
+        return {'ok': True, 'track': track.name, 'slot': int(slot_index), 'notes': len(tup),
+                'mode': mode, 'playing': bool(getattr(slot, 'is_playing', False))}
+
+    def _set_clip_length(self, clip, length):
+        # Grow: move end markers out before the loop end; shrink: the reverse. Try both orders.
+        for order in (('end_marker', 'loop_end', 'loop_start', 'start_marker'),
+                      ('loop_end', 'end_marker', 'loop_start', 'start_marker')):
+            try:
+                for attr in order:
+                    setattr(clip, attr, length if attr in ('end_marker', 'loop_end') else 0.0)
+                return
+            except Exception as e:
+                self.log_message('ADEHack: clip length order %r failed: %r' % (order, e))
 
     def _show_view(self, name):
         try:
@@ -331,10 +418,22 @@ class ADEHack(ControlSurface):
             if found is not None:
                 break
         if found is not None:
-            browser.load_item(found)
+            track = self.song().view.selected_track
+            how, dev_name, hotswapped = 'none', None, False
+            if msg.get('mode', 'replace') == 'replace' and track.has_midi_input:
+                how, dev_name, hotswapped = self._replace_target(browser, track)
+            try:
+                browser.load_item(found)
+            finally:
+                if hotswapped:
+                    try:
+                        browser.hotswap_target = None
+                    except Exception as e:
+                        self.log_message('ADEHack: leaving hotswap failed: %r' % (e,))
             return {'ok': True, 'item': found.name, 'uri': found.uri, 'root': searched[-1],
-                    'attempts': job['attempt'] + 1,
-                    'track': self.song().view.selected_track.name}
+                    'attempts': job['attempt'] + 1, 'track': track.name,
+                    'replaced': how, 'replaced_device': dev_name,
+                    'devices': self._devices(track)}
         job['attempt'] += 1
         if job['attempt'] < LOAD_RETRY_MAX and job['conn'] is not None:
             # Not indexed yet (fresh wav). Re-scan on a later tick without blocking Live.

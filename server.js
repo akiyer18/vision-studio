@@ -32,6 +32,10 @@ const upload = multer({ dest: TMP, limits: { fileSize: 50 * 1024 * 1024 } });
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(n) ? n : lo));
 const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'sound';
 const hasKey = (v) => Boolean(v && !/paste-your-key/i.test(v));
+function insideOut(p) {
+  const r = path.relative(OUT_DIR, path.resolve(String(p || '')));
+  return r && !r.startsWith('..') && !path.isAbsolute(r);
+}
 
 async function publish(buffer, name, ext, kind) {
   const file = `${slug(name)}-${Date.now()}${ext}`;
@@ -40,8 +44,10 @@ async function publish(buffer, name, ext, kind) {
   return { name: file, url: `/out/${encodeURIComponent(file)}`, path: full, kind };
 }
 
-function buildPrompt(prompt, mode) {
+function buildPrompt(prompt, mode, kind) {
   const p = String(prompt || '').trim();
+  if (kind === 'tone') return `${p || 'analog synth'}, single sustained note, clean, no drums, no percussion`;
+  if (kind === 'raw') return p;
   if (mode === 'loop') return `${p || 'drum loop'}, tight drum loop, dry, clean, punchy`;
   return `${p || 'drum hit'}, single one-shot drum sample, dry, punchy, clean transient, no melody, no music`;
 }
@@ -67,7 +73,7 @@ app.post('/api/synth', upload.single('audio'), async (req, res) => {
     let result;
 
     if (mode === 'text') {
-      result = await textToAudio({ prompt: buildPrompt(prompt, req.body.mode), duration: 6, model });
+      result = await textToAudio({ prompt: buildPrompt(prompt, req.body.mode, req.body.kind), duration: 6, model });
     } else {
       const raw = path.join(TMP, `${id}-raw.wav`);
       const input = path.join(TMP, `${id}-input.wav`);
@@ -81,7 +87,7 @@ app.post('/api/synth', upload.single('audio'), async (req, res) => {
       if (mode === 'loop') await makeLoopInput(raw, input);
       else await makeOneShotLoop(raw, input);
       files.push(await publish(await fs.readFile(raw), `${name}-hum`, '.wav', 'raw'));
-      result = await audioToAudio({ wavPath: input, prompt: buildPrompt(prompt, mode), strength, duration: 6, model });
+      result = await audioToAudio({ wavPath: input, prompt: buildPrompt(prompt, mode, req.body.kind), strength, duration: 6, model });
     }
 
     const gen = path.join(TMP, `${id}-gen.wav`);
@@ -119,8 +125,8 @@ app.post('/api/pattern', async (req, res) => {
 });
 
 app.post('/api/reveal', (req, res) => {
-  const p = String(req.body?.path || '');
-  if (!p.startsWith(OUT_DIR)) return res.status(400).json({ error: 'path outside output dir' });
+  const p = path.resolve(String(req.body?.path || ''));
+  if (!insideOut(p)) return res.status(400).json({ error: 'path outside output dir' });
   execFile('open', ['-R', p], (err) => (err ? res.status(500).json({ error: err.message }) : res.json({ ok: true })));
 });
 
@@ -134,13 +140,15 @@ const ROLE_OF = { kick: 'Kick', snare: 'Snare', clap: 'Clap', hat_closed: 'Hat',
 const POOL_SIZE = { Kick: 6, Snare: 6, Clap: 6, Hat: 6, OpenHat: 6, Rim: 6, Perc: 6, Tom: 6, Synth: 8 };
 const COUNTER_FILE = path.join(TMP, 'slot-counter.json');
 const LIVE_DB = path.join(os.homedir(), 'Library/Application Support/Ableton/Live Database/Live-files-36.db');
-let indexedSlots = null;
+let indexedSlots = null, indexedAt = 0;
 async function indexedSlotNames() {
-  if (indexedSlots) return indexedSlots;
+  if (indexedSlots && Date.now() - indexedAt < 5000) return indexedSlots;
   try {
     const { stdout } = await execFileP('sqlite3', [LIVE_DB, "select name from files where name like 'ADE %.wav'"]);
-    indexedSlots = new Set(stdout.split('\n').filter(Boolean));
+    const set = new Set(stdout.split('\n').filter(Boolean));
+    indexedSlots = set.size ? set : null;   // empty = unknown, don't block on it
   } catch { indexedSlots = null; }
+  indexedAt = Date.now();
   return indexedSlots;
 }
 function roleFor(hint = '', fallback = 'Snare') {
@@ -170,7 +178,7 @@ async function nextSlot(role) {
   return pick.name;
 }
 async function toSlot(srcPath, hint = '', fallback = 'Snare') {
-  if (!srcPath.startsWith(OUT_DIR)) throw new Error('path outside output dir');
+  if (!insideOut(srcPath)) throw new Error('path outside output dir');
   const name = await nextSlot(roleFor(hint, fallback));
   const dest = path.join(OUT_DIR, name);
   if (dest !== srcPath) await fs.copyFile(srcPath, dest);
@@ -182,7 +190,7 @@ export const slotNameFor = (srcPath, hint, fallback) => roleFor(hint, fallback);
 const lastBuild = { bpm: null, tracks: {} };   // tracks: { kick: {index,name}, ..., synth: {...}, drums: {...} }
 const LANE_LABEL = { kick: 'Kick', snare: 'Snare', clap: 'Clap', hat_closed: 'Hats', hat_open: 'Open Hats', rim: 'Rim', perc: 'Perc', tom_low: 'Tom', tom_high: 'Tom Hi', ride: 'Ride', crash: 'Crash' };
 
-async function sendWithRetry(send, cmd, tries = 6, delayMs = 700) {
+async function sendWithRetry(send, cmd, tries = 2, delayMs = 700) {
   let reply;
   for (let i = 0; i < tries; i++) {
     reply = await send(cmd);
@@ -221,7 +229,10 @@ app.post('/api/live/sample', async (req, res) => {
     const p = await toSlot(String(req.body?.path || ''), req.body?.instrument || req.body?.role || '', 'Snare');
     const send = await liveClient();
     let track = req.body?.track;
-    if (track == null && req.body?.instrument && lastBuild.tracks[req.body.instrument]) track = lastBuild.tracks[req.body.instrument].index;
+    if (track == null && req.body?.instrument) {
+      if (!lastBuild.tracks[req.body.instrument]) throw new Error(`no track for ${req.body.instrument} in the current build`);
+      track = lastBuild.tracks[req.body.instrument].index;
+    }
     const reply = await sendWithRetry(send, { cmd: 'load_sample', path: p, ...(track != null ? { track } : {}) });
     if (!reply?.ok) throw new Error(reply?.error || 'Live rejected load_sample');
     res.json(reply);
@@ -325,7 +336,8 @@ app.post('/api/live/build', async (req, res) => {
       return r;
     };
     if (bpm) await step('tempo', { cmd: 'set_tempo', bpm });
-    lastBuild.bpm = bpm || lastBuild.bpm; lastBuild.tracks = {}; lastBuild.pattern = drums?.pattern || null; lastBuild.melody = synth?.notes ? { notes: synth.notes, bars: synth.bars } : null;
+    const nb = { bpm: bpm || lastBuild.bpm, tracks: {}, pattern: drums?.pattern || null, melody: synth?.notes ? { notes: synth.notes, bars: synth.bars } : null };
+    const softStep = async (label, cmd, retry) => { try { return await step(label, cmd, retry); } catch (e) { console.warn('[build]', e.message); return null; } };
     if (drums?.pattern?.lanes && Array.isArray(drums.lanes) && drums.lanes.length) {
       // one track per drum lane, each with its own synthesized sound
       for (const lane of drums.pattern.lanes) {
@@ -333,23 +345,24 @@ app.post('/api/live/build', async (req, res) => {
         const label = LANE_LABEL[lane.instrument] || lane.instrument;
         const sample = drums.lanes.find((l) => l.instrument === lane.instrument)?.samplePath;
         const t = await step(`create ${label} track`, { cmd: 'create_midi_track', name: label, index: -1 });
-        lastBuild.tracks[lane.instrument] = { index: t.index, name: label };
-        if (sample) await step(`load ${label} sound`, { cmd: 'load_sample', path: await toSlot(sample, lane.instrument, 'Snare'), track: t.index }, true);
+        nb.tracks[lane.instrument] = { index: t.index, name: label };
+        if (sample) await softStep(`load ${label} sound`, { cmd: 'load_sample', path: await toSlot(sample, lane.instrument, 'Snare'), track: t.index }, true);
         await step(`${label} clip`, { cmd: 'create_clip', track: t.index, slot: 0, length: drums.pattern.bars * 4, notes: patternToLiveNotes({ ...drums.pattern, lanes: [lane] }, 'single'), fire: true, name: label, show: false });
       }
     } else if (drums?.pattern?.lanes) {
       const t = await step('create Drums track', { cmd: 'create_midi_track', name: 'Drums', index: -1 });
-      lastBuild.tracks.drums = { index: t.index, name: 'Drums' };
-      if (drums.samplePath) await step('load drum sample', { cmd: 'load_sample', path: await toSlot(drums.samplePath, drums.role || '', 'Snare'), track: t.index }, true);
+      nb.tracks.drums = { index: t.index, name: 'Drums' };
+      if (drums.samplePath) await softStep('load drum sample', { cmd: 'load_sample', path: await toSlot(drums.samplePath, drums.role || '', 'Snare'), track: t.index }, true);
       await step('drums clip', { cmd: 'create_clip', track: t.index, slot: 0, length: drums.pattern.bars * 4, notes: patternToLiveNotes(drums.pattern, drums.mapping || 'single'), fire: true, name: 'Drums', show: false });
     }
     if (synth?.notes?.length) {
       const synthName = (synth.role || 'Saw').replace(/^./, (c) => c.toUpperCase());
       const t = await step(`create ${synthName} track`, { cmd: 'create_midi_track', name: synthName, index: -1 });
-      lastBuild.tracks.synth = { index: t.index, name: synthName };
-      if (synth.samplePath) await step(`load ${synthName} sound`, { cmd: 'load_sample', path: await toSlot(synth.samplePath, synth.role || 'synth', 'Synth'), track: t.index }, true);
+      nb.tracks.synth = { index: t.index, name: synthName };
+      if (synth.samplePath) await softStep(`load ${synthName} sound`, { cmd: 'load_sample', path: await toSlot(synth.samplePath, synth.role || 'synth', 'Synth'), track: t.index }, true);
       await step(`${synthName} clip`, { cmd: 'create_clip', track: t.index, slot: 0, length: melodyBars(synth.notes, synth.bars) * 4, notes: melodyToLiveNotes(synth.notes), fire: true, name: synthName });
     }
+    Object.assign(lastBuild, nb);
     await send({ cmd: 'show_view', view: 'Session' });
     res.json({ ok: true, steps, tracks: lastBuild.tracks });
   } catch (e) { res.status(500).json({ error: e.message, steps }); }
@@ -373,15 +386,23 @@ app.post('/api/live/update', async (req, res) => {
     if (!pattern?.lanes) throw new Error('pattern missing');
     const send = await liveClient();
     lastBuild.pattern = pattern;
+    const hadTracks = Object.keys(lastBuild.tracks);
     if (lastBuild.tracks.drums && !Object.keys(lastBuild.tracks).some((k) => LANE_LABEL[k])) {
       const r = await send({ cmd: 'create_clip', track: lastBuild.tracks.drums.index, slot: 0, length: pattern.bars * 4, notes: patternToLiveNotes(pattern, 'single'), fire: true, name: 'Drums', show: false });
       if (!r?.ok) throw new Error(r?.error); done.push('drums');
     } else {
+      // lanes removed from the pattern: empty their clips so the old hits stop
+      for (const [inst, t] of Object.entries(lastBuild.tracks)) {
+        if (!LANE_LABEL[inst] || pattern.lanes.some((l) => l.instrument === inst && l.steps.length)) continue;
+        if (instruments && !instruments.includes(inst)) continue;
+        const r = await send({ cmd: 'create_clip', track: t.index, slot: 0, length: pattern.bars * 4, notes: [], fire: false, name: t.name, show: false });
+        if (r?.ok) done.push(inst + ' (silenced)');
+      }
       for (const lane of pattern.lanes) {
         if (instruments && !instruments.includes(lane.instrument)) continue;
+        if (!lane.steps.length) continue;
         let t = lastBuild.tracks[lane.instrument];
         if (!t) {
-          if (!lane.steps.length) continue;
           const label = LANE_LABEL[lane.instrument] || lane.instrument;
           const c = await send({ cmd: 'create_midi_track', name: label, index: -1 });
           if (!c?.ok) throw new Error(c?.error);
@@ -391,7 +412,7 @@ app.post('/api/live/update', async (req, res) => {
         if (!r?.ok) throw new Error(`${t.name}: ${r?.error}`); done.push(lane.instrument);
       }
     }
-    res.json({ ok: true, updated: done });
+    res.json({ ok: true, updated: done, hadTracks });
   } catch (e) { res.status(500).json({ error: e.message, updated: done }); }
 });
 app.post('/api/tweak', async (req, res) => {
