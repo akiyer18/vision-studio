@@ -615,9 +615,9 @@ function makeCtx(emit) {
         const send = await liveClient();
         const t = await ensureTrack(send, name);
         let load = null;
-        if (samplePath) { const slotPath = await toSlot(samplePath, instrument || name, 'Snare'); load = await sendWithRetry(send, { cmd: 'load_sample', path: slotPath, track: t.index }); if (load?.ok) rememberSound(t.name, samplePath, slotPath, instrument || name); }
+        if (samplePath) { const slotPath = await toSlot(samplePath, instrument || name, 'Snare'); load = await sendWithRetry(send, { cmd: 'load_sample', path: slotPath, track: t.name }); if (load?.ok) rememberSound(t.name, samplePath, slotPath, instrument || name); }
         const notes = stepsToNotes(steps, swing);
-        const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.index, slot: Number(slot) || 0, length: bars * 4, notes, fire: true, name, show: false }), 'create_clip');
+        const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.name, slot: Number(slot) || 0, length: bars * 4, notes, fire: true, name, show: false }), 'create_clip');
         lastBuild.tracks[instrument || name] = { index: t.index, name: t.name };
         if (!Number(slot)) rememberClip(t.name, { steps, bars, swing });
         return { track: t, notes: notes.length, loadedSample: Boolean(load?.ok), loadError: load && !load.ok ? load.error : undefined, clip: clip.mode };
@@ -626,8 +626,8 @@ function makeCtx(emit) {
         const send = await liveClient();
         const t = await ensureTrack(send, name);
         let load = null;
-        if (samplePath) { const slotPath = await toSlot(samplePath, name, 'Synth'); load = await sendWithRetry(send, { cmd: 'load_sample', path: slotPath, track: t.index }); if (load?.ok) rememberSound(t.name, samplePath, slotPath, 'synth'); }
-        const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.index, slot: Number(slot) || 0, length: melodyBars(notes, bars) * 4, notes: melodyToLiveNotes(notes), fire: true, name, show: false }), 'create_clip');
+        if (samplePath) { const slotPath = await toSlot(samplePath, name, 'Synth'); load = await sendWithRetry(send, { cmd: 'load_sample', path: slotPath, track: t.name }); if (load?.ok) rememberSound(t.name, samplePath, slotPath, 'synth'); }
+        const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.name, slot: Number(slot) || 0, length: melodyBars(notes, bars) * 4, notes: melodyToLiveNotes(notes), fire: true, name, show: false }), 'create_clip');
         lastBuild.tracks[name.toLowerCase()] = { index: t.index, name: t.name };
         if (!Number(slot)) rememberClip(t.name, { notes, bars: melodyBars(notes, bars) });
         return { track: t, notes: notes.length, loadedSample: Boolean(load?.ok), loadError: load && !load.ok ? load.error : undefined, clip: clip.mode };
@@ -637,17 +637,17 @@ function makeCtx(emit) {
         const t = await trackByName(send, name); if (!t) throw new Error(`no track named ${name}`);
         const liveNotes = notes ? melodyToLiveNotes(notes) : stepsToNotes(steps || [], swing);
         const length = notes ? melodyBars(notes, bars) * 4 : bars * 4;
-        const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.index, slot: Number(slot) || 0, length, notes: liveNotes, fire: true, name: t.name, show: false }), 'create_clip');
+        const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.name, slot: Number(slot) || 0, length, notes: liveNotes, fire: true, name: t.name, show: false }), 'create_clip');
         if (!Number(slot)) rememberClip(t.name, notes ? { notes, bars: length / 4 } : { steps: steps || [], bars, swing });
         return { track: t, notes: liveNotes.length, clip: clip.mode };
       },
       // ---- hands: devices, mixer, scenes, arrangement (ADEHack v4 protocol) ----
-      async loadDevice({ track, name, device }) { name = name || device; const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'load_device', track: t.index, name }), `load_device ${name}`); },
-      async setParam({ track, device, param, value }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'set_device_param', track: t.index, device, param, value: Number(value) }), 'set_device_param'); },
+      async loadDevice({ track, name, device }) { name = name || device; const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'load_device', track: t.name, name }), `load_device ${name}`); },
+      async setParam({ track, device, param, value }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'set_device_param', track: t.name, device, param, value: Number(value) }), 'set_device_param'); },
       async listDevices(arg) {
         const { track, params = true } = typeof arg === 'object' && arg ? arg : { track: arg };
         const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`);
-        const r = okOrThrow(await send({ cmd: 'list_devices', track: t.index, params: Boolean(params) }), 'list_devices');
+        const r = okOrThrow(await send({ cmd: 'list_devices', track: t.name, params: Boolean(params) }), 'list_devices');
         const known = lastBuild.samples[t.name.toLowerCase()];
         for (const d of r.devices || []) {
           if (/simpler|sampler/i.test(d.class_name || '')) {
@@ -657,8 +657,8 @@ function makeCtx(emit) {
         }
         return r;
       },
-      async deleteDevice({ track, device }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'delete_device', track: t.index, device }), 'delete_device'); },
-      async setMixer({ track, volume, pan, mute, solo, arm }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); const cmd = { cmd: 'set_mixer', track: t.index }; if (volume != null) cmd.volume = clamp(Number(volume), 0, 1); if (pan != null) cmd.pan = clamp(Number(pan), -1, 1); if (mute != null) cmd.mute = Boolean(mute); if (solo != null) cmd.solo = Boolean(solo); if (arm != null) cmd.arm = Boolean(arm); return okOrThrow(await send(cmd), 'set_mixer'); },
+      async deleteDevice({ track, device }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'delete_device', track: t.name, device }), 'delete_device'); },
+      async setMixer({ track, volume, pan, mute, solo, arm }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); const cmd = { cmd: 'set_mixer', track: t.name }; if (volume != null) cmd.volume = clamp(Number(volume), 0, 1); if (pan != null) cmd.pan = clamp(Number(pan), -1, 1); if (mute != null) cmd.mute = Boolean(mute); if (solo != null) cmd.solo = Boolean(solo); if (arm != null) cmd.arm = Boolean(arm); return okOrThrow(await send(cmd), 'set_mixer'); },
       setTrackColor: async ({ track, colorIndex, color_index }) => { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'set_track_color', track: t.name, color_index: Number(colorIndex ?? color_index) }), 'set_track_color'); },
       captureMidi: async () => okOrThrow(await (await liveClient())({ cmd: 'capture_midi' }), 'capture_midi'),
       clipEdit: async ({ track, slot = 0, ...ops }) => { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'clip_edit', track: t.name, slot: Number(slot) || 0, ...ops }), 'clip_edit'); },
