@@ -3,7 +3,7 @@
 Install: `./ableton/install.sh`, restart Live, Preferences > Link/MIDI > Control Surface > "ADEHack" (In/Out: None).
 Test: `printf '{"cmd":"ping"}\n' | nc 127.0.0.1 9004` (or `node ableton/client.js ping`). Log: `~/Library/Preferences/Ableton/Live 10.*/Log.txt` (grep ADEHack).
 
-Commands: `ping`, `set_tempo {bpm}`, `list_tracks`, `select_track {track:int|name}`, `create_midi_track {name?, index=-1}`,
+Commands: `version` -> {ok, version, cmds:[...]} (also in `ping`; ableton/VERSION holds the same string), `ping`, `set_tempo {bpm}`, `list_tracks`, `select_track {track:int|name}`, `create_midi_track {name?, index=-1}`,
 `create_clip {track:"selected"|int|name, slot?, length, notes|pattern, mapping, singleNote, name?, fire?}` (an existing MIDI clip in the slot is updated in place via `select_all_notes()+replace_selected_notes()` so a playing clip
 stays in sync; pass recreate:true to delete+create instead; fire is skipped if the slot is already playing; then focuses it like focus_clip unless show:false),
 `load_sample {path, track?:int|name, mode:"replace"|"append"}` (selects track first; replace = hot-swap the track's existing

@@ -10,6 +10,7 @@ import socket
 import Live
 from _Framework.ControlSurface import ControlSurface
 
+VERSION = '5.0'
 HOST = '127.0.0.1'
 PORT = 9004
 GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 42,
@@ -17,6 +18,7 @@ GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 4
                  'crash': 49, 'perc': 54}
 WOULD_BLOCK = (errno.EAGAIN, errno.EWOULDBLOCK, errno.EINPROGRESS)
 PENDING = object()  # returned by a command that will reply later via schedule_message
+COMMANDS = ['arrangement_record', 'browse', 'capture_midi', 'clip_edit', 'create_clip', 'create_midi_track', 'create_scene', 'delete_device', 'delete_track', 'duplicate_clip', 'duplicate_scene', 'duplicate_track', 'fire_scene', 'focus_clip', 'list_devices', 'list_scenes', 'list_tracks', 'load_device', 'load_sample', 'ping', 'play', 'rename_scene', 'rename_track', 'select_track', 'set_device_param', 'set_mixer', 'set_tempo', 'set_track_color', 'show_view', 'stop', 'stop_clip', 'transport_setup', 'version']
 LOAD_RETRY_TICKS = 3   # ~0.3 s between browser re-scans
 LOAD_RETRY_MAX = 8     # ~2.4 s total before replying not found
 
@@ -120,6 +122,8 @@ class ADEHack(ControlSurface):
             self.log_message('ADEHack: cmd %r' % (text[:300],))
             if cmd == 'ping':
                 return self._cmd_ping(msg)
+            if cmd == 'version':
+                return {'ok': True, 'version': VERSION, 'cmds': COMMANDS}
             if cmd == 'set_tempo':
                 self.song().tempo = float(msg['bpm'])
                 return {'ok': True, 'tempo': self.song().tempo}
@@ -515,7 +519,7 @@ class ADEHack(ControlSurface):
 
     def _cmd_ping(self, msg):
         song = self.song()
-        return {'ok': True, 'tempo': song.tempo,
+        return {'ok': True, 'version': VERSION, 'tempo': song.tempo,
                 'tracks': [t.name for t in song.tracks],
                 'selected_track': song.view.selected_track.name}
 
