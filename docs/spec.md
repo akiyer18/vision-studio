@@ -189,63 +189,72 @@ bass as roots around C2, velocity 80 to 100. Detected audio keys replace the pre
 
 ## 7. Design
 
-Create is a dark analytics dashboard with a warm ember accent and a restrained control-room edge. The window is a 12 column grid, at most 1600px wide. A 240px sidebar sits on the left. The main column holds the page header, four readout tiles, the conversation and the brief, then results, an insight strip, and the player.
+Create fills the viewport. At 1280 by 800, 1440 by 900, and 1920 by 1080 the page does not scroll. The conversation thread and the results list scroll inside their cards. The brief column can scroll when the trace is open, so a collapsed trace still stays in the document. The document title is "Vision Studio". The favicon is a violet waveform.
 
-The ground is `#0B0A09`, with a film grain overlay at about 2.5% opacity and a faint warm radial glow behind the main column. Cards are `#141210`, with a 1px border `rgba(255,140,80,0.10)` and a soft inner gradient from `rgba(255,106,43,0.05)` at the top to transparent. Raised controls are `#1C1915`. Primary text is `#F2EDE8`. Secondary text is `#A39B92`. On ember `#FF6A2B`, text is `#0B0A09`. On the deep fill `#5A2410`, text is `#F2EDE8`. Those pairs are at least 4.5 to 1. `#6E675F` is only for non-text marks such as an empty sparkline or an idle status light. It is not used for readable copy, because on `#141210` it is about 3.5 to 1. Quiet readable copy uses `#A39B92`.
+The sidebar is 248px, flush to the left edge. The main area is fluid, with 32px side padding and a 24px gap. The content uses the full width up to 1680px and is centred beyond that. The rows are the header, readout tiles at a fixed 112px, the conversation and brief filling the rest, then the insight strip. When results exist, that row and the player take the space under the conversation. Conversation is 8 columns. Brief is 4. Under 1024px the sidebar collapses to icons with tooltips, the tiles become 2 by 2, the brief moves below the conversation as a collapsible card, and the page may scroll. At 1280px the sidebar labels stay.
+
+The ground is `#0A0A12`, with film grain at 2% opacity and a soft violet radial glow behind the main area. Cards are `#12121C`, with a 1px border `rgba(167,139,250,0.12)` and an inner gradient from `rgba(139,92,246,0.06)` at the top to transparent. Raised controls are `#1A1A27`. Hover surfaces are `#20202F`. Primary text is `#EEEDF7`. Secondary text is `#A6A3BF`. On violet `#8B5CF6`, text is `#0A0A12`, because white on that violet is about 3.6 to 1 and the near-black pair is about 4.7 to 1. On the deep fill `#2E1F5E`, text is `#EEEDF7`. `#6F6C8A` is only for non-text marks such as an empty sparkline or an idle status light. On a card it is about 3.8 to 1, so readable muted copy uses `#7E7A9C`, which is about 4.6 to 1. Cyan `#5EEAD4` is only for detected values and success, including the ready light.
 
 | token | value | use |
 | --- | --- | --- |
-| Background | #0B0A09 | the ground |
-| Card | #141210 | sidebar, cards, the player |
-| Raised | #1C1915 | inputs and controls |
-| Ink | #F2EDE8 | primary text |
-| Secondary | #A39B92 | labels, hints, quiet copy |
-| Mark | #6E675F | non-text marks only |
-| Ember | #FF6A2B | the accent, focus, primary actions, the playhead |
-| Ember soft | #FF9A5C | gradients and the ready light |
-| Ember deep | #5A2410 | filled backgrounds, such as your message |
+| Background | #0A0A12 | the ground, and text on a filled violet control |
+| Card | #12121C | sidebar, cards, the player |
+| Raised | #1A1A27 | inputs and controls |
+| Hover | #20202F | hover surfaces |
+| Ink | #EEEDF7 | primary text |
+| Secondary | #A6A3BF | labels and hints |
+| Muted | #7E7A9C | readable quiet copy |
+| Quiet | #6F6C8A | non-text marks only |
+| Violet | #8B5CF6 | the accent and filled primary actions |
+| Light violet | #A78BFA | gradients, glows, focus, the thinking light |
+| Deep violet | #2E1F5E | filled backgrounds, such as your message |
+| Cyan | #5EEAD4 | detected values, success, the ready light |
 
-Status lights sit next to the session word. Ready is `#FF9A5C`. Thinking is `#FFB020` and blinks. Error is `#FF4D3D`. The words stay idle, thinking, building, ready, and error. While the agent is thinking or rendering, a thin diagonal hazard stripe runs along the top edge of the conversation card and the results card. Reduced motion holds the light steady and stops the stripe. There are no scanlines on text.
+Status lights sit next to the session word. Idle uses the quiet mark colour. Thinking is `#A78BFA` and pulses. Ready is `#5EEAD4`. Error is `#F87171`. The words stay idle, thinking, building, ready, and error. Building uses the thinking light. While the agent is thinking or rendering, a thin animated diagonal stripe runs along the top edge of that card. Reduced motion holds the light and the thinking dots steady and stops the stripe. Readout numbers have a faint violet glow. Nothing else glows. Focus is a 1px light violet ring. Hover changes the surface over 150ms. A filled violet control lightens to `#A78BFA` on hover and keeps the dark text.
 
-Lane colours appear only on the audio dot and on a layer pill after it is selected. Waveforms use an ember gradient, from `#FF9A5C` into `#FF6A2B`. Full mix has no sixth hue.
+Lane colours are slightly desaturated and appear only on audio, waveforms, and a selected layer pill. A waveform runs from violet `#8B5CF6` into the lane colour. Full mix uses the light violet, not a sixth hue.
 
 | lane | hex |
 | --- | --- |
-| Drums | #C45A4A |
-| Chords | #C9A15A |
-| Bass | #3D8F78 |
-| Melody | #5D7EC4 |
-| Texture | #8A6BB8 |
+| Drums | #F07167 |
+| Chords | #F2C14E |
+| Bass | #4FD1A5 |
+| Melody | #7AA2FF |
+| Texture | #C084FC |
 
-General Sans is the interface. Martian Mono is the readout values, file names, and the trace. Both are self hosted, General Sans from Fontshare and Martian Mono from Fontsource, so the app works offline. Inter Tight is an allowed alternative and is not loaded. Sentence case. No all caps. Tabular numbers. The eyebrow is 12px medium in ember. The page title is 32px semibold. Card titles are 16px semibold. Body is 14px. Readout values are 28px, with a faint ember glow. Icons are from lucide, and every icon button has a label or a tooltip.
+General Sans is the interface. Martian Mono is the readout values, file names, and the trace. Both are self hosted, so the app works offline. Sentence case. No all caps. Tabular numbers. The eyebrow is 12px medium in light violet. The page title is 30px semibold. Card titles are 15px semibold. Body is 14px with line height 1.55. Small text is 12px. Readout values are 26px. Icons are 16px, from lucide, with an 8px gap to the label. Every icon button has a label or a tooltip.
 
-Cards are 16px radius. Controls are 10px. Pills are fully round. Gaps between cards are 24px. Card padding is 20px. Spacing stays on a 4px grid. Hover and focus use a soft ember glow. Motion is 150 to 200ms.
+Spacing is 4, 8, 12, 16, 24, and 32. Cards are 16px radius with 20px padding. The readout tiles are 112px tall, so they use 12px vertical padding and 20px horizontal padding and the number still fits. Controls are 10px radius. Pills are fully round.
 
-The sidebar holds the Vision Studio wordmark, then the rooms with an icon and a label: Create, Genres, Analyse with a Soon pill, and Tweak with a Soon pill. Analyse and Tweak are not clickable while those flags are off. Recent ideas follow, each with a small waveform icon. At the bottom, a tip reads "Press Build now at any time, your details stay exactly as you said them", then Help. Under 1280px the sidebar collapses to icons, and each item keeps its tooltip. The wordmark is the tour's welcome target.
+The sidebar holds a small waveform mark beside the words Vision Studio. That wordmark is the tour's welcome target. Then the rooms, each with an icon and a label: Create, Genres, Analyse with a Soon pill, and Tweak with a Soon pill. Analyse and Tweak are not clickable while those flags are off. Recent ideas follow, each with a small waveform icon. At the bottom, a tip reads "Press Build now at any time, your details stay exactly as you said them", then Help.
 
-The page header eyebrow is "Create". The title is "Shape your idea". The subtitle is "Describe it, record it, or drop a file. I ask only what is missing." On the right are the session status with its light, Build now, and Build. Build now returns the review at any time and is disabled while a turn, a render, or a recording is in flight. Build is the only button whose text is exactly "Build". It stays disabled, with a tooltip, until prompts exist. There is one of each.
+The page header eyebrow is "Create". The title is "Shape your idea". The subtitle is "Describe it, record it, or drop a file. I ask only what is missing." On the right are the session status with its light, and one Build now button. Build now is the filled violet primary. It returns the review at any time and is disabled while a turn, a render, or a recording is in flight. It carries the tour target, because the render Build does not exist until prompts are ready. The only button whose text is exactly "Build" is inside the ready message in the conversation. It renders the layers and is disabled while a request is in flight.
 
-Four readout tiles sit in a row: Tempo, Key, Bars, and Brief coverage. Each shows the label, a Martian Mono value, a source pill, and a small visual: a pulse for tempo, a key wheel, bar ticks, and a coverage ring. The pills read you, detected, or auto. A guessed value is auto. A genre reference stays reference. An empty value reads "auto" in secondary text, with the hint "set from your words". It does not use a dash.
+Four readout tiles sit in a row: Tempo, Key, Bars, and Brief coverage. Each shows the label, a Martian Mono value, and a small visual: a pulse for tempo, a key wheel, bar ticks, and a coverage ring. An empty value reads "auto" once, in muted text, with the hint "from your words", and no source pill. A set value shows the value, then a pill: you, detected, or default. A guessed value says default. A detected value is cyan. A genre reference stays reference. Coverage, once it is a number, shows the percent and a default pill, because it is derived. While the first turn is still loading and the value is unknown, the number is a skeleton of the same height.
 
-The conversation card spans 8 columns. Messages are bubbles: the agent on the left with a small mark, you on the right. A question is an agent bubble, with option pills in a grid, one line that starts "Why I am asking:", and You decide, Skip this, and Skip all and build. That question is the only `article` with `aria-live="polite"`. The composer is docked at the bottom of the card. "A full idea" and "One sound" are a segmented switch. Attach and Record, when record is on, are icon buttons. Send is a round button with an arrow. Its accessible name, and the text inside it, is "Send the idea". The field stays mounted, and its text is not cleared when the session id changes. The field is two lines tall when empty and grows to six. One ember ring appears on the whole field when focus is inside it. The text area has no outline of its own. Quick starts stay under the field: Rainy night drive, Summer festival, Calm morning, and Try the demo when the demo flag is on.
+Before any detail is known, the brief shows one line: "Details appear here as we talk." It does not list tempo, key, or bars. Those live only in the tiles. Other filled slots are grouped as Locked, From you, Detected, and Defaults, and empty groups are hidden. A fact you stated for palette, sound, meter, or progression shows a lock icon. Filled slots stay click-to-edit. Facets sit under their layer. Layer pills follow in the same card. They are colourless until selected, then filled with a tint of the lane colour. The choice defaults to all layers separately until you change it. The pill for that choice reads "All layers". The trace stays in the document, collapsed by default, and can open. A trace line can still mark the matching row. Under 1024px the brief can collapse to a slim summary row.
 
-The brief card spans 4 columns. Rows are grouped as Locked, From you, Detected, and Defaults. A fact you stated for tempo, key, progression, bars, palette, sound, or meter shows a lock icon. Filled slots stay click-to-edit. Facets sit under their layer. Layer pills follow in the same card. They are colourless until selected, then filled with a tint of the lane colour. The choice defaults to all layers separately until you change it. The pill for that choice reads "All layers". The trace stays in the document, in its own card, and can collapse. A trace line can still mark the matching row. Under 1024px the brief can collapse to a slim summary row.
+The conversation card spans 8 columns. Before any input, an agent message states the contract: a few short questions, your details stay as you said them, and Build now works at any time. The example chips sit in that thread: Rainy night drive, Summer festival, Calm morning, and Try the demo when the demo flag is on. They are not under the composer. Messages are bubbles. The agent is on the left with the waveform mark. You are on the right, in the deep violet fill. An answered question is an agent bubble plus a user bubble. The thread scrolls to the newest message. If you have scrolled up, a "Jump to latest" pill appears. That label is not a demo label. New agent messages are announced from the question, which is the only `article` with `aria-live="polite"`. The thread itself is a log.
 
-After Build, a full width results card lists one row per layer: a lane colour dot, the layer name, an ember waveform, three take buttons, Pick, Another take, and a download icon. Every variation stays in the document, with `data-variant`. A sticky player offers Play together and Export to Logic, then the export folder. Variation 1 is used for any layer that was not picked. Start a new idea clears the session.
+A question is an agent bubble, with option pills in a responsive grid, one line that starts "Why I am asking:", and You decide, Skip this, and Skip all and build as quiet text buttons. The skip-all control keeps that full label. Thinking is an agent bubble with three pulsing dots and the latest trace line, or "Thinking" when there is no trace yet. Reduced motion holds the dots steady.
 
-An insight card sits under the work: an icon, a short line, and one next step. When the idea has an arc, the line is "Your idea has a clear arc from {start} to {end}, I will build it in two sections". The next-step label is never one of the demo labels. An empty state says what to do next and offers one button. An error sits in the panel it belongs to, with Try again.
+The composer is docked at the bottom of the conversation card. "A full idea" and "One sound" are a compact segmented switch. Attach and Record, when record is on, are 32px icon buttons with tooltips. Send is a round violet button. Its accessible name, and the text inside it, is "Send the idea". It is disabled while a request is in flight. The field stays mounted, and its text is not cleared when the session id changes. The field is two lines tall and grows to six. Shift and Enter inserts a line. One violet ring appears on the whole field when focus is inside it. The text area has no outline of its own.
 
-The first visit opens a tour after 800 ms. It says what Vision Studio is and that it takes about 60 seconds, then highlights the sidebar, the input, the brief, and Build. Next, Back, and close. Finishing or closing stores that it was seen. Help holds Replay tour and Shortcuts. The tour does not mention a feature that is switched off.
+When prompts exist, the ready message holds the prompt cards. They use the same card language as the review: editable fields and a clear confirm. "Write prompts" and "Back to questions" stay those labels. The prompt field ids stay `thread-{layer}-prompt` and `thread-{layer}-negative`. The ready message also holds Build and Go deeper.
+
+After Build, a results card lists one row per layer: a lane colour dot, the layer name, a waveform from violet into the lane colour, take buttons 1, 2, and 3, Pick, Another take, and a download icon. The download name stays available to a screen reader. Every variation stays in the document, with `data-variant`, including the ones not on screen. While the takes are still arriving, the card shows skeletons of the same height. A player row at the bottom of the main area offers Play together and Export to Logic, then the export folder. While the layers are playing, the button reads Stop and its accessible name is "Stop the layers". Variation 1 is used for any layer that was not picked. Start a new idea clears the session. Try again stays on the action that failed.
+
+Before any input, the insight strip rotates example tips and has no button. The first tip is "Try: 94 BPM, four on the floor, industrial and punchy". Reduced motion stays on that tip. After input, the strip shows the latest useful insight or the next step, never the page subtitle. The next-step label is never one of the demo labels. When the prompts are ready, that step focuses the in-thread Build. An error sits in the panel it belongs to, with Try again.
+
+The first visit opens a tour after 800 ms. It says what Vision Studio is and that it takes about 60 seconds, then highlights the sidebar, the input, the brief, and Build now. Next, Back, and close. Finishing or closing stores that it was seen. Help holds Replay tour and Shortcuts. The tour does not mention a feature that is switched off.
 
 Flags live in `apps/web/src/features.ts`: record, soloMute, fullMix, styleguideLink, demo, create, genre, analyser, edits, and soundcharts. Create and Genre deep dive are on. Analyser and edits are off, so Analyse and Tweak show a Soon pill and are not clickable. Soundcharts is off. Solo and mute are local when the flag is on. Mute drops that layer from playback and from the next full build. Solo keeps only that layer. The buttons use `aria-pressed`. Recent ideas are kept in localStorage, up to 20, newest first. The first turn of a session saves the title, date, brief, prompts, selected layers, and any render paths. Opening one restores that session on screen without another agent turn. If a render file is gone, that layer says Build again. Rename and delete sit on the row.
 
-Under 1024px the conversation and the brief stack, and the readout tiles become a 2 by 2 grid. Under 1280px the sidebar is icons only.
+The layer rows and the player load lazily, so wavesurfer loads with them. One store, and each panel selects its own data. Lane rows are memoised. Colours, spacing, radius, and type live as CSS variables, and Tailwind reads them from the same theme.
 
-The layer rows and the player load lazily, so wavesurfer loads with them. One store, and each panel selects its own data. Lane rows are memoised.
+Keyboard. Enter sends. Shift and Enter inserts a line. S skips a question, or solos a focused lane when solo and mute are on. Shift+S skips all and builds. M mutes the focused lane when that flag is on. Space plays or stops, and does nothing while typing. ? opens the shortcuts.
 
-Keyboard. Enter sends. S skips a question, or solos a focused lane when solo and mute are on. Shift+S skips all and builds. M mutes the focused lane when that flag is on. Space plays or stops, and does nothing while typing. ? opens the shortcuts.
-
-While a turn or a render is in flight, Send, Enter, the answer pills, You decide, Skip this, Skip all and build, Build now, and Record wait. Thinking is an agent bubble with a blinking light and the latest trace line, or "Thinking" when there is no trace yet. A failure brings the controls back and offers Try again. While a reading waits for confirmation, Confirm this reading is the button, and the reading stays on screen. The reading still says "BPM" and names the key, including "A minor" when that is what was heard. The trace still contains "bpm:" after that reading is confirmed. Enter sends. Every turn sends a new request id. A repeat of that id returns the same response.
+While a turn or a render is in flight, Send, Enter, the answer pills, You decide, Skip this, Skip all and build, Build now, and Record wait. A failure brings the controls back and offers Try again. While a reading waits for confirmation, Confirm this reading is the button, and the reading stays on screen. The reading still says "BPM" and names the key, including "A minor" when that is what was heard. The trace still contains "bpm:" after that reading is confirmed. Enter sends. Every turn sends a new request id. A repeat of that id returns the same response.
 
 Copy the demos click stays plain: "Send the idea", "Confirm this reading", "Skip this", "Skip all and build", "You decide", "Build", "Another take", "Pick", "Play together", "Export to Logic", "Try again", and "Start a new idea". "Write prompts", "Back to questions", "Go deeper", and "Build now" are extra labels and are not a second "Build".
 
