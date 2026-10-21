@@ -139,3 +139,32 @@ File naming: `${slug(name)}-${Date.now()}.wav|.mid`
 - build_drum_layer / build_melody_layer / update_layer gain optional `slot` (0 = scene A, 1 = scene B ...) for variations; create_scene { name }, fire_scene { index }
 - record_arrangement { bars } -> ctx.live.recordArrangement (records what is playing in Session into the Arrangement for N bars; then stops)
 - System prompt: attachments stay available across turns (ref names + paths listed each turn); when asked for vocal chops: chop_sample or slice_sample the reference and build a layer from the pieces (optionally run pieces through synthesize_sound source ref#N for new textures); "dirtier/warmer/wider/darker/punchier" map to add_effect recipes before re-synthesizing; keep listen/judge budget; variations go in scene B via slot 1; reply format unchanged.
+
+# ---- v5: technical analysis, preview render, density, arrangement layout ----
+
+## lib/analyze.js (no deps; ffmpeg for decode + ebur128/astats)
+- analyzeAudio(path) -> {
+    durationSeconds, sampleRate,
+    loudness: { integratedLufs, loudnessRange, peakDbfs, rmsDbfs, crestFactorDb },           // ffmpeg ebur128 + astats (or computed)
+    envelope: { attackMs (time to peak), decayMs (peak -> -20 dB), sustainRatio },
+    spectrum: { centroidHz, rolloff85Hz, flatness, bands: { sub:[20,60], low:[60,250], lowMid:[250,800], mid:[800,2500], high:[2500,8000], air:[8000,20000] } each { db (relative to total), share (0..1) } },
+    pitch: { hz, midi, note, confidence } | null (YIN on the loudest 200 ms, tonal only),
+    rhythm: { onsetCount, bpmEstimate } | null (files > 2 s),
+    stereo: { width (0..1), correlation } | null (mono input -> null),
+    ratings: { loudness, punch, subWeight, lowEnd, body, presence, brightness, air, noisiness, tonalness, length } each 'low'|'medium'|'high' with the number it is based on,
+    summary: one neutral technical sentence (no good/bad words) }
+  Decode at 44.1 kHz stereo via ffmpeg f32le; FFT (radix-2, 4096, Hann, hop 1024) in JS. Thresholds documented at top of file (e.g. crest < 10 dB low, 10-16 medium, > 16 high; centroid < 1 kHz low, 1-3 kHz medium, > 3 kHz high; integrated LUFS < -20 low, -20..-12 medium, > -12 high).
+- compareProfiles(a, b) -> { deltas: {...per rating numeric difference}, text: neutral comparison sentences ("reference has 6 dB more sub-band energy; produced kick decays 120 ms faster") }
+
+## lib/render.js (offline preview mix of what the agent built, so the produced beat can be measured)
+- renderPreview({ bpm, bars, layers:[{ name, samplePath, steps?:[{step,velocity}], notes?:[{pitch,startBeats,durationBeats,velocity}], gainDb?:0 }], outPath }) -> { path, durationSeconds }
+  Decode each sample to 44.1k stereo float, place hits (velocity -> linear gain v/127), pitched notes via linear resampling (rate = 2^((pitch-60)/12)), sum, soft-limit at -1 dBFS, write 16-bit stereo wav. No Live effects (say so in the UI).
+
+## agent tools (lib/agent.js v5)
+- analyze_audio { which:'beat'|'hum'|'ref#N'|path } -> ctx.analyze(path) -> the profile (compact: ratings + key numbers + summary)
+- compare_audio { a, b } -> ctx.compare(pathA, pathB)
+- render_preview { bars? } -> ctx.render(...) builds from the registry (tracks + their sounds + the last clips) -> { path, url } and auto-runs analyze_audio on it
+- System prompt: DENSITY rule (default "standard": kick, snare or clap, hats, at most one perc/vox layer; "minimal": 3 layers; "rich": up to 7); never duplicate roles (one hat type unless asked); FEEDBACK rule: when the user asks what you think / for feedback / to compare, answer with measurements and low/medium/high ratings, never good/bad/nice; for references run analyze_audio (and listen only if ears available), for produced beats run render_preview then analyze; when "lay it out"/"arrangement" is mentioned call record_arrangement; color-code tracks by role with set_track_color when available.
+
+## server/UI
+- ctx.analyze / ctx.compare / ctx.render wired; POST /api/analyze {path|uploadId} and POST /api/live/arrange {bars}; UI: Density select in the composer (prefixes the message with "[density: minimal]"), "Lay out in Arrangement" button, analysis cards rendered from tool_done events of analyze_audio (ratings grid).
