@@ -901,6 +901,12 @@ function makeCtx(emit) {
           }
         } catch (e) { out.deconstructError = e.message.slice(0, 160); }
       }
+      // never stack: a regenerated full mix on top of the original (plus a kit, plus a bass) is a wall of doubled sound.
+      // The kit and bass start muted (the user asks for them), and the enhanced version is auditioned soloed.
+      try { if (out.kit && !out.kit.error) await send({ cmd: 'set_mixer', track: 'AI Kit', mute: true }); } catch {}
+      try { if (out.bass && !out.bass.error) await send({ cmd: 'set_mixer', track: 'AI Bass', mute: true }); } catch {}
+      try { out.audition = await this.live.audition({ tracks: ['AI Enhance'], bars: Math.min(useBars, 8) }); } catch (e) { out.audition = { error: e.message }; }
+      out.listening = 'AI Enhance is playing SOLOED for a few bars so the user hears it alone; AI Kit and AI Bass are muted until asked for. Offer: "A/B it against my original", "use the AI kit instead of my drums", "unmute the bass".';
       out.ms = Date.now() - t0;
       return out;
     },
@@ -1596,6 +1602,20 @@ function makeCtx(emit) {
       },
       fireScene: async (arg) => { const index = typeof arg === 'object' && arg ? arg.index : arg; return okOrThrow(await (await liveClient())({ cmd: 'fire_scene', index: Number(index) }), 'fire_scene'); },
       listScenes: async () => okOrThrow(await (await liveClient())({ cmd: 'list_scenes' }), 'list_scenes'),
+      /** Solo the named tracks for `bars`, play, then restore: the only honest way to hear a new layer against (not on top of) the set. */
+      async audition({ tracks = [], bars = 4, unsoloAfter = true } = {}) {
+        const send = await liveClient();
+        const set = await send({ cmd: 'describe_set' });
+        const before = Object.fromEntries((set?.tracks || []).map((t) => [t.name, { solo: Boolean(t.solo ?? t.mixer?.solo), mute: Boolean(t.mute ?? t.muted ?? t.mixer?.mute) }]));
+        const want = new Set(tracks.map((n) => String(n).toLowerCase()));
+        const names = (set?.tracks || []).map((t) => t.name).filter((n) => want.has(n.toLowerCase()));
+        if (!names.length) throw new Error(`audition: none of ${tracks.join(', ')} exist`);
+        for (const n of names) { await send({ cmd: 'set_mixer', track: n, solo: true, mute: false }); }
+        const bpm = await syncTempo(); const seconds = Math.ceil(clamp(Number(bars) || 4, 1, 32) * 240 / bpm) + 0.5;
+        await send({ cmd: 'play_for', seconds });
+        if (unsoloAfter) setTimeout(async () => { try { for (const n of names) await send({ cmd: 'set_mixer', track: n, solo: before[n]?.solo || false }); } catch {} }, seconds * 1000 + 300);
+        return { auditioning: names, bars, seconds, restoreAfter: unsoloAfter, note: 'soloed so you hear only these; other tracks come back when it stops' };
+      },
       // ---- ADEHack 5.7: audio clips, warping, undo, meters, recording the producer's own playing ----
       undo: async ({ steps = 1 } = {}) => okOrThrow(await (await liveClient())({ cmd: 'undo', steps: clamp(Number(steps) || 1, 1, 20) }), 'undo'),
       redo: async ({ steps = 1 } = {}) => okOrThrow(await (await liveClient())({ cmd: 'redo', steps: clamp(Number(steps) || 1, 1, 20) }), 'redo'),
