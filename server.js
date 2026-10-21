@@ -804,7 +804,7 @@ function makeCtx(emit) {
       if (!cap.captureAvailable()) throw new Error('Live audio capture not built: run `bash tools/capture/build.sh` (needs Xcode command line tools), then grant System Audio Recording to the terminal app in System Settings > Privacy & Security');
       const send = await liveClient();
       const bpm = Number((await send({ cmd: 'ping' }))?.tempo) || lastBuild.bpm || 120;   // the set's tempo is authoritative
-      const seconds = Math.ceil(clamp(Number(bars) || 4, 1, 16) * 4 * 60 / bpm) + 1;
+      const seconds = Math.ceil(clamp(Number(bars) || 4, 1, 64) * 4 * 60 / bpm) + 1;
       const barSec = 4 * 60 / bpm;
       const total = seconds + Math.ceil(barSec) + 2;   // pre-roll: launch quantization can delay the start up to a bar
       if (scene != null) await send({ cmd: 'play_scene_for', index: Number(scene), seconds: total });
@@ -830,6 +830,78 @@ function makeCtx(emit) {
       const out = { path: outPath, url: `/out/${encodeURIComponent(path.basename(outPath))}`, bars, bpm, seconds: Number(dur.toFixed(2)), soundingSeconds: Number(sounding.toFixed(2)), silent, peakDbfs: r.peakDbfs, note: silent ? `Live produced (almost) no sound: peak ${r.peakDbfs != null ? r.peakDbfs.toFixed(1) + ' dBFS' : 'none'}, ${sounding.toFixed(1)} s sounding of ${dur.toFixed(1)} s. Check: is the playhead on a section with clips, are the audio files online (no orange missing clips), is Back to Arrangement lit, is Live's output device the one it plays through?` : 'leading silence trimmed to the first downbeat' };
       if (!silent) { try { out.profile = await (await import('./lib/analyze.js')).analyzeAudio(outPath); } catch (e) { out.profileError = e.message; } }
       lastBuild.lastCapture = outPath; lastBuild.lastCaptureAt = Date.now();
+      return out;
+    },
+    async enhanceProject({ intent = '', strength = 0.55, bars, deconstruct = true, genre } = {}) {
+      const t0 = Date.now();
+      const stage = (label, extra) => emit({ type: 'tool_done', name: 'enhance_project', ok: true, summary: `enhance: ${label}`, ...(extra ? { data: extra } : {}) });
+      const send = await liveClient();
+      const bpm = await syncTempo();
+      let info = null; try { info = await send({ cmd: 'arrangement_info' }); } catch {}
+      const totalBars = clamp(Number(bars) || Number(info?.bars) || 8, 1, 64);
+      const maxBarsBySeconds = Math.floor(170 / (240 / bpm));   // Stable Audio 2.5 caps at 190 s; keep headroom
+      const useBars = Math.min(totalBars, Math.max(2, maxBarsBySeconds));
+      stage(`recording ${useBars} bars of the whole set from the playhead (${Math.round(useBars * 240 / bpm)} s)`);
+      const cap = await this.captureLive({ bars: useBars });
+      if (cap.silent) throw new Error(`the capture was silent (${cap.note || 'nothing playing'}); put the playhead at the start of the section and make sure the set plays`);
+      // 1) Gemini: what is actually in the recording
+      let dna = null; try { stage('Gemini listening to the recording'); dna = await (await import('./lib/ears.js')).productionDna(cap.path); } catch (e) { stage(`Gemini unavailable (${e.message.slice(0, 60)}), prompting from the set structure`); }
+      // 2) Claude: one Stable Audio prompt from what was heard + the intent + the blueprint
+      let bp = null; try { bp = await this.genreBlueprint(genre || intent || lastBuild.genreTarget || ''); } catch {}
+      let promptText = null;
+      try {
+        const Anthropic = (await import('@anthropic-ai/sdk')).default; const client = new Anthropic();
+        const guide = await fs.readFile(path.join(here, 'docs', 'stable-audio-prompting.md'), 'utf8').catch(() => '');
+        const r = await client.messages.create({ model: 'claude-opus-5-5', max_tokens: 400, output_config: { effort: 'low' },
+          system: 'You write Stable Audio 3 audio-to-audio prompts for music producers. Output ONLY the prompt line, no quotes, max 60 words. Grammar: "TrackType: Music, Genre: <genre>, <what the music is and does: instruments, groove, mood, era, production>, <BPM> BPM". Describe, never instruct. Keep what the producer wants to keep by naming it.' + (guide ? `\n\nGuide excerpt:\n${guide.slice(0, 2500)}` : ''),
+          messages: [{ role: 'user', content: `The producer's recording, as heard by an audio model: ${JSON.stringify(dna || {}).slice(0, 1500)}\nTempo: ${bpm} BPM.\nProducer's intent: ${intent}\n${bp ? `Style blueprint (${bp.title}): ${bp.summary.slice(0, 900)}` : ''}\nWrite the prompt.` }] });
+        promptText = r.content.filter((b) => b.type === 'text').map((b) => b.text).join(' ').replace(/^["'\s]+|["'\s]+$/g, '').split('\n')[0];
+      } catch (e) { stage(`prompt writer unavailable (${e.message.slice(0, 60)})`); }
+      if (!promptText) promptText = composePrompt({ kind: 'track', title: bp?.title, bpm, body: `${intent}, keeps the original melody and arrangement` });
+      // 3) Stable Audio 3 regenerates the recording audio-to-audio
+      stage(`Stable Audio audio-to-audio (strength ${strength}): ${promptText.slice(0, 90)}`);
+      const seconds = clamp(Math.ceil(cap.seconds || useBars * 240 / bpm), 6, 190);
+      const st = clamp(Number(strength) || 0.55, 0.2, 0.9);
+      let res; try { res = await audioToAudio({ wavPath: cap.path, prompt: promptText, strength: st, duration: seconds, model: LOOP_MODEL }); } catch (e) { stage(`Stable Audio 3 refused (${e.message.slice(0, 60)}), using 2.5`); res = await audioToAudio({ wavPath: cap.path, prompt: promptText, strength: st, duration: seconds, model: 'stable-audio-2.5' }); }
+      const f = await publish(res.buffer, 'enhance', '.wav', 'loop');
+      const ref = this.addRef(`enhanced version of the set (${intent.slice(0, 30)})`, f.path);
+      // 4) into Live as a warped clip next to their material
+      stage('placing the enhanced version in Live');
+      const clip = await this.live.loadAudioClip({ track: 'AI Enhance', slot: 0, samplePath: f.path, warpMode: 'complex_pro', overwrite: true }).catch((e) => ({ error: e.message }));
+      const out = { capture: { url: cap.url, seconds: cap.seconds, bars: useBars }, heard: dna ? { style: dna.styleRead || dna.style || dna.genre, drums: dna.drums, bass: dna.bass, harmony: dna.harmonyMelody || dna.harmony, key: dna.key } : null, prompt: promptText, strength: st, enhanced: { url: f.url, path: f.path, ref: ref.name, clip: clip?.clip ? { track: 'AI Enhance', length: clip.clip.length } : clip }, ms: Date.now() - t0 };
+      // 5) make it editable: stems -> kit + groove, bass -> notes
+      if (deconstruct) {
+        try {
+          const py = await import('./lib/pytools.js');
+          if (!py.pyAvailable()) throw new Error('python toolbelt not installed');
+          stage('separating stems (Demucs)');
+          const stR = await py.stems(f.path, { outDir: path.join(TMP, `stems-${Date.now()}`) }); const stems = stR.stems || stR;
+          out.stems = {}; for (const [k, p] of Object.entries(stems)) if (p) out.stems[k] = this.addRef(`${k} stem of the enhanced version`, p).name;
+          if (stems.drums) {
+            stage('kit + groove from the drum stem');
+            const kitR = await this.sliceKitFromAudio(stems.drums, { name: 'enh' });
+            const rhythm = await this.loopToPattern(stems.drums, { bpm, bars: Math.min(useBars, 4) });
+            this.setGroove(rhythm.groove);
+            const kitMain = kitR.kit.filter((k) => !k.alt);
+            if (kitMain.length && rhythm.pattern?.lanes?.length) out.kit = await this.live.buildKit({ name: 'AI Kit', kit: kitMain, pattern: rhythm.pattern, bars: rhythm.pattern.bars, slot: 0, useGroove: true, humanize: 0.15 }).catch((e) => ({ error: e.message }));
+          }
+          if (stems.bass) {
+            stage('bass line from the bass stem');
+            const normP = path.join(TMP, `enh-bass-norm-${Date.now()}.wav`); await ffmpeg(['-i', stems.bass, '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11', '-ar', '44100', normP]).catch(() => {});
+            const tr = await this.transcribeLocal(await fs.access(normP).then(() => normP).catch(() => stems.bass), { onset: 0.35, frame: 0.25, minNoteMs: 70, bpm });
+            const byOnset = new Map();
+            for (const n of tr.notes) { if (n.pitch < 28 || n.pitch > 55) continue; const k = Math.round(n.startBeats * 4); const prev = byOnset.get(k); if (!prev || n.pitch < prev.pitch) byOnset.set(k, n); }
+            const notes = [...byOnset.values()].map((n) => ({ pitch: n.pitch, startBeats: Math.round(n.startBeats * 4) / 4, durationBeats: Math.max(0.25, Math.round(n.durationBeats * 4) / 4), velocity: n.velocity })).sort((a, b) => a.startBeats - b.startBeats).filter((n) => n.startBeats < Math.min(useBars, 8) * 4);
+            if (notes.length >= 2) {
+              let preset = 'Bass'; try { const k = await import('./lib/knowledge.js'); const pr = bp && k.getPresets ? k.getPresets(bp.slug) : null; const list = pr?.bass || pr?.bassPresets; if (Array.isArray(list) && list.length) preset = list[0]; else if (typeof list === 'string' && list) preset = list.split(/[,|/]/)[0].trim(); } catch {}
+              try { await this.live.loadDevice({ track: 'AI Bass', name: preset }); } catch { try { await this.live.loadDevice({ track: 'AI Bass', name: 'Bass' }); } catch {} }
+              out.bass = await this.live.buildMelody({ name: 'AI Bass', notes, bars: Math.min(useBars, 8), slot: 0 }).catch((e) => ({ error: e.message }));
+              out.bass.notes = notes.length;
+            } else out.bass = { note: 'no clear bass line found in the enhanced version' };
+          }
+        } catch (e) { out.deconstructError = e.message.slice(0, 160); }
+      }
+      out.ms = Date.now() - t0;
       return out;
     },
     async critiqueCapture(p, refPath, opts = {}) {
@@ -1441,11 +1513,12 @@ function makeCtx(emit) {
       async sampleInfo({ track }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'sample_info', track: t.name }), 'sample_info'); },
       // loop/texture as a layer: load the file into Simpler, warp it to tempo, trigger with one long C3 note
       async addLoopLayer({ name, prompt, kind = 'tops', bars = 2, bpm, matchMix = true, strength, seedPath, slot = 0 }) {
+        const self = makeCtx(emit);   // `this` here is the live object; generateLoop/seedMix live on the ctx
         strength = Number(strength) || (kind === 'tops' || kind === 'fx' ? 0.8 : 0.6);   // tops seeded from a mix with a kick keep the kick unless they move far enough
         const tempo = bpm || await syncTempo();
         const hasLayers = Object.keys(lastBuild.clips || {}).length > 0 || Boolean(lastBuild.lastCapture);
         const init = seedPath ? seedPath : (matchMix && hasLayers ? 'mix' : null);
-        const g = await this.generateLoop({ prompt, bpm: tempo, bars, kind: kind === 'bass' || kind === 'chords' || kind === 'melody' ? 'texture' : kind, init, strength });
+        const g = await self.generateLoop({ prompt, bpm: tempo, bars, kind: kind === 'bass' || kind === 'chords' || kind === 'melody' ? 'texture' : kind, init, strength });
         const warpMode = kind === 'drums' || kind === 'tops' ? 'beats' : kind === 'bass' ? 'tones' : 'complex_pro';
         const trackName = lastBuild.project && !/^AI /.test(name) ? `AI ${name}` : name;
         const r = await this.live.loadAudioClip({ track: trackName, slot, samplePath: g.loop.path, warpMode, overwrite: true });
