@@ -1,3 +1,4 @@
+import { features } from "../features.ts"
 import type { OutputChoice } from "../types/output_choice.ts"
 import { LANE_PAINT } from "../studio/lanes.ts"
 import { OUTPUTS } from "../studio/output.ts"
@@ -21,7 +22,7 @@ export function OutputPicker({ value, onChange }: Props) {
   const current = value.length === 1 ? value[0] : null
   return (
     <div className="flex flex-wrap gap-2" role="group" aria-label="Output">
-      {OUTPUTS.map((option) => (
+      {OUTPUTS.filter((option) => features.fullMix || option.choice !== "full_mix").map((option) => (
         <Chip
           key={option.choice}
           selected={option.choice === current}

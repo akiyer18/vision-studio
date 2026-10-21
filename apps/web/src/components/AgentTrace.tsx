@@ -6,37 +6,43 @@ import { traceTarget } from "../studio/traceMark.ts"
 
 type Props = {
   steps: TraceStep[]
-  open: boolean
-  onToggle: () => void
+  open?: boolean
+  onToggle?: () => void
   mark: string | null
   onMark: (id: string | null) => void
+  pinned?: boolean
 }
 
-export function AgentTrace({ steps, open, onToggle, mark, onMark }: Props) {
+export function AgentTrace({ steps, open = false, onToggle, mark, onMark, pinned = false }: Props) {
   const bottom = useRef<HTMLDivElement>(null)
   const latest = steps.at(-1)
+  const shown = pinned || open
 
   useEffect(() => {
-    if (!open) return
+    if (!shown) return
     bottom.current?.scrollIntoView({ block: "nearest" })
-  }, [open, steps])
+  }, [shown, steps])
 
   return (
-    <div className="border-t border-rule bg-desk">
-      <button
-        type="button"
-        aria-expanded={open}
-        className="flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-dust focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lamp"
-        onClick={onToggle}
-      >
-        <span>{open ? "Hide the trace" : "Show the trace"}</span>
-        {!open && latest ? (
-          <span className="truncate text-lamp">
-            {latest.step}: {latest.detail}
-          </span>
-        ) : null}
-      </button>
-      {open ? (
+    <div className={pinned ? "flex flex-col gap-2" : "border-t border-rule bg-desk"}>
+      {pinned ? (
+        <h2>Trace</h2>
+      ) : (
+        <button
+          type="button"
+          aria-expanded={open}
+          className="flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-dust focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lamp"
+          onClick={onToggle}
+        >
+          <span>{open ? "Hide the trace" : "Show the trace"}</span>
+          {!open && latest ? (
+            <span className="truncate text-lamp">
+              {latest.step}: {latest.detail}
+            </span>
+          ) : null}
+        </button>
+      )}
+      {shown ? (
         <div className="max-h-52 overflow-y-auto px-4 pb-3">
           {steps.length === 0 ? <p className="text-dust">Nothing has happened yet.</p> : null}
           {steps.map((step, index) => {

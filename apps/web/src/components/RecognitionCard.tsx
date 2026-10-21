@@ -13,6 +13,7 @@ type Props = {
   onConfirm: () => void
   busy: boolean
   ask: boolean
+  confirmLabel?: string
 }
 
 export function RecognitionCard({
@@ -26,6 +27,7 @@ export function RecognitionCard({
   onConfirm,
   busy,
   ask,
+  confirmLabel = "Confirm this reading",
 }: Props) {
   const unsure = ask && features.confidence < 0.6
   return (
@@ -58,7 +60,7 @@ export function RecognitionCard({
           ) : null}
           <div className="flex flex-wrap gap-2">
             <Button onClick={onConfirm} disabled={busy}>
-              Confirm this reading
+              {confirmLabel}
             </Button>
             {fixing ? null : (
               <Button tone="secondary" onClick={onFix} disabled={busy}>

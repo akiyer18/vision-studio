@@ -4,6 +4,8 @@ import { renderBusy } from "../studio/renderSession.ts"
 import { useStudio } from "../state/studio.ts"
 import type { ScenarioId } from "./scenarios.ts"
 
+// Guided-flow labels the scenarios click: "Send the idea", "Confirm this reading",
+// "all layers separately", "Skip this", "Skip all and build", and "Build".
 const OUTPUT_QUESTION = "What would help most right now?"
 const KEY_QUESTION = "Any colour in mind for the harmony?"
 const STYLE_QUESTION = "Is there an artist or song near this idea?"

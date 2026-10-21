@@ -41,6 +41,7 @@ export function Clip({ result, take, reveal }: { result: RenderResult; take: num
 
   useEffect(() => {
     return () => {
+      if (useStudio.getState().heard) return
       const state = transport.getState()
       if (state.activeId === id || state.togetherIds.includes(id)) transport.stop()
     }
@@ -116,9 +117,10 @@ export function Clip({ result, take, reveal }: { result: RenderResult; take: num
           {solo ? "Pause" : "Play"}
         </Button>
         <Button
-          tone={picked ? "primary" : "secondary"}
+          tone="secondary"
           aria-pressed={picked}
           aria-label={`Pick ${title} variation ${result.variant}`}
+          className={picked ? "outline outline-2 outline-offset-2 outline-lamp" : ""}
           onClick={() => togglePick(result.layer, result.variant)}
         >
           Pick

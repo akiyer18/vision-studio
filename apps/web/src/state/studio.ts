@@ -32,6 +32,7 @@ type StudioState = {
   solo: string | null
   muted: string[]
   focusedLane: string | null
+  heard: boolean
   setTurn: (turn: TurnResponse | null) => void
   commitTurn: (turn: TurnResponse, clearOverrides?: boolean) => void
   queueOverride: (slot: SlotName, value: string) => void
@@ -51,6 +52,7 @@ type StudioState = {
   toggleSolo: (layer: string) => void
   toggleMute: (layer: string) => void
   setFocusedLane: (layer: string | null) => void
+  hear: () => void
   resetSession: () => void
 }
 
@@ -73,6 +75,7 @@ export const useStudio = create<StudioState>((set) => ({
   solo: null,
   muted: [],
   focusedLane: null,
+  heard: false,
   setTurn: (turn) => set({ turn }),
   commitTurn: (turn, clearOverrides = false) =>
     set((state) => ({
@@ -89,6 +92,7 @@ export const useStudio = create<StudioState>((set) => ({
       takes: {},
       exportListing: null,
       exportError: null,
+      heard: false,
     })),
   queueOverride: (slot, value) => set((state) => ({ overrides: { ...state.overrides, [slot]: value } })),
   editPrompt: (layer, field, value) =>
@@ -114,6 +118,7 @@ export const useStudio = create<StudioState>((set) => ({
       takes: Object.fromEntries(layers.map((layer) => [layer, 1])),
       exportListing: null,
       exportError: null,
+      heard: false,
     })),
   beginLayer: (layer, action) =>
     set((state) => ({
@@ -161,6 +166,7 @@ export const useStudio = create<StudioState>((set) => ({
       muted: state.muted.includes(layer) ? state.muted.filter((item) => item !== layer) : [...state.muted, layer],
     })),
   setFocusedLane: (layer) => set({ focusedLane: layer }),
+  hear: () => set({ heard: true }),
   resetSession: () =>
     set((state) => ({
       sessionId: crypto.randomUUID(),
@@ -181,6 +187,7 @@ export const useStudio = create<StudioState>((set) => ({
       solo: null,
       muted: [],
       focusedLane: null,
+      heard: false,
     })),
 }))
 

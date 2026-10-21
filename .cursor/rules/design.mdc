@@ -1,12 +1,12 @@
 ---
-description: Vision Studio arrangement visual system for the web app
+description: Vision Studio guided-flow visual system for the web app
 globs: apps/web/**/*
 alwaysApply: false
 ---
 
 # Design
 
-The studio is an arrangement on Desk `#3F3832`. Lamp `#F6F1E8` is primary text, the Build button, the playhead, and the focus ring. Dust `#C4B8A8` is secondary text. Rule `#6E655C` is for outlines, dividers, and unset ticks, never for text. Fault `#F3C1B6` is for errors.
+The studio is a guided flow on Desk `#3F3832`. Lamp `#F6F1E8` is primary text, the one primary button, the playhead, and the focus ring. Dust `#C4B8A8` is secondary text. Rule `#6E655C` is for outlines and dividers, never for text. Fault `#F3C1B6` is for errors.
 
 Lane hues are Drums `#B84532`, Chords `#D7A441`, Bass `#1F6E5C`, Melody `#3D62C4`, and Texture `#7A4EA8`. They colour the lane rule, the clip, that layer's chip, and the trace mark. Labels on Desk stay Lamp. Chords are a light fill, so the waveform and the clip label use Desk. Full mix has no sixth hue: Lamp on Desk, with a double rule. Every clip has a 1px Lamp edge and keeps its lane label visible.
 
@@ -14,4 +14,4 @@ Instrument Sans for the interface, including the trace, with tabular numerals on
 
 Focus is a 2px Lamp outline, offset 2px. The one orchestrated motion is the Lamp playhead sweeping as a finished build fills the lanes. Reduced motion fills in place. Other motion only answers an action.
 
-Transport, then a fixed conversation column and the lanes. Below 1024px the conversation stacks above the arrangement. The trace stays expanded while a question is open and collapses after Build. The current meaning of S sits next to the question card. The main render button says Build.
+One step is on screen. The step is derived from the session, not stored as an index. A stepper lists Idea, Questions, Prompt, Sound, and Export, each as "[Step]. what you do here". The first screen says "Turn a feeling into editable layers for your song." Each step has one primary button: Send the idea, Skip all and build, Build, Play, or Export to Logic. Questions keep the brief beside the card, hide unset slots, and leave the trace open. S skips this, shown next to the card. Sound holds the lanes, the clips, Play, Another take, and Pick. Solo, mute, record, full mix, the styleguide link, and the demo door follow `apps/web/src/features.ts`. Sound and Export load lazily. Below 1024px the question and the brief stack.

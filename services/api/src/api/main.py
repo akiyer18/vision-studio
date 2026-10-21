@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import sys
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -411,5 +412,6 @@ async def _read_upload(file: UploadFile) -> bytes:
     return b"".join(chunks)
 
 
-load_local_env()
+if "pytest" not in sys.modules:
+    load_local_env()
 app = create_app()

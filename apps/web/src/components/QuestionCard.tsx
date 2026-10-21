@@ -116,9 +116,7 @@ export function QuestionCard({ question, onAnswer }: Props) {
         <Button tone="ghost" onClick={() => onAnswer("skip")}>
           Skip this
         </Button>
-        <Button tone="secondary" onClick={() => onAnswer("skip_all")}>
-          Skip all and build
-        </Button>
+        <Button onClick={() => onAnswer("skip_all")}>Skip all and build</Button>
       </div>
     </article>
   )

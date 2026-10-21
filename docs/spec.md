@@ -155,7 +155,7 @@ bass as roots around C2, velocity 80 to 100. Detected audio keys replace the pre
 
 ## 7. Design
 
-The studio is an arrangement: a transport, the conversation, and lanes. Colour marks a layer. Chrome stays quiet.
+The studio is a guided flow. One step is on screen. Colour marks a layer. Chrome stays quiet. The current step is derived from the session: idea until a turn exists, questions until the brief is ready, the prompt until a build starts, sound while takes are in and Play has not been pressed, and export after Play or once a folder listing exists. It is not stored as its own index.
 
 | token | hex | use |
 | --- | --- | --- |
@@ -182,19 +182,31 @@ Type: Instrument Sans for the interface, including the trace. Tabular numerals o
 
 Focus is a 2px Lamp outline, offset 2px. One motion: when a build finishes, a Lamp playhead sweeps left to right and the lanes fill behind it. Reduced motion fills the lanes in place. Any other motion answers a user action.
 
-Layout. The transport holds the session id, the agent status, the output choice, the large tempo and key, and Build. The left column is about 400px and stays fixed on a wide screen: the idea, then the conversation. The main column is the ruler and the lanes. Below 1024px the conversation stacks above the arrangement. 1280×800 and 2560×1440 both have to work, and the type scales with the clamps above.
+The first screen says "Turn a feeling into editable layers for your song." Three doors: Describe an idea, Drop or record a sound, and Try a 30 second demo. The demo runs scenario A. Send the idea is the only primary button. While a reading waits for confirmation, Confirm this reading is the only primary.
 
-The ruler shows mood, energy, world, style, palette, and must keep. Each value shows its source: you, detected, or default when the slot was guessed. Reference stays reference. The reason is available on hover and on focus. Existing click-to-edit stays. Do not add a new editing surface. Tempo, key, and output stay editable where they already live. If structure is set, the ruler shows one verse of that many bars. The section name is verse. Do not invent a chorus or a bridge. An unset ruler value is a faint tick, not the words "Not set".
+A stepper at the top lists Idea, Questions, Prompt, Sound, and Export. Each line is the step name, a full stop, then what you do there. Questions reads "Questions. Answer a few, or skip them all." Only the current step's panel is visible. 1280×800 and 2560×1440 both have to work, and below 1024px the question and the brief stack. The type scales with the clamps above.
 
-Five lanes, plus a full-mix master. A lane header shows the name, solo, mute, and status. Clicking the lane body opens the inline editor: prompt, negative, and seed. Polish status appears only when a trace step names that layer, as "Claude polished" or "Template kept" with the reason. A rendered take is a clip with a waveform. Every clip has a 1px Lamp edge, and the lane label stays visible on the clip. Before anything is built, the five lanes are Rule outlines and one line reads "Describe an idea and the lanes will fill."
+Each step has one primary button, and the label says what happens next: Send the idea, Skip all and build, Build, Play, Export to Logic. You decide, Skip this, Another take, Pick, and Start a new idea stay, and they are not a second primary. There is no Generate button.
 
-Solo and mute are local. Mute drops that layer from playback and from the prompts sent on the next build. Solo keeps only that layer. The buttons use `aria-pressed`. Full mix follows the same rules.
+Questions shows one card, "Question 1 of up to N", with You decide, Skip this, and Skip all and build. The brief sits beside it and fills slot by slot. A slot with no value is hidden. Set slots still show source and reason, and they stay click-to-edit. Guessed displays as Default. Reference stays reference. Tempo and key use the serif clamp when they are set. The trace stays open on this step, in Instrument Sans, as "{step}: {detail}", so the reasoning is on screen. Clicking a step highlights the brief value or the lane it touched. S skips this, and that meaning sits next to the card.
 
-Keyboard. S solos when a lane is focused. When a question is open and focus is not on a lane, S still skips that question. Shift+S still skips all and builds. M mutes the focused lane. Space plays or stops, and does nothing while typing. Enter and ? stay as they are. The current meaning of S is shown next to the question card.
+Prompt holds the layer choice, defaulting to all layers separately, then the prompt cards, then Build. Polish status appears on a card only when a trace step names that layer.
 
-The trace is a collapsible drawer along the bottom. Each step is an event in Instrument Sans, shown as "{step}: {detail}". The drawer stays expanded while a question is open, and collapses after Build. Clicking a step highlights the lane or the brief value it touched.
+Sound shows the lanes and the clips. Play plays the chosen takes together and opens Export. Another take and Pick stay on the lane. Every clip has a 1px Lamp edge, and the lane label stays visible. When a build finishes, the Lamp playhead sweeps and the lanes fill behind it.
 
-Copy stays plain. The main render action is "Build". Also "Send the idea", "Confirm this reading", "Skip this", "Skip all and build", "You decide", "Another take", "Export to Logic", and "Generate". Generate is never disabled.
+Export sends the takes to Logic, shows the folder path, and offers Start a new idea. An unpicked layer exports variation 1.
+
+An empty view has a short title, one sentence of why, and one button for the next step. An error is the message plus Try again.
+
+The first visit opens a short tour after 800 ms. It starts with what Vision Studio is and that it takes about 60 seconds, then one step for each visible stepper item: the step name in bold, then one sentence. Next, Back, and close. Finishing or closing stores that it was seen. Help holds Replay tour and Shortcuts. The tour is one component and uses no library. It does not mention a feature that is switched off.
+
+Flags live in `apps/web/src/features.ts`: record, soloMute, fullMix, styleguideLink, and demo. The stepper, the tour, and the panels read that file. A hidden feature is not shown. Solo and mute are local when the flag is on. Mute drops that layer from playback and from the next full build. Solo keeps only that layer. The buttons use `aria-pressed`. Full mix follows the same clip rules and has no sixth hue.
+
+Sound and Export load lazily, so wavesurfer loads with Sound. One store, and each panel selects its own data. Lane components are memoised.
+
+Keyboard. Enter sends a written answer. S skips a question, or solos a focused lane when solo and mute are on. Shift+S skips all and builds. M mutes the focused lane when that flag is on. Space plays or stops on the sound step, and does nothing while typing. ? opens the shortcuts.
+
+Copy stays plain: "Send the idea", "Confirm this reading", "Skip this", "Skip all and build", "You decide", "Build", "Play", "Another take", "Pick", "Export to Logic", "Try again", and "Start a new idea".
 
 ## 8. Definition of done per phase
 

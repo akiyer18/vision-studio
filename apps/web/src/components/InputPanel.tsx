@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react"
 
 import { ApiError, upload } from "../api/client.ts"
 import { postTurn } from "../conversation/postTurn.ts"
+import { runScenario } from "../demo/runScenario.ts"
+import { features as flags } from "../features.ts"
 import { applyCorrection, fileProblem, fileKind, inputTypeFor, keyPhrase } from "../input/describe.ts"
 import { registerInput } from "../input/bridge.ts"
 import type { AudioFeatures } from "../types/audio_features.ts"
@@ -32,6 +34,8 @@ export function InputPanel() {
   const [tempoText, setTempoText] = useState("")
   const [busy, setBusy] = useState(false)
   const [dragging, setDragging] = useState(false)
+  const [demoBusy, setDemoBusy] = useState(false)
+  const [demoError, setDemoError] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
@@ -297,102 +301,135 @@ export function InputPanel() {
     return () => registerInput(null)
   }, [])
 
-  const invite = !hint && !text.trim() && !held && !features && !recording
+  async function runDemo() {
+    setDemoError(null)
+    setDemoBusy(true)
+    try {
+      await runScenario("rainy")
+    } catch (err) {
+      setDemoError(err instanceof Error ? err.message : "The demo did not finish.")
+    } finally {
+      setDemoBusy(false)
+    }
+  }
+
+  const soundDoor = flags.record ? "Drop or record a sound" : "Drop a sound"
 
   return (
-    <div className="flex flex-col gap-3">
-      <h2>Input</h2>
-      {invite ? <p className="text-sm text-dust">Write a line, drop a loop, or press Record.</p> : null}
-      <label className="sr-only" htmlFor="idea">
-        The idea
-      </label>
-      <textarea
-        id="idea"
-        value={text}
-        rows={5}
-        placeholder="a rainy night drive, missing someone"
-        aria-invalid={hint ? true : undefined}
-        aria-describedby={hint ? "idea-hint" : undefined}
-        onChange={(event) => {
-          textRef.current = event.target.value
-          setText(event.target.value)
-          if (hint) setHint(null)
-        }}
-        className="min-h-36 w-full resize-y rounded-panel border border-walnut-line bg-studio-night/40 px-3 py-3 text-base text-tape-cream outline-none placeholder:text-dust focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
-      />
-      {hint ? (
-        <p id="idea-hint" role="status" className="text-sm text-dust">
-          {hint}
-        </p>
-      ) : null}
-      <div
-        className={`rounded-panel border border-dashed px-3 py-4 text-center ${dragging ? "border-vu-amber" : "border-walnut-line"}`}
-        onDragOver={(event) => {
-          event.preventDefault()
-          setDragging(true)
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(event) => {
-          event.preventDefault()
-          setDragging(false)
-          const file = event.dataTransfer.files[0]
-          if (file) acceptFile(file, "drop")
-        }}
-      >
-        <input
-          ref={fileInput}
-          type="file"
-          accept=".wav,.mp3,.m4a,.webm,.mid,.midi,audio/wav,audio/mpeg,audio/mp4,audio/webm,audio/midi"
-          className="sr-only"
-          aria-label="Choose a sound file"
+    <div className="flex flex-col gap-6 p-4">
+      <h1 data-tour="welcome">Turn a feeling into editable layers for your song.</h1>
+      <section aria-label="Describe an idea" className="flex flex-col gap-3">
+        <h2>Describe an idea</h2>
+        <label className="sr-only" htmlFor="idea">
+          The idea
+        </label>
+        <textarea
+          id="idea"
+          value={text}
+          rows={5}
+          placeholder="a rainy night drive, missing someone"
+          aria-invalid={hint ? true : undefined}
+          aria-describedby={hint ? "idea-hint" : undefined}
           onChange={(event) => {
-            const file = event.target.files?.[0]
+            textRef.current = event.target.value
+            setText(event.target.value)
+            if (hint) setHint(null)
+          }}
+          className="min-h-36 w-full resize-y rounded-panel border border-walnut-line bg-studio-night/40 px-3 py-3 text-base text-tape-cream outline-none placeholder:text-dust focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
+        />
+        {hint ? (
+          <p id="idea-hint" role="status" className="text-sm text-dust">
+            {hint}
+          </p>
+        ) : null}
+      </section>
+      <section aria-label={soundDoor} className="flex flex-col gap-3">
+        <h2>{soundDoor}</h2>
+        <div
+          className={`rounded-panel border border-dashed px-3 py-4 text-center ${dragging ? "border-vu-amber" : "border-walnut-line"}`}
+          onDragOver={(event) => {
+            event.preventDefault()
+            setDragging(true)
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(event) => {
+            event.preventDefault()
+            setDragging(false)
+            const file = event.dataTransfer.files[0]
             if (file) acceptFile(file, "drop")
           }}
-        />
-        <button
-          type="button"
-          className="text-sm text-tape-cream underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
-          onClick={() => fileInput.current?.click()}
         >
-          Drop a wav, mp3, m4a, webm, or MIDI file
-        </button>
-        {held ? (
-          <p className="mt-2 text-sm text-dust">
-            {held.file.name}{" "}
-            <button
-              type="button"
-              aria-label="Remove the file"
-              className="text-tape-cream underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
-              onClick={clearHeld}
-            >
-              Remove
-            </button>
-          </p>
-        ) : null}
-        {fileNote ? (
-          <p role="status" className="mt-2 text-sm text-dust">
-            {fileNote}
-          </p>
-        ) : null}
-      </div>
-      {recording ? (
-        <div className="flex items-center gap-3">
-          <VuMeter value={level} label="Input level" />
-          <p className="text-sm text-tape-cream tabular-nums" aria-live="polite">
-            {formatElapsed(elapsed)}
-          </p>
-          <Button tone="secondary" onClick={stopRecording}>
-            Stop
-          </Button>
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".wav,.mp3,.m4a,.webm,.mid,.midi,audio/wav,audio/mpeg,audio/mp4,audio/webm,audio/midi"
+            className="sr-only"
+            aria-label="Choose a sound file"
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              if (file) acceptFile(file, "drop")
+            }}
+          />
+          <button
+            type="button"
+            className="text-sm text-tape-cream underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
+            onClick={() => fileInput.current?.click()}
+          >
+            Drop a wav, mp3, m4a, webm, or MIDI file
+          </button>
+          {held ? (
+            <p className="mt-2 text-sm text-dust">
+              {held.file.name}{" "}
+              <button
+                type="button"
+                aria-label="Remove the file"
+                className="text-tape-cream underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
+                onClick={clearHeld}
+              >
+                Remove
+              </button>
+            </p>
+          ) : null}
+          {fileNote ? (
+            <p role="status" className="mt-2 text-sm text-dust">
+              {fileNote}
+            </p>
+          ) : null}
         </div>
-      ) : (
-        <Button tone="secondary" onClick={() => void startRecording()} disabled={busy}>
-          Record
-        </Button>
-      )}
+        {flags.record ? (
+          recording ? (
+            <div className="flex items-center gap-3">
+              <VuMeter value={level} label="Input level" />
+              <p className="text-sm text-tape-cream tabular-nums" aria-live="polite">
+                {formatElapsed(elapsed)}
+              </p>
+              <Button tone="secondary" onClick={stopRecording}>
+                Stop
+              </Button>
+            </div>
+          ) : (
+            <Button tone="secondary" onClick={() => void startRecording()} disabled={busy}>
+              Record
+            </Button>
+          )
+        ) : null}
+      </section>
+      {flags.demo ? (
+        <section aria-label="Try a 30 second demo" className="flex flex-col items-start gap-3">
+          <h2>Try a 30 second demo</h2>
+          <p className="text-dust">A rainy night, from the first question through the takes.</p>
+          <Button tone="secondary" onClick={() => void runDemo()} disabled={demoBusy || busy || recording}>
+            Try a 30 second demo
+          </Button>
+          {demoError ? (
+            <p role="alert" className="text-fault">
+              {demoError}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
       {error ? (
-        <p role="alert" className="text-sm text-clip-red">
+        <p role="alert" className="text-fault">
           {error}
         </p>
       ) : null}
@@ -414,11 +451,16 @@ export function InputPanel() {
           onConfirm={() => void confirm()}
           busy={busy}
           ask={waiting}
+          confirmLabel={error && waiting ? "Try again" : "Confirm this reading"}
         />
       ) : null}
-      <Button onClick={() => void submit()} disabled={busy || recording || waiting}>
-        Send the idea
-      </Button>
+      {waiting ? null : error ? (
+        <Button onClick={() => void submit()}>Try again</Button>
+      ) : (
+        <Button onClick={() => void submit()} disabled={busy || recording}>
+          Send the idea
+        </Button>
+      )}
     </div>
   )
 }
