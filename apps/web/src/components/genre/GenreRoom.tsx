@@ -15,6 +15,8 @@ export function GenreRoom({ onUse }: Props) {
   const [selected, setSelected] = useState<string | null>(null)
   const [detail, setDetail] = useState<GenreDetail | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
+  const [ready, setReady] = useState(false)
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     let cancel = false
@@ -23,15 +25,20 @@ export function GenreRoom({ onUse }: Props) {
         if (cancel) return
         setGenres(items)
         setSelected((current) => current ?? items[0]?.id ?? null)
+        setProblem(null)
+        setReady(true)
       },
       () => {
-        if (!cancel) setProblem("The genre files did not load.")
+        if (!cancel) {
+          setProblem("The genre files did not load.")
+          setReady(true)
+        }
       },
     )
     return () => {
       cancel = true
     }
-  }, [])
+  }, [attempt])
 
   useEffect(() => {
     if (!selected) return
@@ -71,7 +78,22 @@ export function GenreRoom({ onUse }: Props) {
         </ul>
       </div>
       <div className="genre-detail px-4 py-4">
-        {problem ? <p role="alert" className="text-danger">{problem}</p> : null}
+        {problem ? (
+          <div role="alert" className="mb-3 flex flex-col items-start gap-2">
+            <p className="text-danger">{problem}</p>
+            <Button
+              tone="secondary"
+              onClick={() => {
+                setReady(false)
+                setProblem(null)
+                setAttempt((value) => value + 1)
+              }}
+            >
+              Try again
+            </Button>
+          </div>
+        ) : null}
+        {ready && genres.length === 0 && !problem ? <p className="text-secondary">No genres are published yet.</p> : null}
         {detail && detail.id === selected ? (
           <article className="panel flex flex-col gap-4 p-4">
             <header className="flex flex-wrap items-center justify-between gap-3">

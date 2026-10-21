@@ -1,23 +1,23 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
-import { CircleHelp, Library, PenLine, ScanSearch, SlidersHorizontal } from "lucide-react"
+import { CircleHelp, House, Library, PenLine, ScanSearch, SlidersHorizontal } from "lucide-react"
 
 import { Logo } from "../Logo.tsx"
 
 import { features } from "../../features.ts"
+import { go } from "../../route.ts"
 import { transport } from "../../playback/transport.ts"
 import type { RecentIdea } from "../../recentIdeas.ts"
 import { useStudio } from "../../state/studio.ts"
 import { RecentList } from "./RecentList.tsx"
 
-type Room = "create" | "genre"
+type Room = "home" | "create" | "genre"
 
 type Props = {
-  room: Room
-  onRoom: (room: Room) => void
+  page: Room
   onReplay: () => void
 }
 
-export function Sidebar({ room, onRoom, onReplay }: Props) {
+export function Sidebar({ page, onReplay }: Props) {
   const restoreSession = useStudio((state) => state.restoreSession)
   const [menu, setMenu] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
@@ -62,7 +62,7 @@ export function Sidebar({ room, onRoom, onReplay }: Props) {
   function openRecent(entry: RecentIdea) {
     transport.stop()
     restoreSession(entry)
-    onRoom("create")
+    go("/create")
   }
 
   return (
@@ -73,12 +73,19 @@ export function Sidebar({ room, onRoom, onReplay }: Props) {
       </p>
       <nav aria-label="Studio" className="side-nav flex flex-col gap-1">
         <RoomButton
+          icon={<House aria-hidden="true" size={16} />}
+          label="Home"
+          live
+          current={page === "home"}
+          onClick={() => go("/")}
+        />
+        <RoomButton
           icon={<PenLine aria-hidden="true" size={16} />}
           label="Create"
           live={features.create}
-          current={room === "create"}
+          current={page === "create"}
           onClick={() => {
-            onRoom("create")
+            go("/create")
             document.getElementById("idea")?.focus()
           }}
         />
@@ -86,8 +93,8 @@ export function Sidebar({ room, onRoom, onReplay }: Props) {
           icon={<Library aria-hidden="true" size={16} />}
           label="Genres"
           live={features.genre}
-          current={room === "genre"}
-          onClick={() => onRoom("genre")}
+          current={page === "genre"}
+          onClick={() => go("/genres")}
         />
         <SoonItem icon={<ScanSearch aria-hidden="true" size={16} />} label="Analyse" soon={!features.analyser} />
         <SoonItem icon={<SlidersHorizontal aria-hidden="true" size={16} />} label="Tweak" soon={!features.edits} />

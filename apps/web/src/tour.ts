@@ -53,10 +53,11 @@ export function markTourSeen() {
   }
 }
 
-export function useTour() {
+export function useTour(enabled = true) {
   const [open, setOpen] = useState(false)
 
   useEffect(() => {
+    if (!enabled) return
     try {
       if (localStorage.getItem(seenKey)) return
     } catch {
@@ -64,7 +65,7 @@ export function useTour() {
     }
     const timer = window.setTimeout(() => setOpen(true), 800)
     return () => window.clearTimeout(timer)
-  }, [])
+  }, [enabled])
 
   function finish() {
     markTourSeen()

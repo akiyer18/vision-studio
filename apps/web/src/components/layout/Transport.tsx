@@ -6,16 +6,12 @@ import { composerRecording, subscribeRecording } from "../../composer/recording.
 import { postTurn } from "../../conversation/postTurn.ts"
 import { useStudio } from "../../state/studio.ts"
 import { Button } from "../Button.tsx"
+import { PageHeader } from "./PageHeader.tsx"
 
 export function Transport() {
   const status = useStudio((state) => state.status)
-  const layerOrder = useStudio((state) => state.layerOrder)
-  const runs = useStudio((state) => state.runs)
   const recording = useSyncExternalStore(subscribeRecording, composerRecording, () => false)
   const [error, setError] = useState<string | null>(null)
-  const building = layerOrder.length > 0 || Object.keys(runs).length > 0
-  const word = statusWord(status, building)
-  const light = word === "ready" ? "is-ready" : word === "thinking" || word === "building" ? "is-thinking" : word === "error" ? "is-error" : ""
 
   async function buildNow() {
     if (inFlight() || recording || useStudio.getState().status === "working") return
@@ -29,28 +25,35 @@ export function Transport() {
   }
 
   return (
-    <header className="page-header">
-      <div className="min-w-0">
-        <p className="eyebrow">Create</p>
-        <h1 className="page-title">Shape your idea</h1>
-        <p className="page-sub">Describe it, record it, or drop a file. I ask only what is missing.</p>
-      </div>
-      <div className="page-actions">
-        <p className="status-readout">
-          <span className={`status-light ${light}`} aria-hidden="true" />
-          <span className="sr-only">Status</span>
-          {word}
-        </p>
+    <div>
+      <PageHeader eyebrow="Create" title="Shape your idea" subtitle="Describe it, record it, or drop a file. I ask only what is missing.">
+        <SessionStatus />
         <Button data-tour="build" disabled={status === "working" || recording} onClick={() => void buildNow()}>
           Build now
         </Button>
-      </div>
+      </PageHeader>
       {error ? (
-        <p role="alert" className="w-full text-danger">
+        <p role="alert" className="mt-2 text-danger">
           {error}
         </p>
       ) : null}
-    </header>
+    </div>
+  )
+}
+
+export function SessionStatus() {
+  const status = useStudio((state) => state.status)
+  const layerOrder = useStudio((state) => state.layerOrder)
+  const runs = useStudio((state) => state.runs)
+  const building = layerOrder.length > 0 || Object.keys(runs).length > 0
+  const word = statusWord(status, building)
+  const light = word === "ready" ? "is-ready" : word === "thinking" || word === "building" ? "is-thinking" : word === "error" ? "is-error" : ""
+  return (
+    <p className="status-readout">
+      <span className={`status-light ${light}`} aria-hidden="true" />
+      <span className="sr-only">Status</span>
+      {word}
+    </p>
   )
 }
 

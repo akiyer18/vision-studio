@@ -128,8 +128,41 @@ button.bg-accent:hover:not(:disabled) {
   padding: 24px 32px;
 }
 
-.studio-main.is-genre {
+.studio-main.is-scroll {
   overflow: auto;
+}
+
+.studio-pages {
+  display: grid;
+  grid-area: main;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.page-fill {
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.page-fill.is-active {
+  z-index: 1;
+  pointer-events: auto;
+}
+
+.page-fill.is-scroll {
+  overflow: auto;
+}
+
+.studio-main.is-scroll .genre-room,
+.studio-main.is-scroll .genre-list,
+.studio-main.is-scroll .genre-detail {
+  height: auto;
+  overflow: visible;
 }
 
 .studio-main::before {
@@ -322,7 +355,7 @@ button.bg-accent:hover:not(:disabled) {
   min-height: 0;
   flex-direction: column;
   gap: 12px;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .brief-card {
@@ -353,7 +386,7 @@ button.bg-accent:hover:not(:disabled) {
 }
 
 .card.brief-card {
-  overflow: auto;
+  overflow: hidden;
 }
 
 .brief-summary {
@@ -381,9 +414,19 @@ button.bg-accent:hover:not(:disabled) {
   flex-direction: column;
   gap: 20px;
   overflow: auto;
+  scrollbar-width: none;
   padding: 20px 16px;
   background: var(--panel);
   border-right: 1px solid var(--line);
+}
+
+.studio-side::-webkit-scrollbar,
+.recent-list::-webkit-scrollbar {
+  display: none;
+}
+
+.recent-list {
+  scrollbar-width: none;
 }
 
 .studio-thread {
@@ -711,6 +754,137 @@ button.bg-accent:hover:not(:disabled) {
   z-index: 2;
 }
 
+.rich-card {
+  min-width: 0;
+  flex: 1;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--raised);
+  background-image: linear-gradient(180deg, rgba(139, 92, 246, 0.06), transparent 72px);
+}
+
+.home-page,
+.review-layout {
+  display: flex;
+  width: min(1680px, 100%);
+  margin-inline: auto;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.home-rooms,
+.home-steps ol {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.home-steps ol {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.home-room,
+.home-steps li {
+  display: flex;
+  min-height: 180px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px;
+}
+
+.home-footer {
+  padding: 8px 0 16px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.soon-tag {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: var(--secondary);
+  font-size: 12px;
+}
+
+.brief-slim {
+  padding: 12px 20px;
+  color: var(--secondary);
+}
+
+.review-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.review-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.review-layer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+}
+
+.review-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 0;
+  background: linear-gradient(180deg, transparent, var(--bg) 36%);
+}
+
+.prompt-field,
+.field {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--raised);
+  padding: 12px;
+  color: var(--ink);
+  line-height: 1.55;
+}
+
+.prompt-field {
+  min-height: calc(14px * 1.55 * 4 + 24px);
+  overflow: hidden;
+  resize: none;
+}
+
+.fact-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--raised);
+  padding: 4px 12px;
+  color: var(--secondary);
+}
+
+.results-stage {
+  display: grid;
+  width: min(1680px, 100%);
+  height: 100%;
+  min-height: 0;
+  margin-inline: auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 24px;
+}
+
 .lane {
   display: flex;
   flex-flow: row wrap;
@@ -837,9 +1011,12 @@ button.bg-accent:hover:not(:disabled) {
 @media (max-width: 1023px) {
   .studio-root,
   .studio-shell,
+  .studio-pages,
+  .page-fill,
   .studio-main,
   .studio-frame,
-  .studio-frame.has-results {
+  .studio-frame.has-results,
+  .results-stage {
     height: auto;
     min-height: 100svh;
     overflow: visible;
@@ -928,7 +1105,9 @@ button.bg-accent:hover:not(:disabled) {
     grid-template-columns: 1fr;
   }
 
-  .option-grid {
+  .option-grid,
+  .home-rooms,
+  .home-steps ol {
     grid-template-columns: 1fr;
   }
 }

@@ -37,7 +37,7 @@ export function RecentList({ onOpen }: Props) {
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto">
+    <div className="recent-list min-h-0 flex-1 overflow-auto">
       <p className="side-label text-sm text-secondary">Recent ideas</p>
       {ideas.length === 0 ? (
         <p className="mt-2 text-sm text-secondary">Recent ideas land here.</p>

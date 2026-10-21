@@ -8,8 +8,6 @@ import type { ReadingPatch } from "../../input/bridge.ts"
 import type { RecentMessage } from "../../recentIdeas.ts"
 import { EXAMPLES, runDemoExample, runQuick } from "../../composer/examples.ts"
 import { features as flags } from "../../features.ts"
-import { layerTitle } from "../../studio/output.ts"
-import { renderCurrent } from "../../studio/renderSession.ts"
 import { traceSentence } from "../../studio/traceMark.ts"
 import { useStudio } from "../../state/studio.ts"
 import type { AnswerAction } from "../../types/answer_action.ts"
@@ -18,7 +16,6 @@ import { Button } from "../Button.tsx"
 import { DemoMenu } from "../DemoMenu.tsx"
 import { Logo } from "../Logo.tsx"
 import { QuestionMessage } from "./QuestionMessage.tsx"
-import { ReviewCard } from "./ReviewCard.tsx"
 
 const LayersView = lazy(() => import("../layers/stage.tsx").then((module) => ({ default: module.LayersView })))
 
@@ -34,7 +31,6 @@ type Props = {
 export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
   const question = useStudio((state) => (state.turn?.status === "question" ? (state.turn.question ?? null) : null))
   const turnStatus = useStudio((state) => state.turn?.status ?? null)
-  const summary = useStudio((state) => (state.turn?.status === "ready" ? state.turn.summary : undefined))
   const prompts = useStudio((state) => (state.turn?.status === "ready" ? state.turn.prompts : undefined))
   const intro = useStudio((state) => state.turn?.intro)
   const status = useStudio((state) => state.status)
@@ -80,20 +76,6 @@ export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
     [onExchange],
   )
 
-  const goDeeper = useCallback(async () => {
-    if (busy.current || inFlight() || useStudio.getState().status === "working") return
-    busy.current = true
-    setError(null)
-    try {
-      await postTurn({ deepen: true })
-    } catch (err) {
-      const message = err instanceof ApiError ? err.message : "That did not go through. Try again."
-      setError(message.trim().length < 160 ? message : "That did not go through. Try again.")
-    } finally {
-      busy.current = false
-    }
-  }, [])
-
   const working = status === "working"
   const fresh = !intro && bubbles.length === 0 && !reading && !question && turnStatus === null
 
@@ -136,9 +118,14 @@ export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
           <Exchange key={bubble.id} bubble={bubble} />
         ))}
         {question ? (
-          <Agent>
-            <QuestionMessage question={question} locked={working} onAnswer={(action, value) => void send(action, value)} />
-          </Agent>
+          <div className="bubble-row">
+            <span className="vs-mark" aria-hidden="true">
+              <Logo />
+            </span>
+            <div className="rich-card">
+              <QuestionMessage question={question} locked={working} onAnswer={(action, value) => void send(action, value)} />
+            </div>
+          </div>
         ) : null}
         {!question && turnStatus === "question" ? (
           <Agent>
@@ -152,26 +139,6 @@ export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
         {working ? (
           <Agent>
             <Thinking latest={trace?.length ? traceSentence(trace[trace.length - 1]) : "Thinking"} />
-          </Agent>
-        ) : null}
-        {turnStatus === "review" ? (
-          <Agent>
-            <ReviewCard />
-          </Agent>
-        ) : null}
-        {(prompts?.length ?? 0) > 0 ? (
-          <Agent>
-            <p className="text-ink">{summary || "Ready to build."}</p>
-            <p className="mt-1 text-secondary">built from your answers</p>
-            <PromptCards />
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Button id="render-build" disabled={working} onClick={() => void renderCurrent()}>
-                Build
-              </Button>
-              <Button tone="secondary" disabled={working} onClick={() => void goDeeper()}>
-                Go deeper
-              </Button>
-            </div>
           </Agent>
         ) : null}
         {fresh ? (
@@ -249,43 +216,6 @@ function Exchange({ bubble }: { bubble: Bubble }) {
       <Agent>{bubble.prompt}</Agent>
       <User>{bubble.text}</User>
     </>
-  )
-}
-
-function PromptCards() {
-  const prompts = useStudio((state) => (state.turn?.status === "ready" ? state.turn.prompts : undefined)) ?? []
-  const edits = useStudio((state) => state.promptEdits)
-  const editPrompt = useStudio((state) => state.editPrompt)
-  return (
-    <div className="mt-3 flex flex-col gap-3">
-      {prompts.map((item) => {
-        const edit = edits[item.layer]
-        return (
-          <div key={item.layer} className="flex flex-col gap-1">
-            <label className="text-secondary" htmlFor={`thread-${item.layer}-prompt`}>
-              {layerTitle(item.layer)}
-            </label>
-            <textarea
-              id={`thread-${item.layer}-prompt`}
-              rows={3}
-              value={edit?.prompt ?? item.prompt}
-              onChange={(event) => editPrompt(item.layer, "prompt", event.target.value)}
-              className="rounded-[10px] border border-[var(--line)] bg-raised px-2 py-1 text-ink outline-none"
-            />
-            <label className="text-secondary" htmlFor={`thread-${item.layer}-negative`}>
-              Leave out
-            </label>
-            <textarea
-              id={`thread-${item.layer}-negative`}
-              rows={2}
-              value={edit?.negative ?? item.negative}
-              onChange={(event) => editPrompt(item.layer, "negative", event.target.value)}
-              className="rounded-[10px] border border-[var(--line)] bg-raised px-2 py-1 text-ink outline-none"
-            />
-          </div>
-        )
-      })}
-    </div>
   )
 }
 

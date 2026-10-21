@@ -1,7 +1,8 @@
 import { Shell } from "./components/Shell.tsx"
 import { Styleguide } from "./components/Styleguide.tsx"
+import { usePage } from "./route.ts"
 
 export default function App() {
-  const route = window.location.pathname.replace(/\/+$/, "") || "/"
-  return route === "/styleguide" ? <Styleguide /> : <Shell />
+  const page = usePage()
+  return page === "styleguide" ? <Styleguide /> : <Shell />
 }

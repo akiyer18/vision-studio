@@ -3,19 +3,25 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react"
 import { inputBridge } from "../../input/bridge.ts"
 import { transport } from "../../playback/transport.ts"
 import { currentIdea, noteIdea, saveRecent } from "../../recentIdeas.ts"
+import { go, usePage } from "../../route.ts"
 import { useStudio } from "../../state/studio.ts"
+import type { SongBrief } from "../../types/song_brief.ts"
 import { useTour } from "../../tour.ts"
 import { Composer } from "../composer/Composer.tsx"
 import { BriefCard } from "../brief/BriefCard.tsx"
 import { ReasoningCard } from "../reasoning/ReasoningCard.tsx"
 import { Sidebar } from "../sidebar/Sidebar.tsx"
+import { ReviewStage } from "../thread/ReviewStage.tsx"
 import { Thread, type Bubble } from "../thread/Thread.tsx"
 import { Tour } from "../tour/Tour.tsx"
-import { Insight } from "./Insight.tsx"
-import { Readouts } from "./Readouts.tsx"
-import { Transport } from "./Transport.tsx"
 import { GenreRoom, type GenreDetail } from "../genre/GenreRoom.tsx"
 import { Skeleton } from "../Skeleton.tsx"
+import { Home } from "./Home.tsx"
+import { Insight } from "./Insight.tsx"
+import { PageHeader } from "./PageHeader.tsx"
+import { PagePane } from "./PagePane.tsx"
+import { Readouts } from "./Readouts.tsx"
+import { SessionStatus, Transport } from "./Transport.tsx"
 
 const PlayerBar = lazy(() => import("../layers/stage.tsx").then((module) => ({ default: module.PlayerBar })))
 const LayersView = lazy(() => import("../layers/stage.tsx").then((module) => ({ default: module.LayersView })))
@@ -29,8 +35,8 @@ export function Dashboard() {
   const layerOrder = useStudio((state) => state.layerOrder)
   const status = useStudio((state) => state.status)
   const thread = useStudio((state) => state.thread)
-  const tour = useTour()
-  const [room, setRoom] = useState<"create" | "genre">("create")
+  const page = usePage()
+  const tour = useTour(page === "create")
   const mode = useStudio((state) => state.mode)
   const [mark, setMark] = useState<string | null>(null)
   const [talking, setTalking] = useState(false)
@@ -72,6 +78,8 @@ export function Dashboard() {
 
   const started = talking || turn !== null
   const showLayers = renders.length > 0 || (status === "working" && layerOrder.length > 0)
+  const stage = showLayers ? "results" : turn?.status === "review" || turn?.status === "ready" ? "review" : "talk"
+  const summary = briefLine(turn?.brief)
 
   function describe() {
     document.getElementById("idea")?.focus()
@@ -94,7 +102,7 @@ export function Dashboard() {
     noteIdea(`Using ${genre.title}.`, false)
     useStudio.getState().resetSession()
     useStudio.getState().showReference(genre.prefill, `Using ${genre.title}.`)
-    setRoom("create")
+    go("/create")
     setTalking(true)
   }
 
@@ -114,47 +122,80 @@ export function Dashboard() {
     <div className="studio-root">
       <div className="grain" aria-hidden="true" />
       <div className="studio-shell">
-        <Sidebar room={room} onRoom={setRoom} onReplay={tour.replay} />
-        {room === "genre" ? (
-          <main className="studio-main is-genre">
-            <GenreRoom onUse={useGenre} />
-          </main>
-        ) : (
-          <main className="studio-main">
-            <div className={`studio-frame ${showLayers ? "has-results" : ""}`}>
-              <Transport />
-              <Readouts />
-              <div className="studio-split">
-                <section className={`card conversation-card p-5 ${hot ? "is-hot" : ""}`} aria-label="Conversation">
-                  <h2 className="section-title">Conversation</h2>
-                  <Thread bubbles={bubbles} onExchange={addExchange} showLayers={false} showDemo={demoQuery} />
-                  <div className="studio-composer">
-                    <Composer started={started} onBegin={() => setTalking(true)} onBubble={addBubble} onExchange={addExchange} />
+        <Sidebar
+          page={page === "genre" ? "genre" : page === "create" ? "create" : "home"}
+          onReplay={() => {
+            if (page !== "create") go("/create")
+            tour.replay()
+          }}
+        />
+        <div className="studio-pages">
+          <PagePane active={page === "home"}>
+            <main className="studio-main is-scroll">
+              <Home />
+            </main>
+          </PagePane>
+          <PagePane active={page === "genre"}>
+            <main className="studio-main is-scroll">
+              <PageHeader eyebrow="Genres" title="Explore a style" subtitle="Read the references, then open Create with those traits." />
+              <GenreRoom onUse={useGenre} />
+            </main>
+          </PagePane>
+          <PagePane active={page === "create"}>
+            <main className={`studio-main ${stage === "review" ? "is-scroll" : ""}`}>
+              <div className="studio-frame" hidden={stage !== "talk"}>
+                <Transport />
+                <Readouts />
+                <div className="studio-split">
+                  <section className={`card conversation-card p-5 ${hot ? "is-hot" : ""}`} aria-label="Conversation">
+                    <h2 className="section-title">Conversation</h2>
+                    <Thread bubbles={bubbles} onExchange={addExchange} showLayers={false} showDemo={demoQuery} />
+                    <div className="studio-composer">
+                      <Composer started={started} onBegin={() => setTalking(true)} onBubble={addBubble} onExchange={addExchange} />
+                    </div>
+                  </section>
+                  <div className="brief-column">
+                    <BriefCard mark={mark} hot={hot} />
+                    {turn ? <ReasoningCard mark={mark} onMark={setMark} onDescribe={describe} /> : null}
                   </div>
-                </section>
-                <div className="brief-column">
-                  <BriefCard mark={mark} hot={hot} />
+                </div>
+                <Insight />
+              </div>
+              {stage === "review" ? (
+                <div className="review-layout">
+                  <PageHeader eyebrow="Review" title="Read the brief" subtitle="Locked facts stay as you said them. Prompts are ready to edit.">
+                    <SessionStatus />
+                  </PageHeader>
+                  <p className="card brief-slim">{summary}</p>
+                  <ReviewStage />
                   {turn ? <ReasoningCard mark={mark} onMark={setMark} onDescribe={describe} /> : null}
                 </div>
-              </div>
-              {showLayers ? (
-                <section className={`card results-card p-5 ${hot ? "is-hot" : ""}`} aria-label="Results">
-                  <Suspense fallback={<Skeleton className="h-14 w-full" />}>
-                    <LayersView />
+              ) : null}
+              {stage === "results" ? (
+                <div className="results-stage">
+                  <PageHeader eyebrow="Results" title="Your layers" subtitle="Listen, pick a take, then export to Logic.">
+                    <SessionStatus />
+                  </PageHeader>
+                  <section className={`card results-card p-5 ${hot ? "is-hot" : ""}`} aria-label="Results">
+                    <Suspense fallback={<Skeleton className="h-14 w-full" />}>
+                      <LayersView />
+                    </Suspense>
+                  </section>
+                  <Suspense fallback={<p className="studio-player px-4 py-3 text-secondary">Opening the player.</p>}>
+                    <PlayerBar onStartOver={startOver} />
                   </Suspense>
-                </section>
+                </div>
               ) : null}
-              <Insight />
-              {showLayers ? (
-                <Suspense fallback={<p className="studio-player px-4 py-3 text-secondary">Opening the player.</p>}>
-                  <PlayerBar onStartOver={startOver} />
-                </Suspense>
-              ) : null}
-            </div>
-          </main>
-        )}
+            </main>
+          </PagePane>
+        </div>
       </div>
-      <Tour open={tour.open} onClose={tour.finish} />
+      <Tour open={tour.open && page === "create"} onClose={tour.finish} />
     </div>
   )
+}
+
+function briefLine(brief: SongBrief | null | undefined) {
+  const parts = [brief?.slots.mood?.value, brief?.slots.world?.value, brief?.slots.energy?.value].filter(Boolean)
+  return parts.length > 0 ? parts.join(" · ") : "Details appear here as we talk."
 }

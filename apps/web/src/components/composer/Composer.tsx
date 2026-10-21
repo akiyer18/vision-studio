@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { ArrowUp, Mic, Paperclip } from "lucide-react"
 
 import { ApiError, upload } from "../../api/client.ts"
-import { registerDemo, registerQuick } from "../../composer/examples.ts"
+import { registerDemo, registerQuick, takePendingDemo } from "../../composer/examples.ts"
 import { setComposerRecording } from "../../composer/recording.ts"
 import { inFlight } from "../../conversation/flight.ts"
 import { postTurn } from "../../conversation/postTurn.ts"
@@ -437,6 +437,10 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
       registerDemo(null)
     }
   }, [])
+
+  useEffect(() => {
+    if (takePendingDemo()) void demoRef.current()
+  })
 
   const confirmLabel = error && waiting ? "Try again" : "Confirm this reading"
   const unsure = waiting && features !== null && features.confidence < 0.6
