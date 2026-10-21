@@ -168,3 +168,24 @@ File naming: `${slug(name)}-${Date.now()}.wav|.mid`
 
 ## server/UI
 - ctx.analyze / ctx.compare / ctx.render wired; POST /api/analyze {path|uploadId} and POST /api/live/arrange {bars}; UI: Density select in the composer (prefixes the message with "[density: minimal]"), "Lay out in Arrangement" button, analysis cards rendered from tool_done events of analyze_audio (ratings grid).
+
+# ---- v6: production quality (groove, sound design, mix, structure) ----
+
+## server ctx additions
+- layerSamples({ layers:[{ path, gainDb=0, offsetMs=0, highpassHz?, lowpassHz? }], name }) -> one-shot wav (ffmpeg amix with per-layer filters) -> { path, url, durationSeconds }   // kick = sub + click
+- tuneSample({ path, semitones | targetMidi, name }) -> pitch-shifted wav (ffmpeg rubberband if available else asetrate+aresample) -> { path, url, detectedMidi?, appliedSemitones }
+- shapeSample({ path, trimStartMs?, lengthMs?, fadeOutMs?, gainDb?, highpassHz?, lowpassHz?, name }) -> wav
+- live.loadDevice: if a device with the same name already exists on the track, return it with `reused:true` and its params instead of adding a second one (add_effect then only sets params)
+- live.setSend({ track, send:'A'|'B'|index, level 0..1 }) ; live.browse({ root:'instruments'|'sounds'|'audio_effects'|'drums', query? }) -> names (peer cmds)
+- live.mixBalance({ template:'drums-default' | explicit }) -> applies role-based volume/pan via set_mixer to all registry tracks: kick 0.85/0, snare 0.80/0, clap 0.74/+0.08, hat_closed 0.62/+0.18, hat_open 0.58/+0.22, rim 0.55/-0.25, perc 0.56/-0.3, tom 0.66/-0.1, vox 0.68/+0.1, synth/bass 0.72/0, pad 0.6/0, lead 0.66/-0.05
+- reviewMix() -> render_preview + analyze whole + analyze each layer soloed (render with one layer) -> { whole: profile, perLayer: {name: {ratings subset: subWeight, lowEnd, brightness, loudness}}, issues:[{ severity:'high'|'medium'|'low', text (technical, neutral), fix: suggested tool call }] } with rules: two layers both 'high' sub -> masking; hats louder than snare by > 3 dB -> level; whole crest < 10 dB -> over-limited; any layer with loudness 'high' and role perc/hat -> level; brightness 'low' everywhere -> no top end; etc.
+
+## ableton/ (ADEHack 5.2)
+- {"cmd":"set_send","track":...,"send":"A"|"B"|int,"level":0..1} -> {ok, sends:[{index,name,level}]}  (track.mixer_device.sends[i].value)
+- browse: add roots "instruments","sounds","audio_effects","drums","midi_effects" with optional "query" (case-insensitive substring) and "depth" (default 2) -> {ok, root, items:[{name, is_folder, path:[...]}]} capped at 200
+- load_device: exact match should prefer DEVICES (class) over presets; also accept "Ping Pong Delay"/"Echo"/"Simple Delay" (debug why they returned not found on this install: list the actual audio_effects names)
+
+## lib/agent.js v6
+- effort 'high'; analyze_recording(hum) returns up to 64 notes compactly; new tools: layer_samples, tune_sample, shape_sample, set_send, browse_library, mix_balance, review_mix; build_drum_layer gains humanize (0..1: timing jitter up to 12 ms and velocity jitter up to 15 at 1.0) applied server-side in stepsToNotes.
+- PRODUCTION PLAYBOOK in the system prompt (coordinator supplies the text).
+- QUALITY GATE: after any build/modify turn, run review_mix and fix 'high' issues before replying (max 2 fix rounds); report what the review found in technical terms.

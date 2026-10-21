@@ -10,7 +10,7 @@ import socket
 import Live
 from _Framework.ControlSurface import ControlSurface
 
-VERSION = '5.1'
+VERSION = '5.2'
 HOST = '127.0.0.1'
 PORT = 9004
 GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 42,
@@ -150,6 +150,8 @@ class ADEHack(ControlSurface):
                 return self._cmd_list_devices(msg)
             if cmd == 'load_device':
                 return self._cmd_load_device(msg)
+            if cmd == 'set_send':
+                return self._cmd_set_send(msg)
             if cmd == 'set_device_param':
                 return self._cmd_set_device_param(msg)
             if cmd == 'delete_device':
@@ -359,11 +361,28 @@ class ADEHack(ControlSurface):
 
     DEVICE_ROOTS = ('audio_effects', 'instruments', 'midi_effects', 'drums', 'sounds')
 
+    # Live 10 Standard has no Echo / Ping Pong Delay / Simple Delay (10.1 merged the delays
+    # into "Delay"; Echo, Operator, Analog, Wavetable... are Suite-only).
+    DEVICE_ALIASES = {
+        'ping pong delay': 'Delay', 'ping pong': 'Delay', 'simple delay': 'Delay', 'echo': 'Delay',
+        'delay': 'Delay', 'eq': 'EQ Eight', 'eq8': 'EQ Eight', 'eq 8': 'EQ Eight', 'comp': 'Compressor',
+        'glue': 'Glue Compressor', 'filter': 'Auto Filter', 'autofilter': 'Auto Filter',
+        'distortion': 'Overdrive', 'bitcrusher': 'Redux', 'sampler': 'Simpler', 'drumrack': 'Drum Rack',
+    }
+
     def _find_device_item(self, browser, name, max_items=5000, max_depth=6):
-        """Breadth-first so 'Reverb' hits the device itself before a preset named Reverb."""
+        """Returns (item, root_name, searched, how). Preference order:
+        exact name & is_device > exact name (shallowest) > alias > case-insensitive > substring
+        (device first, then shallowest). Devices beat same-named presets."""
         text = u'%s' % (name,)
-        low = text.lower()
-        ci_hit = None
+        low = text.lower().strip()
+        alias = self.DEVICE_ALIASES.get(low)
+        wants = [(text, 'exact')]
+        if alias and alias.lower() != low:
+            wants.append((alias, 'alias'))
+        exact = {}      # (want, is_device) -> (item, root, depth)
+        ci = {}
+        fuzzy = {}
         searched = []
         for root_name in self.DEVICE_ROOTS:
             try:
@@ -379,29 +398,51 @@ class ADEHack(ControlSurface):
                 try:
                     loadable = item.is_loadable
                     iname = item.name
+                    is_dev = bool(getattr(item, 'is_device', False))
                 except Exception:
                     continue
-                if loadable and iname == text:
-                    return item, root_name, searched
-                if loadable and ci_hit is None and iname.lower() == low:
-                    ci_hit = (item, root_name)
+                if loadable:
+                    il = iname.lower()
+                    stem = il.rsplit('.', 1)[0] if il.endswith(('.adg', '.adv', '.alp', '.wav', '.aif', '.aiff')) else il
+                    for want, how in wants:
+                        key = (how, is_dev)
+                        if iname == want and key not in exact:
+                            exact[key] = (item, root_name, depth)
+                        elif want.lower() in (il, stem) and key not in ci:
+                            ci[key] = (item, root_name, depth)
+                        elif low and low in il and key not in fuzzy:
+                            fuzzy[key] = (item, root_name, depth)
                 if depth < max_depth:
                     try:
                         for child in item.children:
                             queue.append((child, depth + 1))
                     except Exception:
                         pass
-            if ci_hit is not None:
-                return ci_hit[0], ci_hit[1], searched
-        return None, None, searched
+        for table, how_base in ((exact, 'exact'), (ci, 'ci'), (fuzzy, 'fuzzy')):
+            for want, how in wants:
+                for is_dev in (True, False):
+                    hit = table.get((how, is_dev))
+                    if hit is not None:
+                        label = how if how == 'alias' else how_base
+                        return hit[0], hit[1], searched, label
+        return None, None, searched, None
+
+    def _top_names(self, browser, root_name, limit=60):
+        try:
+            return [c.name for c in getattr(browser, root_name).children][:limit]
+        except Exception:
+            return []
 
     def _cmd_load_device(self, msg):
         track = self._track(msg.get('track', 'selected'))
         name = msg['name']
         browser = Live.Application.get_application().browser
-        item, root_name, searched = self._find_device_item(browser, name)
+        item, root_name, searched, how = self._find_device_item(browser, name)
         if item is None:
-            return {'ok': False, 'error': 'device %r not found in browser roots %r' % (name, searched)}
+            return {'ok': False, 'error': 'device %r not found in browser roots %r' % (name, searched),
+                    'audio_effects': self._top_names(browser, 'audio_effects'),
+                    'instruments': self._top_names(browser, 'instruments'),
+                    'midi_effects': self._top_names(browser, 'midi_effects')}
         self.song().view.selected_track = track
         before = len(list(track.devices))
         browser.load_item(item)  # appends at the end of the selected track's chain
@@ -410,7 +451,16 @@ class ADEHack(ControlSurface):
             return {'ok': False, 'error': 'load_item(%r) did not add a device to %r' % (item.name, track.name),
                     'devices': self._devices(track)}
         dev = devices[-1]
+        applied = []
+        if how == 'alias' and 'ping pong' in (u'%s' % (name,)).lower() and item.name == 'Delay':
+            try:  # Live 10.1 Delay: switch on the Ping Pong mode so the alias sounds as asked
+                i, p = self._param(dev, 'Ping Pong')
+                p.value = float(p.max)
+                applied.append('Ping Pong on')
+            except Exception as e:
+                self.log_message('ADEHack: ping pong switch failed: %r' % (e,))
         return {'ok': True, 'track': track.name, 'item': item.name, 'uri': item.uri, 'root': root_name,
+                'match': how, 'requested': name, 'applied': applied,
                 'device': {'index': len(devices) - 1, 'name': dev.name,
                            'class_name': getattr(dev, 'class_name', '')},
                 'params': self._params(dev)}
@@ -745,9 +795,16 @@ class ADEHack(ControlSurface):
                 out.append((name, val))
         return out
 
+    BROWSE_ROOTS = ('instruments', 'sounds', 'drums', 'audio_effects', 'midi_effects',
+                    'user_folders', 'current_project', 'user_library', 'samples', 'packs', 'clips')
+
     def _cmd_browse(self, msg):
         app = Live.Application.get_application()
         browser = app.browser
+        root_name = msg.get('root')
+        if root_name and (msg.get('query') is not None or msg.get('depth') is not None
+                          or root_name in self.BROWSE_ROOTS[:5]):
+            return self._browse_items(browser, root_name, msg)
         result = []
         for name, root in self._roots(browser, msg.get('root')):
             try:
@@ -756,6 +813,77 @@ class ADEHack(ControlSurface):
                 kids = ['<error %r>' % (e,)]
             result.append({'root': name, 'name': getattr(root, 'name', ''), 'uri': getattr(root, 'uri', ''), 'children': kids})
         return {'ok': True, 'roots': result}
+
+    def _browse_items(self, browser, root_name, msg):
+        """{"cmd":"browse","root":"sounds","query":"bass","depth":2,"limit":200}
+        -> {ok, root, items:[{name, is_folder, is_loadable, is_device, path:[...]}]}"""
+        if root_name not in self.BROWSE_ROOTS:
+            return {'ok': False, 'error': 'unknown root %r; roots: %r' % (root_name, list(self.BROWSE_ROOTS))}
+        try:
+            roots = self._roots(browser, root_name)
+        except Exception as e:
+            return {'ok': False, 'error': 'browser.%s unavailable: %r' % (root_name, e)}
+        query = (u'%s' % (msg.get('query') or '',)).lower()
+        max_depth = max(1, min(6, int(msg.get('depth', 2) or 2)))
+        limit = max(1, min(200, int(msg.get('limit', 200) or 200)))
+        items, seen, truncated = [], 0, False
+        queue = [(root, 1, []) for _, root in roots]
+        while queue:
+            item, depth, path = queue.pop(0)
+            try:
+                kids = list(item.children)
+            except Exception:
+                kids = []
+            for child in kids:
+                seen += 1
+                if seen > 20000:
+                    truncated = True
+                    break
+                try:
+                    name = child.name
+                    info = {'name': name, 'is_folder': bool(getattr(child, 'is_folder', False)),
+                            'is_loadable': bool(getattr(child, 'is_loadable', False)),
+                            'is_device': bool(getattr(child, 'is_device', False)), 'path': path}
+                except Exception:
+                    continue
+                if not query or query in name.lower():
+                    if len(items) >= limit:
+                        truncated = True
+                        break
+                    items.append(info)
+                if depth < max_depth and (info['is_folder'] or not info['is_loadable'] or query):
+                    queue.append((child, depth + 1, path + [name]))
+            if truncated:
+                break
+        return {'ok': True, 'root': root_name, 'query': query or None, 'depth': max_depth,
+                'count': len(items), 'truncated': truncated, 'items': items}
+
+    def _cmd_set_send(self, msg):
+        track = self._track(msg.get('track', 'selected'))
+        sends = list(track.mixer_device.sends)
+        spec = msg.get('send', 'A')
+        index = None
+        if isinstance(spec, (int, float)) and not isinstance(spec, bool):
+            index = int(spec)
+        else:
+            text = u'%s' % (spec,)
+            if text.isdigit():
+                index = int(text)
+            elif len(text) == 1 and text.isalpha():
+                index = ord(text.upper()) - ord('A')
+            else:
+                for i, p in enumerate(sends):
+                    if p.name.lower() == text.lower() or p.name.lower().endswith(' ' + text.lower()):
+                        index = i
+                        break
+        if index is None or index < 0 or index >= len(sends):
+            return {'ok': False, 'error': 'no send %r on %r (has %d sends: %r)'
+                    % (spec, track.name, len(sends), [p.name for p in sends])}
+        p = sends[index]
+        if msg.get('level') is not None:
+            p.value = max(float(p.min), min(float(p.max), float(msg['level'])))
+        return {'ok': True, 'track': track.name,
+                'sends': [{'index': i, 'name': sp.name, 'level': float(sp.value)} for i, sp in enumerate(sends)]}
 
     def _cmd_load_sample(self, msg, conn=None):
         # Select the target track up front so the user sees where it lands.
