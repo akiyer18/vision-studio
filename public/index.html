@@ -119,6 +119,12 @@
   <section class="wide chat">
     <h2>Your producer</h2>
     <div class="sub">Your producer, with Ableton open. Type, beatbox, hum, or attach audio. It hears your set, builds in Live, and explains what it did.</div>
+    <div id="c-project" class="file" style="font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <button class="primary" id="pj-scan" title="Reads your open Live set, plays 8 bars from the playhead, listens, and proposes production moves">🎛 Work on my Live project</button>
+      <span id="pj-hint">Open your set, put the playhead on the section you are stuck on, then press this. Nothing is changed until you say so.</span>
+      <select id="pj-genre" title="Optional: judge against a style" style="width:auto;font-size:12px"><option value="">style: as it sounds</option></select>
+    </div>
+    <div id="pj-card" class="file" style="display:none;font-size:12px"></div>
     <div id="c-session" class="file" style="display:none;font-size:12px;color:var(--muted)"></div>
     <div class="rooms" id="c-rooms">
       <span class="room on" data-room="create">Create<small>make something new</small></span>
@@ -790,7 +796,7 @@ makeRecorder('c-hum', 'c-hum-info', async b => { melBlob = b; humUpload = await 
 let currentRoom = 'create';
 const ROOM_HINTS = {
   create: { ph: "e.g. let's build a lo-fi beat around my beatbox, 88 bpm", chips: ['Start a dark techno beat at 128, kick first', 'Add a snare on 2 and 4 and crisp 16th hats', 'Give me a hypnotic saw arp in F minor', 'The kick is too soft, make it punchier', 'Half time, more swing'] },
-  analyse: { ph: 'Attach a track or a bounce, then: analyse it and give me producer feedback, two alternatives and a genre guide', chips: ['Analyse the attached track: report, feedback, two alternatives, compare', "I'm stuck on the first section, listen to my set and help me out", 'What do you think of my beat? Listen to 8 bars', 'Make a warmer alternative of the attached track'] },
+  analyse: { ph: 'Attach a track or a bounce, then: analyse it and give me producer feedback, two alternatives and a genre guide', chips: ["I'm stuck on this section of my project, listen and propose one move", 'Analyse the attached track: report, feedback, two alternatives, compare', 'What do you think of my beat? Listen to 8 bars', 'Make a warmer alternative of the attached track'] },
   tweak: { ph: 'Attach one sample, then: brighter / punchier / more vinyl / darker…', chips: ['Make this sample punchier, 3 variations', 'More vinyl and dust, keep the transient', 'Fix the highs and lows of this sample and put it on a track', 'Similar sounds I should explore'] },
 };
 function setRoom(r) {
@@ -801,6 +807,33 @@ function setRoom(r) {
   $('c-chips').innerHTML = ''; ROOM_HINTS[r].chips.forEach(c => { const sp = document.createElement('span'); sp.className = 'chip'; sp.textContent = c; sp.onclick = () => { $('c-text').value = c; $('c-text').focus(); }; $('c-chips').appendChild(sp); });
 }
 document.querySelectorAll('#c-rooms .room').forEach(el => el.onclick = () => setRoom(el.dataset.room));
+// ---------- existing project ----------
+fetch('/api/knowledge').then(r => r.json()).then(j => { (j.genres || j || []).forEach(g => { const o = document.createElement('option'); o.value = g.slug || g; o.textContent = g.title || g; $('pj-genre').appendChild(o); }); }).catch(() => {});
+function renderProject(pj) {
+  const card = $('pj-card'); card.style.display = '';
+  const cr = pj.critique && !pj.critique.error ? pj.critique : null;
+  const tracks = pj.tracks.map(t => `<span class="chip" style="cursor:default">${t.name}${t.devices && t.devices.length ? ` <small style="color:var(--muted)">${t.devices.slice(0,2).join(', ')}</small>` : ''}</span>`).join('');
+  let heard = '';
+  if (cr) heard = `<div style="margin-top:6px"><b>What I heard:</b> ${cr.styleRead || ''}${cr.styleAccuracy && cr.styleAccuracy.verdict ? ` <span style="color:var(--muted)">(${cr.styleAccuracy.target || 'style'}: ${cr.styleAccuracy.verdict})</span>` : ''}</div>
+    <div style="color:var(--muted);margin-top:4px">Drums: ${cr.drums || '–'}<br>Bass: ${cr.bass && cr.bass.present === false ? 'none yet · ' : ''}${cr.bass && cr.bass.suggestion ? cr.bass.suggestion : (cr.bass && cr.bass.type) || '–'}<br>Groove: ${cr.groove || '–'}</div>`;
+  else if (pj.capture && pj.capture.silent) heard = `<div style="margin-top:6px;color:var(--warn,#d9822b)">I heard silence. Put the playhead on the section (or launch the clips) and scan again.</div>`;
+  else if (pj.captureError) heard = `<div style="margin-top:6px;color:var(--muted)">Could not listen: ${pj.captureError}. I can still work from the set structure.</div>`;
+  else if (pj.critique && pj.critique.error) heard = `<div style="margin-top:6px;color:var(--muted)">Listened, but the critique failed: ${pj.critique.error}</div>`;
+  card.innerHTML = `<b style="color:var(--text)">Your project</b> · ${Math.round(pj.tempo)} BPM${pj.signature ? ' · ' + pj.signature : ''} · ${pj.tracks.length} tracks${pj.capture && !pj.capture.silent ? ` · <a href="${pj.capture.url}" target="_blank">hear the ${pj.capture.seconds} s I captured</a>` : ''}
+    <div class="chips" style="margin-top:6px">${tracks}</div>${heard}
+    ${cr && cr.moves && cr.moves.length ? `<div style="margin-top:8px"><b>Moves you can ask for</b> <span style="color:var(--muted)">(click one; I build it next to your tracks, nothing of yours is touched)</span></div><div class="chips" id="pj-moves"></div>` : ''}
+    <div class="chips" style="margin-top:6px"><span class="chip" id="pj-again">🎧 listen again</span><span class="chip" id="pj-ask">what would you change first?</span></div>`;
+  if (cr && cr.moves) cr.moves.forEach(m => { const sp = document.createElement('span'); sp.className = 'chip'; sp.textContent = m; sp.onclick = () => { $('c-text').value = `In my project: ${m}. Add it next to my tracks at my tempo and key; do not change what I already have.`; sendChat(); }; $('pj-moves').appendChild(sp); });
+  $('pj-again').onclick = () => scanProject();
+  $('pj-ask').onclick = () => { $('c-text').value = 'You heard my project. What is the one production move you would make first, and why? Propose, do not build yet.'; sendChat(); };
+}
+async function scanProject() {
+  const b = $('pj-scan'); b.disabled = true; $('pj-hint').textContent = 'reading your set and listening to 8 bars from the playhead…';
+  try { const r = await postJson('/api/project/scan', { bars: 8, genre: $('pj-genre').value || undefined }); if (!r.ok) throw new Error(r.error); renderProject(r.project); $('pj-hint').textContent = 'scanned · the producer now works inside this set'; }
+  catch (e) { $('pj-hint').textContent = 'scan failed: ' + e.message; }
+  b.disabled = false;
+}
+$('pj-scan').onclick = scanProject;
 $('c-listen').onclick = () => { $('c-text').value = 'Listen to 4 bars of my set and tell me what you hear and what you would change. Do not build anything yet.'; sendChat(); };
 function explainPanel(ex) {
   const d = document.createElement('details'); d.className = 'explain';

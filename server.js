@@ -414,6 +414,27 @@ app.post('/api/live/build', async (req, res) => {
 
 // ---- live tweaking: replace clips / samples / tempo in place while Live plays ----
 app.get('/api/live/state', (_req, res) => res.json(lastBuild));
+// ---- existing project: read the open set, listen to what is playing, propose production moves ----
+app.post('/api/project/scan', async (req, res) => {
+  try {
+    const bars = clamp(Number(req.body?.bars) || 8, 2, 16);
+    const send = await liveClient();
+    const set = await send({ cmd: 'describe_set' });
+    if (!set?.ok) throw new Error(set?.error || 'describe_set failed');
+    const tracks = (set.tracks || []).map((t) => ({ index: t.index, name: t.name, kind: t.is_midi ? 'midi' : 'audio', devices: (t.devices || []).map((d) => d.name || d.class_name).filter(Boolean).slice(0, 4), clips: Array.isArray(t.clips) ? t.clips.filter((c) => c && (c.name != null || c.has_clip)).length : (t.clip_count ?? undefined), muted: t.mute ?? t.muted ?? undefined, arrangementClips: t.arrangement_clips ?? undefined }));
+    lastBuild.bpm = lastBuild.bpm || Math.round(Number(set.tempo) || 0) || lastBuild.bpm;
+    let genreTarget = lastBuild.genreTarget;
+    if (req.body?.genre) { try { const k = await import('./lib/knowledge.js'); const slug = k.matchGenre(String(req.body.genre)); const bp = slug && k.getBlueprint(slug); if (bp?.summary) { genreTarget = `${bp.title}: ${bp.summary}`; lastBuild.genreTarget = genreTarget; } } catch {} }
+    const ctx = makeCtx(() => {});
+    let capture = null, critique = null, captureError = null;
+    try { capture = await ctx.captureLive({ bars }); } catch (e) { captureError = e.message; }
+    if (capture && !capture.silent) { try { critique = await ctx.critiqueCapture(capture.path, null, { genreTarget }); } catch (e) { critique = { error: e.message }; } }
+    const project = { scannedAt: Date.now(), tempo: Number(set.tempo), signature: set.signature, loop: set.loop, position: set.current_song_time, selectedTrack: set.selected_track?.name, scenes: (set.scenes || []).length, tracks, capture: capture ? { url: capture.url, path: capture.path, seconds: capture.seconds, silent: capture.silent, profile: capture.profile } : null, captureError, critique, genreTarget, toldAgent: false };
+    lastBuild.project = project;
+    res.json({ ok: true, project });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 app.post('/api/live/show', async (_req, res) => {
   try { const send = await liveClient(); const r = await send({ cmd: 'show_view', view: 'Session' }); await send({ cmd: 'show_view', view: 'Detail/Clip' }); res.json(r); }
   catch (e) { res.status(500).json({ error: e.message }); }
@@ -1348,7 +1369,7 @@ app.post('/api/settings', async (req, res) => { chat.settings = { ...chat.settin
 app.get('/api/explanations', (_req, res) => res.json(lastBuild.explanations || {}));
 // ---- Prompt Lab: pick a genre, edit the Stability prompt + parameters, generate, get a strict rubric score, use as kit ----
 app.get('/api/knowledge', async (_req, res) => {
-  try { const k = await import('./lib/knowledge.js'); res.json({ genres: k.listGenres().map((slug) => { const bp = k.getBlueprint(slug); return { slug, title: bp.title, tempo: bp.tempo || null }; }) }); }
+  try { const k = await import('./lib/knowledge.js'); res.json({ genres: k.listGenres().map((g) => ({ slug: g.slug, title: g.title, tempo: g.tempo || null })) }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.get('/api/knowledge/:slug', async (req, res) => {
@@ -1443,7 +1464,13 @@ async function runChatTurn(req, res, emit0) {
       const slug = k.matchGenre(explicit ? explicit[1] : userText);
       if (slug) { const bp = k.getBlueprint(slug); if (bp?.summary) { userText += `\n\n[genre blueprint: ${bp.title}] ${bp.summary}`; lastBuild.genreTarget = `${bp.title}: ${bp.summary}`; emit({ type: 'tool_done', name: 'style', ok: true, summary: `style guide loaded: ${bp.title}` }); } }
     } catch {}
-    chat.room = (userText.match(/\[room:\s*(create|analyse|tweak)\]/i) || [])[1]?.toLowerCase() || 'create';   // Analyse room = mix detail allowed in critiques
+    chat.room = (userText.match(/\[room:\s*(create|analyse|tweak)\]/i) || [])[1]?.toLowerCase() || 'create';
+    if (lastBuild.project && !lastBuild.project.toldAgent) {
+      const pj = lastBuild.project; const cr = pj.critique && !pj.critique.error ? pj.critique : null;
+      userText += `\n\n[existing project scan] The user has THEIR OWN set open in Live (${Math.round(pj.tempo)} BPM, ${pj.tracks.length} tracks: ${pj.tracks.map((t) => `${t.name}${t.devices?.length ? ' [' + t.devices.join(', ') + ']' : ''}`).join('; ').slice(0, 900)}). Work INSIDE this project: add to it, never delete or replace their material, match their tempo and key.${cr ? ` You already listened to ${pj.capture?.seconds || ''} s of it. Style read: ${cr.styleRead}. Drums: ${cr.drums}. Bass: ${cr.bass?.type} (${cr.bass?.suggestion}). Sound design: ${cr.soundDesign}. Suggested moves: ${(cr.moves || []).join(' | ')}.` : pj.capture?.silent ? ' The capture was silent (nothing was playing at the playhead); ask them to place the playhead on the section before you listen again.' : ''}${pj.capture?.path ? ` Capture file: ${pj.capture.path}` : ''}`;
+      pj.toldAgent = true;
+      emit({ type: 'tool_done', name: 'project', ok: true, summary: `working inside your set: ${pj.tracks.length} tracks, ${Math.round(pj.tempo)} BPM` });
+    }   // Analyse room = mix detail allowed in critiques
     let out;
     try { out = await runProducer({ history: chat.history, userText, recordings, ctx: makeCtx(emit) }); }
     catch (e) {
