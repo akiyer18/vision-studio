@@ -18,7 +18,7 @@ GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 4
                  'crash': 49, 'perc': 54}
 WOULD_BLOCK = (errno.EAGAIN, errno.EWOULDBLOCK, errno.EINPROGRESS)
 PENDING = object()  # returned by a command that will reply later via schedule_message
-COMMANDS = ['arrangement_record', 'browse', 'capture_midi', 'clip_edit', 'create_clip', 'create_midi_track', 'create_scene', 'delete_device', 'delete_track', 'duplicate_clip', 'duplicate_scene', 'duplicate_track', 'fire_scene', 'focus_clip', 'list_devices', 'list_scenes', 'list_tracks', 'load_device', 'load_sample', 'ping', 'play', 'rename_scene', 'rename_track', 'select_track', 'set_device_param', 'set_mixer', 'set_tempo', 'set_track_color', 'show_view', 'stop', 'stop_clip', 'transport_setup', 'version']
+COMMANDS = ['arrangement_record', 'browse', 'capture_midi', 'clip_edit', 'create_clip', 'create_midi_track', 'create_scene', 'delete_device', 'delete_track', 'duplicate_clip', 'duplicate_scene', 'duplicate_track', 'fire_scene', 'focus_clip', 'list_devices', 'list_scenes', 'list_tracks', 'load_device', 'load_sample', 'ping', 'play', 'rename_scene', 'rename_track', 'select_track', 'set_device_param', 'set_mixer', 'set_send', 'set_tempo', 'set_track_color', 'show_view', 'stop', 'stop_clip', 'transport_setup', 'version']
 LOAD_RETRY_TICKS = 3   # ~0.3 s between browser re-scans
 LOAD_RETRY_MAX = 8     # ~2.4 s total before replying not found
 
@@ -803,8 +803,8 @@ class ADEHack(ControlSurface):
         browser = app.browser
         root_name = msg.get('root')
         if root_name and (msg.get('query') is not None or msg.get('depth') is not None
-                          or root_name in self.BROWSE_ROOTS[:5]):
-            return self._browse_items(browser, root_name, msg)
+                          or root_name not in self.ROOT_ORDER):
+            return self._browse_items(browser, root_name, msg)   # new shape; errors on unknown roots
         result = []
         for name, root in self._roots(browser, msg.get('root')):
             try:
