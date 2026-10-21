@@ -1,10 +1,11 @@
+import json
 import math
 import struct
 import subprocess
 import wave
 from pathlib import Path
 
-from contracts import RenderJob
+from contracts import RenderJob, RenderResult
 from fastapi.testclient import TestClient
 
 from agent.theory import midi_span
@@ -218,6 +219,79 @@ def test_upload_converts_opus_and_returns_features(tmp_path: Path) -> None:
         assert handle.getframerate() == 44100
         assert handle.getnchannels() == 2
         assert handle.getsampwidth() == 2
+
+
+def test_render_stream_reports_each_variation_and_keeps_other_layers(tmp_path: Path) -> None:
+    app = create_app(tmp_path / "data")
+
+    class FailBass:
+        def __init__(self) -> None:
+            self.failed = False
+
+        def render(self, job: RenderJob, chords: list[str]) -> RenderResult:
+            if job.layer == "bass" and not self.failed:
+                self.failed = True
+                raise RuntimeError("bass failed")
+            path = tmp_path / f"{job.layer}-v{job.variant}-t{job.take}.wav"
+            path.write_bytes(b"stub")
+            return RenderResult(layer=job.layer, variant=job.variant, path=str(path), seconds=1, bpm=job.bpm)
+
+    app.state.renderer = FailBass()
+    with TestClient(app) as client:
+        turn = client.post(
+            "/turn",
+            json={
+                "session_id": "stream",
+                "text": "I feel sad in the rain",
+                "output": ["drums", "bass", "chords"],
+                "overrides": {"key": "D minor", "style": "a piano ballad"},
+            },
+        )
+        assert turn.status_code == 200
+        rendered = client.post(
+            "/render",
+            headers={"Accept": "application/x-ndjson"},
+            json={"session_id": "stream"},
+        )
+        assert rendered.status_code == 200
+        assert rendered.headers["content-type"].startswith("application/x-ndjson")
+        events = [json.loads(line) for line in rendered.text.splitlines() if line.strip()]
+        drums = [item for item in events if item["kind"] == "progress" and item["layer"] == "drums"]
+        assert [(item["take"], item["variant"], item["total"]) for item in drums] == [
+            (1, 1, 3),
+            (1, 2, 3),
+            (1, 3, 3),
+        ]
+        assert {"kind": "error", "layer": "bass", "message": "That layer did not render. Try again."} in events
+        finished = [item for item in events if item["kind"] == "layer"]
+        assert [item["results"][0]["layer"] for item in finished] == ["drums", "chords"]
+        assert events[-1] == {"kind": "done"}
+
+        again = client.post(
+            "/regenerate",
+            headers={"Accept": "application/x-ndjson"},
+            json={"session_id": "stream", "layer": "drums"},
+        )
+        assert again.status_code == 200
+        follow = [json.loads(line) for line in again.text.splitlines() if line.strip()]
+        assert [(item["take"], item["variant"]) for item in follow if item["kind"] == "progress"] == [
+            (2, 1),
+            (2, 2),
+            (2, 3),
+        ]
+
+        missing = client.post("/regenerate", json={"session_id": "stream", "layer": "bass"})
+        assert missing.status_code == 404
+        retry = client.post("/render", json={"session_id": "stream", "layer": "bass"})
+        assert retry.status_code == 200
+        assert [(item["layer"], item["variant"]) for item in retry.json()] == [
+            ("bass", 1),
+            ("bass", 2),
+            ("bass", 3),
+        ]
+        chords = client.post("/regenerate", json={"session_id": "stream", "layer": "chords"})
+        assert chords.status_code == 200
+        assert [item["variant"] for item in chords.json()] == [1, 2, 3]
 
 
 def _assert_wav(path: Path, frames: int) -> None:

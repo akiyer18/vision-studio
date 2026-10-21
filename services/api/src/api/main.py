@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import re
 import shutil
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -14,7 +17,7 @@ from agent.turn import run_turn
 from contracts import AudioFeatures, LayerPrompt, RenderJob, RenderResult, TurnRequest, TurnResponse
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from api.audio import (
@@ -35,6 +38,7 @@ _WEB = ["http://localhost:5173", "http://127.0.0.1:5173"]
 _INPUTS = {"text_only", "hum", "vocal", "instrument_loop", "drum_loop", "full_track", "midi"}
 _BARS = re.compile(r"(\d+)")
 _BPM = re.compile(r"(\d+)\s+BPM")
+_LAYER_ERROR = "That layer did not render. Try again."
 
 
 class PromptText(BaseModel):
@@ -46,6 +50,7 @@ class PromptText(BaseModel):
 class RenderBody(BaseModel):
     session_id: str
     prompts: list[PromptText] | None = None
+    layer: str | None = None
 
 
 class RegenerateBody(BaseModel):
@@ -130,32 +135,37 @@ def create_app(data_root: Path | None = None) -> FastAPI:
             request.app.state.sessions[body.session_id] = _record(response)
         return response
 
-    @app.post("/render", response_model=list[RenderResult])
-    def render(body: RenderBody, request: Request) -> list[RenderResult]:
-        record = _ready(request, body.session_id)
-        if body.prompts:
-            record.prompts = _apply_prompt_text(record.prompts, body.prompts)
-        _write_midi(request.app.state.data_root, body.session_id, record)
+    @app.post("/render", response_model=None)
+    def render(body: RenderBody, request: Request) -> list[RenderResult] | StreamingResponse:
+        record, prompts = _prepare_render(request, body)
+        renderer = request.app.state.renderer
+        if _wants_ndjson(request):
+            return _ndjson(_stream_prompts(record, renderer, body.session_id, prompts, take=1))
         rendered: list[RenderResult] = []
-        for prompt in record.prompts:
-            record.takes[prompt.layer] = 1
+        for prompt in prompts:
             jobs = _jobs(body.session_id, prompt, record, take=1, seeds=prompt.seeds)
-            record.results[prompt.layer] = _render_jobs(request.app.state.renderer, jobs, record.chords)
-            rendered.extend(record.results[prompt.layer])
+            results = _render_jobs(renderer, jobs, record.chords)
+            record.takes[prompt.layer] = 1
+            record.results[prompt.layer] = results
+            rendered.extend(results)
         return rendered
 
-    @app.post("/regenerate", response_model=list[RenderResult])
-    def regenerate(body: RegenerateBody, request: Request) -> list[RenderResult]:
+    @app.post("/regenerate", response_model=None)
+    def regenerate(body: RegenerateBody, request: Request) -> list[RenderResult] | StreamingResponse:
         record = _ready(request, body.session_id)
         if body.layer not in record.results:
             raise HTTPException(404, "That layer has not been rendered")
         prompt = next(item for item in record.prompts if item.layer == body.layer)
         take = record.takes[body.layer] + 1
-        record.takes[body.layer] = take
         seeds = seeds_for(body.layer, record.mood, record.world, record.key, record.bpm, take)
         jobs = _jobs(body.session_id, prompt, record, take=take, seeds=seeds)
-        record.results[body.layer] = _render_jobs(request.app.state.renderer, jobs, record.chords)
-        return record.results[body.layer]
+        renderer = request.app.state.renderer
+        if _wants_ndjson(request):
+            return _ndjson(_stream_prompts(record, renderer, body.session_id, [prompt], take=take, seeds=seeds))
+        results = _render_jobs(renderer, jobs, record.chords)
+        record.takes[body.layer] = take
+        record.results[body.layer] = results
+        return results
 
     @app.post("/export", response_model=ExportResponse)
     def export(body: ExportBody, request: Request) -> ExportResponse:
@@ -273,6 +283,89 @@ def _jobs(
 
 def _render_jobs(renderer: Renderer, jobs: list[RenderJob], chords: list[str]) -> list[RenderResult]:
     return [renderer.render(job, chords) for job in jobs]
+
+
+def _prepare_render(request: Request, body: RenderBody) -> tuple[SessionRecord, list[LayerPrompt]]:
+    record = _ready(request, body.session_id)
+    if body.prompts:
+        record.prompts = _apply_prompt_text(record.prompts, body.prompts)
+    prompts = _prompts_for(record, body.layer)
+    _write_midi(request.app.state.data_root, body.session_id, record)
+    return record, prompts
+
+
+def _prompts_for(record: SessionRecord, layer: str | None) -> list[LayerPrompt]:
+    if layer is None:
+        return list(record.prompts)
+    selected = [item for item in record.prompts if item.layer == layer]
+    if not selected:
+        raise HTTPException(404, "That layer is not in this brief")
+    return selected
+
+
+def _wants_ndjson(request: Request) -> bool:
+    return "application/x-ndjson" in request.headers.get("accept", "")
+
+
+def _ndjson(chunks: AsyncIterator[bytes]) -> StreamingResponse:
+    return StreamingResponse(
+        chunks,
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _line(payload: dict[str, object]) -> bytes:
+    return (json.dumps(payload, separators=(",", ":")) + "\n").encode()
+
+
+async def _stream_prompts(
+    record: SessionRecord,
+    renderer: Renderer,
+    session_id: str,
+    prompts: list[LayerPrompt],
+    *,
+    take: int,
+    seeds: tuple[float, float, float] | None = None,
+) -> AsyncIterator[bytes]:
+    for prompt in prompts:
+        layer_seeds = prompt.seeds if seeds is None else seeds
+        jobs = _jobs(session_id, prompt, record, take=take, seeds=layer_seeds)
+        async for line in _stream_jobs(record, renderer, jobs, record.chords, take):
+            yield line
+    yield _line({"kind": "done"})
+
+
+async def _stream_jobs(
+    record: SessionRecord,
+    renderer: Renderer,
+    jobs: list[RenderJob],
+    chords: list[str],
+    take: int,
+) -> AsyncIterator[bytes]:
+    if not jobs:
+        return
+    layer = jobs[0].layer
+    results: list[RenderResult] = []
+    total = len(jobs)
+    try:
+        for job in jobs:
+            yield _line(
+                {"kind": "progress", "layer": layer, "take": take, "variant": job.variant, "total": total}
+            )
+            results.append(await asyncio.to_thread(renderer.render, job, chords))
+    except Exception:
+        yield _line({"kind": "error", "layer": layer, "message": _LAYER_ERROR})
+        return
+    record.takes[layer] = take
+    record.results[layer] = results
+    yield _line(
+        {
+            "kind": "layer",
+            "take": take,
+            "results": [item.model_dump(exclude_none=True) for item in results],
+        }
+    )
 
 
 def _write_midi(data_root: Path, session_id: str, record: SessionRecord) -> None:

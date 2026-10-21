@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react"
 
-import { ApiError, render } from "../api/client.ts"
+import { ApiError } from "../api/client.ts"
 import { postTurn } from "../conversation/postTurn.ts"
 import { barsFromStructure, bpmFromPrompt, clipLength } from "../studio/output.ts"
+import { renderCurrent } from "../studio/renderSession.ts"
 import { useStudio } from "../state/studio.ts"
 import type { OutputChoice } from "../types/output_choice.ts"
 import { Button } from "./Button.tsx"
@@ -14,8 +15,6 @@ export function PromptStudio() {
   const edits = useStudio((state) => state.promptEdits)
   const editPrompt = useStudio((state) => state.editPrompt)
   const resetPrompt = useStudio((state) => state.resetPrompt)
-  const setRenders = useStudio((state) => state.setRenders)
-  const setStatus = useStudio((state) => state.setStatus)
   const heading = useRef<HTMLHeadingElement>(null)
   const moved = useRef<typeof turn>(null)
   const busy = useRef(false)
@@ -32,7 +31,7 @@ export function PromptStudio() {
   }, [ready, turn])
 
   function choose(choice: OutputChoice) {
-    if (busy.current) return
+    if (busy.current || Object.keys(useStudio.getState().runs).length > 0) return
     busy.current = true
     setError(null)
     void postTurn({ output: [choice] })
@@ -46,30 +45,9 @@ export function PromptStudio() {
   }
 
   async function send() {
-    if (busy.current || prompts.length === 0) return
-    busy.current = true
+    if (prompts.length === 0) return
     setError(null)
-    setStatus("working")
-    try {
-      const sessionId = useStudio.getState().sessionId
-      const current = useStudio.getState().promptEdits
-      const results = await render({
-        session_id: sessionId,
-        prompts: prompts.map((item) => ({
-          layer: item.layer,
-          prompt: current[item.layer]?.prompt ?? item.prompt,
-          negative: current[item.layer]?.negative ?? item.negative,
-        })),
-      })
-      setRenders(results)
-      setStatus("ready")
-    } catch (err) {
-      setStatus("error")
-      const message = err instanceof ApiError ? err.message : "That did not go through. Try again."
-      setError(message.trim().length < 160 ? message : "That did not go through. Try again.")
-    } finally {
-      busy.current = false
-    }
+    await renderCurrent()
   }
 
   return (
