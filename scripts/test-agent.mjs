@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
-import { makeTools, runProducer, PRODUCER_SYSTEM, MODEL } from "../lib/agent.js";
+import { makeTools, runProducer, PRODUCER_SYSTEM, MODEL, levelFromText } from "../lib/agent.js";
 
 assert.ok(Anthropic && betaZodTool, "SDK helpers import");
 assert.equal(MODEL, "claude-opus-5-5");
@@ -11,7 +11,10 @@ assert.ok(PRODUCER_SYSTEM.includes("dry one-shot") && PRODUCER_SYSTEM.includes("
 const calls = [], events = []; let refCounter = 2;
 const ctx = {
   emit: (e) => events.push(e),
-  synth: async (o) => { calls.push(["synth", o]); return { path: "/out/x.wav", name: "x.wav", url: "/out/x.wav", durationSeconds: 1, peakDb: -1 }; },
+  synth: async (o) => { calls.push(["synth", o]); if (o.variations > 1) return { variants: Array.from({ length: o.variations }, (_, i) => ({ path: `/out/x-${"abc"[i]}.wav`, url: `/out/x-${"abc"[i]}.wav`, seed: 100 + i, label: "ABC"[i] })) }; return { path: "/out/x.wav", name: "x.wav", url: "/out/x.wav", durationSeconds: 1, peakDb: -1 }; },
+  restyleAudio: async (o) => { calls.push(["restyleAudio", o]); return { path: "/out/restyled.wav", url: "/out/restyled.wav", durationSeconds: 12.3 }; },
+  explain: async (o) => { calls.push(["explain", o]); return { id: "ex1" }; },
+  genreGuide: async (o) => { calls.push(["genreGuide", o]); return { text: "UK Garage: ... (from model knowledge, verify names)", source: "model" }; },
   writePattern: async (o) => { calls.push(["writePattern", o]); return { pattern: { name: "p", bpm: o.bpm, bars: o.bars, stepsPerBar: 16, swing: 0, lanes: [{ instrument: "kick", steps: [{ step: 0, velocity: 120 }] }] }, source: "rules" }; },
   writeMelody: async (o) => { calls.push(["writeMelody", o]); return { key: o.key, bars: o.bars, notes: [{ pitch: 60, startBeats: 0, durationBeats: 1, velocity: 100 }], source: "rules" }; },
   beatboxToPattern: async (p, o) => { calls.push(["beatboxToPattern", p, o]); return { pattern: { name: "bb", bpm: 120, bars: 1, stepsPerBar: 16, swing: 0, lanes: [] }, onsets: [{ time: 0.31, instrument: "kick" }, { time: 0.8, instrument: "snare" }, { time: 1.3, instrument: "kick" }], bpm: 120 }; },
@@ -76,7 +79,7 @@ const ctx = {
 };
 
 const tools = makeTools(ctx, { beat: "/tmp/fake.wav", refs: [{ name: "loop.wav", path: "/tmp/ref1.wav" }, { name: "kick.wav", path: "/tmp/ref2.wav" }] });
-const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "transcribe_audio", "judge_sound", "slice_sample", "chop_sample", "load_device", "add_effect", "set_param", "list_devices", "set_mixer", "create_scene", "fire_scene", "record_arrangement", "analyze_audio", "compare_audio", "render_preview", "set_track_color", "capture_midi", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "separate_stems", "analyze_music", "process_audio", "master_preview", "generate_loop", "restyle_mix", "production_dna", "critique_mix", "label_pieces", "refine_sound", "undo_sound", "listen_live", "critique_capture", "describe_set", "read_clip", "import_sample", "show_live", "play", "stop"];
+const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "transcribe_audio", "judge_sound", "slice_sample", "chop_sample", "load_device", "add_effect", "set_param", "list_devices", "set_mixer", "create_scene", "fire_scene", "record_arrangement", "analyze_audio", "compare_audio", "render_preview", "set_track_color", "capture_midi", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "separate_stems", "analyze_music", "process_audio", "master_preview", "generate_loop", "restyle_mix", "production_dna", "critique_mix", "label_pieces", "refine_sound", "undo_sound", "listen_live", "critique_capture", "describe_set", "read_clip", "import_sample", "restyle_audio", "explain_result", "genre_guide", "show_live", "play", "stop"];
 assert.deepEqual(tools.map((t) => t.name), expected, "tool names");
 for (const t of tools) {
   assert.ok(t.description && t.description.length > 20, `${t.name} description`);
@@ -137,6 +140,9 @@ const sample = {
   describe_set: {},
   read_clip: { track: "Drums", slot: 0 },
   import_sample: { which: "ref#1", track: "Vox", name: "vox-fixed", toneFix: { highpassHz: 120, gainDb: -3 } },
+  restyle_audio: { which: "ref#1", prompt: "Genre: Lo-fi Hip Hop, warm tape saturation, dusty", strength: 0.5 },
+  explain_result: { path: "/out/x.wav", brief: "a punchy techno kick", choices: [{ what: "sub + click layered", why: "weight and transient separately" }], steps_ableton: ["Simpler with the sub", "Saturator Drive 8 dB", "EQ Eight highpass 30 Hz"], steps_logic: ["Quick Sampler", "Phat FX drive", "Channel EQ highpass 30 Hz"] },
+  genre_guide: { genre: "UK Garage" },
   show_live: {}, play: {}, stop: {},
 };
 for (const t of tools) {
@@ -511,6 +517,40 @@ assert.equal(JSON.parse(await T("import_sample").run({ which: "ref#99" })).ok, f
 ctx.importSample = async () => { throw new Error("pedalboard not installed / run tools/py/setup.sh"); };
 assert.equal(JSON.parse(await T("import_sample").run(sample.import_sample)).ok, false);
 for (const k of ["WORKING WITH THE PRODUCER'S SESSION", "I listened to N bars of your set", "never editing their clips", "scene B", "describe_set", "listen_live", "critique_capture", "import_sample", "toneFix", "Their clips, devices and mixer are theirs"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
+
+// v10: variations, restyle_audio, explain_result, genre_guide, level
+const sv = JSON.parse(await T("synthesize_sound").run(T("synthesize_sound").parse({ role: "kick", prompt: "deep electronic kick drum, single hit, dry one-shot", variations: 3 })));
+assert.equal(sv.variants.length, 3); assert.deepEqual(sv.variants.map((v) => v.label), ["A", "B", "C"]); assert.equal(sv.variants[1].samplePath, "/out/x-b.wav"); assert.equal(sv.variants[1].seed, 101); assert.match(sv.next, /use B/);
+assert.equal(calls.filter((c) => c[0] === "synth").at(-1)[1].variations, 3);
+const sv1 = JSON.parse(await T("synthesize_sound").run(T("synthesize_sound").parse({ role: "kick", prompt: "deep kick, dry one-shot" })));
+assert.equal(sv1.samplePath, "/out/x.wav"); assert.ok(!("variants" in sv1), "single generation keeps the old shape");
+assert.throws(() => T("synthesize_sound").parse({ role: "kick", prompt: "deep kick", variations: 4 }), "variations 4 rejected");
+const ra = JSON.parse(await T("restyle_audio").run(sample.restyle_audio));
+assert.equal(ra.samplePath, "/out/restyled.wav"); assert.equal(ra.durationSeconds, 12.3); assert.equal(calls.filter((c) => c[0] === "restyleAudio").at(-1)[1].which, "/tmp/ref1.wav");
+assert.throws(() => T("restyle_audio").parse({ ...sample.restyle_audio, strength: 0.2 }), "strength 0.2 rejected");
+assert.throws(() => T("restyle_audio").parse({ ...sample.restyle_audio, strength: 0.9 }), "strength 0.9 rejected");
+assert.equal(JSON.parse(await T("restyle_audio").run({ ...sample.restyle_audio, which: "ref#99" })).ok, false);
+ctx.restyleAudio = async () => { throw new Error("Stability 500"); };
+assert.equal(JSON.parse(await T("restyle_audio").run(sample.restyle_audio)).ok, false);
+const ex = JSON.parse(await T("explain_result").run(T("explain_result").parse(sample.explain_result)));
+assert.equal(ex.stored, true); assert.equal(ex.level, "intermediate"); assert.equal(ex.choices, 1); assert.deepEqual(ex.steps, { ableton: 3, logic: 3 }); assert.equal(ex.id, "ex1");
+let exc = calls.filter((c) => c[0] === "explain").at(-1)[1]; assert.equal(exc.level, "intermediate"); assert.deepEqual(exc.steps.ableton, sample.explain_result.steps_ableton); assert.equal(exc.path, "/out/x.wav");
+const exTurn = JSON.parse(await T("explain_result").run(T("explain_result").parse({ ...sample.explain_result, path: undefined }))); assert.equal(exTurn.path, "turn");
+assert.throws(() => T("explain_result").parse({ ...sample.explain_result, choices: Array(7).fill({ what: "x", why: "y" }) }), "7 choices rejected");
+assert.throws(() => T("explain_result").parse({ ...sample.explain_result, steps_ableton: ["only two", "steps here"] }), "2 steps rejected");
+assert.throws(() => T("explain_result").parse({ ...sample.explain_result, steps_logic: Array(9).fill("step nine") }), "9 steps rejected");
+ctx.explain = async () => { throw new Error("store unavailable"); };
+assert.equal(JSON.parse(await T("explain_result").run(sample.explain_result)).ok, false);
+// level flows from the user text into explain_result
+assert.equal(levelFromText("[level: pro] make it slam"), "pro"); assert.equal(levelFromText("[room: analyse] [level: Beginner] what is this"), "beginner"); assert.equal(levelFromText("no prefix"), "intermediate");
+ctx.explain = async (o) => { calls.push(["explain", o]); return { id: "ex2" }; };
+const proTools = makeTools(ctx, {}, { level: "pro" });
+const exPro = JSON.parse(await proTools.find((t) => t.name === "explain_result").run(sample.explain_result)); assert.equal(exPro.level, "pro"); assert.equal(calls.filter((c) => c[0] === "explain").at(-1)[1].level, "pro");
+const gg = JSON.parse(await T("genre_guide").run(sample.genre_guide)); assert.match(gg.guide, /verify names/); assert.equal(gg.source, "model"); assert.equal(gg.genre, "UK Garage");
+assert.throws(() => T("genre_guide").parse({ genre: "x" }), "1-char genre rejected");
+ctx.genreGuide = async () => { throw new Error("ANTHROPIC_API_KEY not set"); };
+assert.equal(JSON.parse(await T("genre_guide").run(sample.genre_guide)).ok, false);
+for (const k of ["ROOMS", "[room: create]", "[room: analyse]", "[room: tweak]", "LEVEL", "at most one clarifying question", "VARIATIONS", "say 'use B'", "EXPLAIN RULE", "explain_result", "Make it in Logic", "Drum Machine Designer", "Explained: see 'How this was made'", "restyle_audio", "genre_guide"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
 
 // persistent attachments: note lists all, marks new vs earlier
 const fc = { beta: { messages: { toolRunner(params) { return { params, pushMessages() {}, async *[Symbol.asyncIterator]() { yield { role: "assistant", stop_reason: "end_turn", content: [] }; } }; } } } };
