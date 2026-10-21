@@ -28,9 +28,7 @@ bash tools/py/setup.sh   # optional: local open-source toolbelt (Demucs, basic-p
 ```
 
 ## Demo flow
-1. **Hear it**: name = "snare", mode = One-shot, hit Record, beatbox one snare, Stop, describe it ("punchy acoustic snare, bright crack"), Synthesize. ~5–15 s later you get `snare-<ts>.wav` (one-shot) and `snare-full-<ts>.wav` (6 s loop).
-2. **Pattern**: "four on the floor, snare on 2 and 4, offbeat hats", 124 BPM, Generate. Press Play to audition with your new snare. `snare-pattern-<ts>.mid` is saved.
-3. In Live: User Library › ADE Hack → drag the `.wav` onto a MIDI track (Simpler) or a Drum Rack pad, drag the `.mid` onto that track. Use "Single sample" mapping for Simpler, "Drum Rack" mapping for GM pads.
+Open http://localhost:3000, attach a beatbox and a hum (or a reference file), and type what you want: *"build a dusty boom bap beat around my beatbox at 90 bpm, bass from my hum, chop the vocal into a hook"*. The agent builds it in Live layer by layer, then takes follow-ups ("make the kick dirtier", "make a B scene", "lay it out: 8 bars of A then 8 of B", "technical feedback vs the reference"). The full 3-minute stage script with what the audience sees after each message is in **DEMO.md**. The legacy one-shot buttons (Synthesize / Generate / → Live) still work for testing single sounds and patterns.
 
 ## Tool roles (who does what)
 | Component | Role | Where |
@@ -67,8 +65,8 @@ Attachments (beatbox, hum, reference files) persist for the whole chat session. 
 | Anthropic API (Claude Opus 5.5) | Anthropic Commercial Terms of Service + Usage Policy | API call |
 | Google Gemini API | Gemini API Additional Terms; on the unpaid tier Google may use prompts/audio to improve products | API call |
 | Hugging Face Spaces (ZeroGPU) | Hugging Face Terms of Service; shared GPU quota per account | API call |
-| NVIDIA Music Flamingo (via HF Space) | model weights under NVIDIA's **non-commercial** license (OneWay Noncommercial, per the model card - verify before any commercial use) | API call |
-| MuScriptor (via HF Space) | license not stated on the Space at time of writing - check its card | API call |
+| NVIDIA Music Flamingo (via HF Space) | model weights under NVIDIA's **non-commercial** license (NVIDIA OneWay Noncommercial License, confirmed on the model card 2026-10-21; research/demo only) | API call |
+| MuScriptor (via HF Space) | no license stated on the Space card (checked 2026-10-21); treat as demo-only until clarified | API call |
 | Ableton Live 10 Python API (`Live`, `_Framework`) | Ableton's proprietary modules; used only inside Live, we ship only our own script | not redistributed |
 
 **What this means:** everything above is fine for a hackathon demo and for personal use. For a product you would (a) replace Music Flamingo with a commercially licensed listener (Gemini already is) or get an NVIDIA license, (b) keep the GPL pieces (pedalboard, rubberband, GPL ffmpeg build) as separately installed tools the user runs, or swap them for permissive equivalents, and (c) review the Stability and Google data/usage terms for your customers' audio.
