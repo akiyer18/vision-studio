@@ -63,6 +63,11 @@
   .msg .tools li.ok::before { content:'✓'; color:var(--accent2); }
   .msg .tools li.bad::before { content:'✗'; color:var(--danger); }
   .composer { display:flex; gap:10px; align-items:flex-end; margin-top:12px; }
+  .profile { display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:6px; margin:8px 0; }
+  .profile .r { background:#13151a; border:1px solid var(--line); border-radius:8px; padding:6px 8px; font-size:12px; }
+  .profile .r b { display:block; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+  .profile .lvl-low { color:#8fb4ff; } .profile .lvl-medium { color:#e8e9ec; } .profile .lvl-high { color:var(--accent); }
+  .profile .num { color:var(--muted); font-size:11px; }
   .composer textarea { flex:1; min-height:56px; font-size:16px; }
   .chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
   .chip { font-size:13px; padding:6px 10px; border-radius:999px; background:#22252c; border:1px solid var(--line); cursor:pointer; color:var(--text); }
@@ -113,6 +118,11 @@
     </div>
     <div class="composer">
       <textarea id="c-text" placeholder="e.g. let's build a lo-fi beat around my beatbox, 88 bpm"></textarea>
+      <select id="c-density" title="How many layers the producer builds by default" style="width:auto;align-self:stretch">
+        <option value="minimal">Minimal (3 layers)</option>
+        <option value="standard" selected>Standard (4–5)</option>
+        <option value="rich">Rich (up to 7)</option>
+      </select>
       <button class="primary big" id="c-send">Send</button>
     </div>
     <div class="actions">
@@ -121,6 +131,7 @@
       <button id="c-attach" title="Attach audio files as references (wav, mp3, aiff, m4a, flac)">📎 Attach audio</button>
       <input type="file" id="c-file" accept="audio/*,video/*,.wav,.mp3,.mpeg,.mpg,.mp4,.mov,.m4a,.aac,.aif,.aiff,.flac,.ogg,.wma,.webm" multiple style="display:none" />
       <button id="c-show">Show in Live</button>
+      <button id="c-arrange" title="Record the playing Session clips onto the Arrangement timeline">Lay out in Arrangement (8 bars)</button>
       <button id="c-reset" title="Forget the conversation (Live tracks stay)">New session</button>
     </div>
     <div class="chips" id="c-refs"></div>
@@ -703,6 +714,22 @@ async function uploadBlob(b, infoId, label) {
 makeRecorder('c-beat', 'c-beat-info', async b => { beatBlob = b; beatUpload = await uploadBlob(b, 'c-beat-info', 'beat'); });
 makeRecorder('c-hum', 'c-hum-info', async b => { melBlob = b; humUpload = await uploadBlob(b, 'c-hum-info', 'melody'); });
 $('c-show').onclick = () => postJson('/api/live/show', {});
+$('c-arrange').onclick = async () => { $('c-arrange').disabled = true; const r = await postJson('/api/live/arrange', { bars: 8 }); addBot(r.ok ? `Recording the playing clips into the Arrangement for 8 bars. Press Tab in Live to watch the timeline fill; it stops by itself.` : 'Could not start arrangement recording: ' + r.error); $('c-arrange').disabled = false; };
+function profileCard(profile, title) {
+  if (!profile || !profile.ratings) return null;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-top:6px">${title || 'Technical profile'}${profile.durationSeconds ? ` · ${Number(profile.durationSeconds).toFixed(2)} s` : ''}</div>`;
+  const g = document.createElement('div'); g.className = 'profile';
+  for (const [k, r] of Object.entries(profile.ratings)) {
+    const d = document.createElement('div'); d.className = 'r';
+    const v = r.value != null ? Number(r.value) : null;
+    d.innerHTML = `<b>${k.replace(/([A-Z])/g, ' $1')}</b><span class="lvl-${r.level}">${r.level}</span> <span class="num">${v != null ? v.toFixed(Math.abs(v) >= 100 ? 0 : 1) : ''}${r.unit ? ' ' + r.unit : ''}</span>`;
+    g.appendChild(d);
+  }
+  wrap.appendChild(g);
+  if (profile.summary) { const p = document.createElement('div'); p.style.cssText = 'font-size:13px;color:var(--muted)'; p.textContent = profile.summary; wrap.appendChild(p); }
+  return wrap;
+}
 $('c-reset').onclick = async () => { await postJson('/api/chat/reset', {}); $('c-log').innerHTML = ''; addBot('New session. Live keeps whatever is already there.'); };
 document.querySelectorAll('#c-chips .chip').forEach(ch => ch.onclick = () => { $('c-text').value = ch.textContent; $('c-text').focus(); });
 function addMsg(cls, text) { const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text; $('c-log').appendChild(d); $('c-log').scrollTop = 1e9; return d; }
@@ -713,12 +740,13 @@ async function sendChat() {
   const text = $('c-text').value.trim();
   if (chatBusy || (!text && !beatUpload && !humUpload && !refUploads.length)) return;
   chatBusy = true; $('c-send').disabled = true; $('c-text').value = '';
-  addMsg('user', text + (beatUpload ? ' 🎙 beat' : '') + (humUpload ? ' 🎙 melody' : '') + refUploads.map(r => ` 🎧 ${r.name}`).join(''));
+  const density = $('c-density').value;
+  addMsg('user', text + (beatUpload ? ' 🎙 beat' : '') + (humUpload ? ' 🎙 melody' : '') + refUploads.map(r => ` 🎧 ${r.name}`).join('') + (density !== 'standard' ? ` · ${density}` : ''));
   const bot = addBot(''); const tools = document.createElement('ul'); tools.className = 'tools'; bot.appendChild(tools);
   const body = document.createElement('div'); bot.appendChild(body); body.textContent = 'thinking…';
   const live = new Map();
   try {
-    const r = await fetch('/api/chat', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ text, beatId: beatUpload, humId: humUpload, refIds: refUploads.map(x => x.id) }) });
+    const r = await fetch('/api/chat', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ text: (density !== 'standard' ? `[density: ${density}] ` : '') + text, beatId: beatUpload, humId: humUpload, refIds: refUploads.map(x => x.id) }) });
     beatUpload = humUpload = null; refUploads = []; $('c-refs').innerHTML = ''; $('c-beat-info').textContent = 'attach a beat'; $('c-hum-info').textContent = 'attach a melody'; $('c-beat').textContent = '● Beatbox'; $('c-hum').textContent = '● Hum';
     const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
     while (true) {
@@ -729,7 +757,12 @@ async function sendChat() {
         if (!chunk.startsWith('data: ')) continue;
         const ev = JSON.parse(chunk.slice(6));
         if (ev.type === 'tool') { const li = document.createElement('li'); li.textContent = ev.summary || ev.name; tools.appendChild(li); live.set(ev.id || ev.name + tools.children.length, li); li.dataset.name = ev.name; }
-        else if (ev.type === 'tool_done') { const li = [...tools.children].reverse().find(l => l.dataset.name === ev.name && !l.className); if (li) { li.className = ev.ok === false ? 'bad' : 'ok'; if (ev.summary) li.textContent = ev.summary; } }
+        else if (ev.type === 'tool_done') {
+          const li = [...tools.children].reverse().find(l => l.dataset.name === ev.name && !l.className); if (li) { li.className = ev.ok === false ? 'bad' : 'ok'; if (ev.summary) li.textContent = ev.summary; }
+          const prof = ev.data && (ev.data.profile || (ev.data.ratings ? ev.data : null));
+          if (prof) { const card = profileCard(prof, ev.name === 'render_preview' ? 'Preview render (no Live effects)' : 'Technical profile'); if (card) bot.insertBefore(card, body); }
+          if (ev.name === 'render_preview' && ev.data && ev.data.url) { const a = document.createElement('audio'); a.controls = true; a.src = ev.data.url; a.style.width = '100%'; bot.insertBefore(a, body); }
+        }
         else if (ev.type === 'text') { body.textContent = ev.text || ''; }
         else if (ev.type === 'error') { body.textContent = 'Error: ' + ev.error; body.style.color = 'var(--danger)'; }
         else if (ev.type === 'done') { if (!body.textContent) body.textContent = 'Done.'; }
