@@ -464,6 +464,11 @@ app.post('/api/live/build', async (req, res) => {
 
 // ---- live tweaking: replace clips / samples / tempo in place while Live plays ----
 app.get('/api/live/state', (_req, res) => res.json(lastBuild));
+// drop a generated/processed wav into Live as a warped audio clip (UI cards and tests; the agent uses add_loop_layer)
+app.post('/api/live/loop-clip', async (req, res) => {
+  try { const { path: p, track = 'AI Loop', slot = 0, warpMode = 'complex_pro', overwrite = true } = req.body || {}; if (!p || !audioPathOk(p)) throw new Error('path missing or outside project audio'); res.json({ ok: true, ...(await makeCtx(() => {}).live.loadAudioClip({ track, slot, samplePath: p, warpMode, overwrite })) }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 // ---- existing project: read the open set, listen to what is playing, propose production moves ----
 app.post('/api/project/scan', async (req, res) => {
   const scanBody = async () => {
@@ -1527,6 +1532,7 @@ function makeCtx(emit) {
         if (!audioPathOk(samplePath)) throw new Error('load_audio_clip: path outside project audio');
         const send = await liveClient();
         const slotPath = await toSlot(samplePath, 'synth', 'Synth', { noWiden: true });   // audio clips keep the file as-is
+        try { await send({ cmd: 'show_view', view: 'Session' }); } catch {}   // Live 10 drops browser items into the highlighted slot only while Session view is visible
         const r = okOrThrow(await sendWithRetry(send, { cmd: 'load_audio_clip', track, slot: Number(slot) || 0, name: path.basename(slotPath), warp_mode: warpMode, overwrite: Boolean(overwrite) }), 'load_audio_clip');
         rememberSound(track, samplePath, slotPath, 'audio');
         if (!lastBuild.tracks[String(track).toLowerCase()]) lastBuild.tracks[String(track).toLowerCase()] = { index: r.index ?? -1, name: r.track || track };
