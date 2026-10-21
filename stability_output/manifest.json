@@ -1,0 +1,62 @@
+[
+  {
+    "variation": 1,
+    "file": "variation_1.mp3",
+    "generation_id": "e68bc557e3b81647449735e52f85fab3282b1aee7d447a898ab9e442ad007a0a",
+    "size_bytes": 547262,
+    "model": "stable-audio-3",
+    "strength": 0.4,
+    "duration": 33,
+    "output_format": "mp3",
+    "prompt": "A mellow lo-fi hip-hop beat in the chillhop style. Warm vinyl crackle and tape hiss over dusty boom-bap drums, a laid-back jazzy Rhodes chord progression, a deep rounded sub-bass groove, soft swung hi-hats and a slow head-nod tempo. Relaxed, nostalgic, late-night study vibes.",
+    "seed": "not returned by API (random)"
+  },
+  {
+    "variation": 2,
+    "file": "variation_2.mp3",
+    "generation_id": "d56057b53d27a6de2c3aa4f99dfc7bba82b3dd4faf3de3f290670e23634d6b08",
+    "size_bytes": 547262,
+    "model": "stable-audio-3",
+    "strength": 0.4,
+    "duration": 33,
+    "output_format": "mp3",
+    "prompt": "A mellow lo-fi hip-hop beat in the chillhop style. Warm vinyl crackle and tape hiss over dusty boom-bap drums, a laid-back jazzy Rhodes chord progression, a deep rounded sub-bass groove, soft swung hi-hats and a slow head-nod tempo. Relaxed, nostalgic, late-night study vibes.",
+    "seed": "not returned by API (random)"
+  },
+  {
+    "variation": 3,
+    "file": "variation_3.mp3",
+    "generation_id": "5c908edd3609270b7a4d58103264c05e9dd6d90be7b6e580227e65e5dd4b1fe1",
+    "size_bytes": 547262,
+    "model": "stable-audio-3",
+    "strength": 0.4,
+    "duration": 33,
+    "output_format": "mp3",
+    "prompt": "A mellow lo-fi hip-hop beat in the chillhop style. Warm vinyl crackle and tape hiss over dusty boom-bap drums, a laid-back jazzy Rhodes chord progression, a deep rounded sub-bass groove, soft swung hi-hats and a slow head-nod tempo. Relaxed, nostalgic, late-night study vibes.",
+    "seed": "not returned by API (random)"
+  },
+  {
+    "variation": 4,
+    "file": "variation_4.mp3",
+    "generation_id": "0ebb531980db776035c6c27f9ba32319f0bdea87dfa7afa6f32b596759927bd3",
+    "size_bytes": 547262,
+    "model": "stable-audio-3",
+    "strength": 0.4,
+    "duration": 33,
+    "output_format": "mp3",
+    "prompt": "A mellow lo-fi hip-hop beat in the chillhop style. Warm vinyl crackle and tape hiss over dusty boom-bap drums, a laid-back jazzy Rhodes chord progression, a deep rounded sub-bass groove, soft swung hi-hats and a slow head-nod tempo. Relaxed, nostalgic, late-night study vibes.",
+    "seed": "not returned by API (random)"
+  },
+  {
+    "variation": 5,
+    "file": "variation_5.mp3",
+    "generation_id": "04ad4eab727d60e4cf8e30ab7655898eb51671a0c099ed1caddcead6e4efa41f",
+    "size_bytes": 547262,
+    "model": "stable-audio-3",
+    "strength": 0.4,
+    "duration": 33,
+    "output_format": "mp3",
+    "prompt": "A mellow lo-fi hip-hop beat in the chillhop style. Warm vinyl crackle and tape hiss over dusty boom-bap drums, a laid-back jazzy Rhodes chord progression, a deep rounded sub-bass groove, soft swung hi-hats and a slow head-nod tempo. Relaxed, nostalgic, late-night study vibes.",
+    "seed": "not returned by API (random)"
+  }
+]
