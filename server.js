@@ -889,7 +889,7 @@ function makeCtx(emit) {
             const made = await Promise.all(roles.map(async (role) => { try { const r = await this.synth({ prompt: `${drumWords ? drumWords + ', ' : ''}${intent}`, role, variations: 1 }); return { kind: role, label: role, samplePath: r.path, path: r.path, url: r.url, subShare: r.subShare }; } catch (e) { return null; } }));
             let kit = made.filter(Boolean);
             const kickHit = kit.find((k) => k.kind === 'kick');
-            if (kickHit && kickHit.subShare != null && kickHit.subShare < 0.25) { try { const sub = await this.synthLocal({ kind: 'sub', name: 'enh-sub' }); const layered = await this.layerSamples({ parts: [{ path: kickHit.samplePath, gainDb: 0 }, { path: sub.path, gainDb: -3 }], name: 'enh-kick' }).catch(() => null); if (layered?.path) { kickHit.samplePath = layered.path; kickHit.path = layered.path; } } catch {} }
+            if (kickHit && kickHit.subShare != null && kickHit.subShare < 0.25) { try { const sub = await this.synthLocal({ kind: 'sub', name: 'enh-sub' }); const layered = await this.layerSamples({ layers: [{ path: kickHit.samplePath, gainDb: 0 }, { path: sub.path, gainDb: -3 }], name: 'enh-kick' }).catch(() => null); if (layered?.path) { kickHit.samplePath = layered.path; kickHit.path = layered.path; } } catch {} }
             if (!kit.length) { const kitR = await this.sliceKitFromAudio(stems.drums, { name: 'enh' }); kit = kitR.kit.filter((k) => !k.alt); }
             // pattern lanes must map onto the kit we have: snare lane -> clap pad when that is what we made, hats -> hat_closed
             const have = new Set(kit.map((k) => k.kind));
