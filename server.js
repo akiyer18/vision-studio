@@ -477,6 +477,7 @@ function makeCtx(emit) {
     },
     writePattern: async (o) => describeToPattern(o),
     listen: async (p, q) => { if (!insideOut(p) && !p.startsWith(TMP)) throw new Error('listen: path outside project audio'); return (await import('./lib/ears.js')).listen(p, q); },
+    transcribe: async (p, opts) => { if (!insideOut(p) && !p.startsWith(TMP)) throw new Error('transcribe: path outside project audio'); return (await import('./lib/transcribe.js')).transcribe(p, opts); },
     judge: async (p, intent) => { if (!insideOut(p) && !p.startsWith(TMP)) throw new Error('judge: path outside project audio'); return (await import('./lib/ears.js')).judge(p, intent); },
     writeMelody: async (o) => { const { describeToMelody } = await import('./lib/melody.js'); const r = await describeToMelody(o); return { notes: r.notes, bars: r.bars, key: r.key, source: r.source }; },
     beatboxToPattern: async (p, o) => (await import('./lib/rhythm.js')).beatboxToPattern(p, o),

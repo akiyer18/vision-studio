@@ -18,6 +18,7 @@ const ctx = {
   humToNotes: async (p, o) => { calls.push(["humToNotes", p, o]); return { notes: [{ pitch: 62, startBeats: 0, durationBeats: 0.5, velocity: 90 }], bars: 1, bpm: o.bpm }; },
   listen: async (p, q) => { calls.push(["listen", p, q]); return { text: "a dry, clicky kick with a short sub tail; dark and driving" }; },
   judge: async (p, intent) => { calls.push(["judge", p, intent]); return { text: "tight and clicky but the sub tail is too short", match: 6 }; },
+  transcribe: async (p, o) => { calls.push(["transcribe", p, o]); return { notes: Array.from({ length: 12 }, (_, i) => ({ pitch: 60 + (i % 5), startBeats: i * 0.5, durationBeats: 0.5, velocity: 90 })), bars: 2, bpm: 118, tracks: [{ name: "piano", noteCount: 12 }], summary: "12 notes, piano", midiPath: "/tmp/t.mid", ms: 1234 }; },
   live: {
     setTempo: async (bpm) => { calls.push(["setTempo", bpm]); return { tempo: bpm }; },
     listTracks: async () => [{ index: 0, name: "Kick", is_midi: true, selected: true }],
@@ -33,7 +34,7 @@ const ctx = {
 };
 
 const tools = makeTools(ctx, { beat: "/tmp/fake.wav", refs: [{ name: "loop.wav", path: "/tmp/ref1.wav" }, { name: "kick.wav", path: "/tmp/ref2.wav" }] });
-const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "judge_sound", "show_live", "play", "stop"];
+const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "transcribe_audio", "judge_sound", "show_live", "play", "stop"];
 assert.deepEqual(tools.map((t) => t.name), expected, "tool names");
 for (const t of tools) {
   assert.ok(t.description && t.description.length > 20, `${t.name} description`);
@@ -54,6 +55,7 @@ const sample = {
   replace_sound: { name: "Kick", samplePath: "/out/y.wav", role: "kick" },
   remove_layer: { name: "Rim" },
   listen: { path: "/tmp/fake.wav", question: "what kind of kick is this?" },
+  transcribe_audio: { which: "ref#1", instruments: ["acoustic_piano"] },
   judge_sound: { path: "/out/x.wav", intent: "tight clicky techno kick with a short sub tail" },
   show_live: {}, play: {}, stop: {},
 };
@@ -87,6 +89,19 @@ ctx.listen = async () => { throw new Error("Music Flamingo timed out after 40 s"
 const lf = JSON.parse(await tools.find((t) => t.name === "listen").run({ path: "/tmp/fake.wav" }));
 assert.equal(lf.ok, false); assert.match(lf.error, /timed out/); assert.equal(events.at(-1).ok, false);
 assert.ok(PRODUCER_SYSTEM.includes("judge_sound") && PRODUCER_SYSTEM.includes("at most 3"), "system prompt covers ears + cap");
+// transcribe_audio: ok path (ref), summary truncation keeps full count, bad ref -> ok:false, schema bounds
+const tr = tools.find((t) => t.name === "transcribe_audio");
+const trOk = JSON.parse(await tr.run(tr.parse({ which: "ref#1", instruments: ["acoustic_piano"] })));
+assert.equal(trOk.ok, true); assert.equal(trOk.noteCount, 12); assert.equal(trOk.bars, 2); assert.equal(trOk.bpm, 118);
+assert.ok(trOk.notes.length <= 7 && String(trOk.notes.at(-1)).includes("more"), "notes truncated in summary");
+assert.deepEqual(calls.filter((c) => c[0] === "transcribe").at(-1).slice(1), ["/tmp/ref1.wav", { instruments: ["acoustic_piano"] }], "ref path + instruments forwarded");
+const trBad = JSON.parse(await tr.run(tr.parse({ which: "ref#9" })));
+assert.equal(trBad.ok, false); assert.match(trBad.error, /no ref#9/);
+const trHum = JSON.parse(await tr.run(tr.parse({ which: "hum" })));
+assert.equal(trHum.ok, false); assert.match(trHum.error, /no hum recording/);
+assert.throws(() => tr.parse({ which: "loop.wav" }), "which must be beat|hum|ref#N");
+assert.throws(() => tr.parse({ which: "ref#1", instruments: ["a","b","c","d","e","f","g"] }), "max 6 instrument hints");
+assert.ok(PRODUCER_SYSTEM.includes("transcribe_audio"), "system prompt mentions transcribe_audio");
 // lengthSeconds bound: 16 ok (long pad), 25 rejected
 const ss = tools.find((t) => t.name === "synthesize_sound");
 assert.equal(ss.parse({ role: "pad", prompt: "evolving pad, single sustained note, no drums", lengthSeconds: 16 }).lengthSeconds, 16);
