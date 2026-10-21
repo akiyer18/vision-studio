@@ -189,3 +189,32 @@ File naming: `${slug(name)}-${Date.now()}.wav|.mid`
 - effort 'high'; analyze_recording(hum) returns up to 64 notes compactly; new tools: layer_samples, tune_sample, shape_sample, set_send, browse_library, mix_balance, review_mix; build_drum_layer gains humanize (0..1: timing jitter up to 12 ms and velocity jitter up to 15 at 1.0) applied server-side in stepsToNotes.
 - PRODUCTION PLAYBOOK in the system prompt (coordinator supplies the text).
 - QUALITY GATE: after any build/modify turn, run review_mix and fix 'high' issues before replying (max 2 fix rounds); report what the review found in technical terms.
+
+# ---- v7: use each tool for what it is for + open-source toolbelt ----
+Roles: Stability = sounds (loops, textures, restyle, one-shots as fallback) · Gemini = ears (production DNA, critique, labeling) · Claude = reasoning/orchestration · open-source (Demucs, basic-pitch, librosa, pedalboard, ffmpeg, rubberband) = analysis & processing.
+
+## tools/py (Python 3.11 via uv; all permissive/open licenses; CPU only; 8 GB RAM Intel Mac)
+- `tools/py/pyproject.toml` deps: demucs (MIT), basic-pitch (Apache-2.0), librosa (ISC), pedalboard (GPL-3), soundfile, numpy, torch CPU. Setup script `tools/py/setup.sh` (uv venv .venv --python 3.11; uv pip install ...). Pre-download demucs `htdemucs` weights in setup.
+- CLI `tools/py/.venv/bin/python tools/py/adetools.py <cmd> --json ...` (always prints one JSON object on stdout):
+  - `stems --in file --out dir [--model htdemucs] [--two-stems vocals|drums]` -> { stems: { drums, bass, other, vocals }: paths } (use --segment 7 to cap memory)
+  - `analyze --in file` -> { tempo, beats:[sec], downbeats:[sec]|null, key:{ tonic, mode, confidence }, onsets:[{ time, strength }], groove:{ swing (0..1 estimate from 8th-note offbeat delay), microtiming:[deviation ms per 16th position 0..15 averaged], velocityProfile:[0..1 per 16th position] }, sections:[{ start, end }] (librosa segment/novelty, optional), duration }
+  - `transcribe --in file [--onset 0.5] [--frame 0.3] [--min-note-ms 60]` -> { notes:[{ pitch, startSeconds, durationSeconds, velocity }], midiPath } via basic-pitch (local, no quota)
+  - `process --in file --out file --chain '[{"type":"highpass","hz":200},{"type":"compressor","threshold_db":-18,"ratio":4,"attack_ms":5,"release_ms":80},{"type":"reverb","room_size":0.3,"wet":0.15},{"type":"limiter","threshold_db":-1},{"type":"gain","db":-3},{"type":"pitch","semitones":-2},{"type":"lowpass","hz":120},{"type":"saturate","drive_db":12}]'` -> { out, peakDbfs } via pedalboard
+  - `master --in file --out file [--lufs -12]` -> { out, lufs, peakDbfs } (pedalboard compressor + limiter + loudness match)
+- `lib/pytools.js` (Node): `pyAvailable()`, `stems(file, opts)`, `analyzeMusic(file)`, `transcribeLocal(file, opts)`, `processAudio(file, chain, outName)`, `masterAudio(file, lufs)`; spawns the venv python with a 10-minute timeout; errors carry stderr tail. Degrade gracefully when the venv is missing (clear "run tools/py/setup.sh" message).
+
+## server ctx additions
+- generateLoop({ prompt, bpm, bars=2, kind:'drums'|'texture'|'fx' }) -> Stability text-to-audio with duration = bars*4*60/bpm (min 6 s, loop prompt suffix "drum loop, {bpm} BPM, tight, dry, no vocals") -> { loop:{path,url}, kit:[{ kind:'kick'|'snare'|'hat_closed'|'perc', path, time }] } where the kit is sliced from the loop at onsets (classify) so all one-shots share one production context; for texture/fx no slicing.
+- restyleMix({ prompt, strength=0.45, bars }) -> render current build -> Stability audio-to-audio -> { path, url } (a cohesive "produced" version to use as a texture layer under the drums or as reference)
+- ears: productionDna(refPath) -> structured JSON via Gemini (drums: kick/snare/hat character words usable as Stable Audio prompts; groove: swing/feel; space: reverb/room; tempo/key guess; arrangement notes; 3 "what makes it sound expensive" observations); critiqueMix(renderPath, refPath?) -> structured JSON { groove, drums, lowEnd, topEnd, space, dynamics, arrangement, topFixes:[{ what, how (tool-level) }] } neutral/technical; labelPieces(paths[]) -> per piece { vowel|consonant|breath|noise, pitchedness, usableAs }
+- groove templates: stepsToNotes(steps, swing, humanize, bpm, groove?) applies groove.microtiming[step%16] ms offsets and velocityProfile scaling when a template is given; lastBuild.groove stores the extracted template (from analyze on the reference drum stem or the beatbox)
+
+## agent tools (lib/agent.js v7)
+- separate_stems { which } -> ctx.stems -> stem paths registered as refs (ref#N "vocals of X") so later tools can address them
+- analyze_music { which } -> ctx.analyzeMusic (tempo/beats/key/groove/sections) and stores groove template (ctx.setGroove)
+- transcribe_audio: try local basic-pitch first (ctx.transcribeLocal), MuScriptor fallback
+- process_audio { which|path, chain[], name } -> ctx.processAudio (pedalboard) ; master_preview { lufs } -> ctx.masterAudio on the latest render
+- generate_loop { prompt, bpm, bars, kind } -> ctx.generateLoop ; restyle_mix { prompt, strength } -> ctx.restyleMix
+- production_dna { which } -> ctx.productionDna ; critique_mix { reference? } -> ctx.critiqueMix(render, ref) ; label_pieces { paths[] } -> ctx.labelPieces
+- build_drum_layer / update_layer: `useGroove: true` applies lastBuild.groove template
+- PLAYBOOK: "TOOL ROLES" and "SAMPLING WORKFLOW" (reference song -> separate_stems -> production_dna + analyze_music on the drum stem (groove template) -> chop vocals (chop_sample) -> label_pieces -> tune chops to key -> pitched chop melody via build_melody_layer on a Simpler with the chop -> drums: generate_loop in the DNA's words and slice the kit, or Core kit + Stability layers -> apply groove template -> mix_balance -> review_mix + critique_mix -> fix -> master_preview for the demo bounce). Claude never guesses what a reference sounds like: it asks Gemini (production_dna) first.

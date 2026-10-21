@@ -10,7 +10,7 @@ import socket
 import Live
 from _Framework.ControlSurface import ControlSurface
 
-VERSION = '5.2'
+VERSION = '5.3'
 HOST = '127.0.0.1'
 PORT = 9004
 GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 42,
@@ -18,7 +18,7 @@ GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 4
                  'crash': 49, 'perc': 54}
 WOULD_BLOCK = (errno.EAGAIN, errno.EWOULDBLOCK, errno.EINPROGRESS)
 PENDING = object()  # returned by a command that will reply later via schedule_message
-COMMANDS = ['arrangement_record', 'browse', 'capture_midi', 'clip_edit', 'create_clip', 'create_midi_track', 'create_scene', 'delete_device', 'delete_track', 'duplicate_clip', 'duplicate_scene', 'duplicate_track', 'fire_scene', 'focus_clip', 'list_devices', 'list_scenes', 'list_tracks', 'load_device', 'load_sample', 'ping', 'play', 'rename_scene', 'rename_track', 'select_track', 'set_device_param', 'set_mixer', 'set_send', 'set_tempo', 'set_track_color', 'show_view', 'stop', 'stop_clip', 'transport_setup', 'version']
+COMMANDS = ['arrangement_record', 'browse', 'capture_midi', 'clip_edit', 'create_clip', 'create_midi_track', 'create_scene', 'delete_device', 'delete_track', 'duplicate_clip', 'duplicate_scene', 'duplicate_track', 'fire_scene', 'focus_clip', 'list_devices', 'list_scenes', 'list_tracks', 'load_device', 'load_sample', 'ping', 'play', 'rename_scene', 'rename_track', 'sample_info', 'select_track', 'set_device_param', 'set_mixer', 'set_send', 'set_simpler', 'set_tempo', 'set_track_color', 'show_view', 'stop', 'stop_clip', 'transport_setup', 'version']
 LOAD_RETRY_TICKS = 3   # ~0.3 s between browser re-scans
 LOAD_RETRY_MAX = 8     # ~2.4 s total before replying not found
 
@@ -152,6 +152,13 @@ class ADEHack(ControlSurface):
                 return self._cmd_load_device(msg)
             if cmd == 'set_send':
                 return self._cmd_set_send(msg)
+            if cmd == 'set_simpler':
+                return self._cmd_set_simpler(msg)
+            if cmd == 'sample_info':
+                track = self._track(msg.get('track', 'selected'))
+                index, dev = self._simpler(track)
+                return {'ok': True, 'track': track.name, 'device': {'index': index, 'name': dev.name},
+                        'sample': self._simpler_state(dev)}
             if cmd == 'set_device_param':
                 return self._cmd_set_device_param(msg)
             if cmd == 'delete_device':
@@ -857,6 +864,119 @@ class ADEHack(ControlSurface):
                 break
         return {'ok': True, 'root': root_name, 'query': query or None, 'depth': max_depth,
                 'count': len(items), 'truncated': truncated, 'items': items}
+
+    # ------------------------------------------------------------ v5.3: Simpler
+    SIMPLER_CLASSES = ('OriginalSimpler', 'MultiSampler')
+    PLAYBACK_MODES = {'classic': 0, 'oneshot': 1, 'one_shot': 1, 'slice': 2, 'slicing': 2}
+    WARP_MODES = {'beats': 0, 'tones': 1, 'texture': 2, 'repitch': 3, 'complex': 4, 'complex_pro': 6}
+
+    def _simpler(self, track, spec=None):
+        if spec is not None:
+            return self._device(track, spec)
+        for i, d in enumerate(track.devices):
+            if getattr(d, 'class_name', '') in self.SIMPLER_CLASSES:
+                return i, d
+        raise ValueError('no Simpler on %r; devices: %r' % (track.name, [d.name for d in track.devices]))
+
+    def _enum_value(self, enum_cls, table, value):
+        """Accept 'classic' / 'oneshot' / int; return the Boost enum member when available."""
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            key = (u'%s' % (value,)).lower().replace('-', '_').replace(' ', '_')
+            if key not in table:
+                raise ValueError('unknown value %r; use one of %r' % (value, sorted(table.keys())))
+            value = table[key]
+        value = int(value)
+        try:
+            return enum_cls.values[value]
+        except Exception:
+            return value
+
+    def _simpler_state(self, dev):
+        state = {}
+        for attr in ('playback_mode', 'voices', 'retrigger'):
+            try:
+                v = getattr(dev, attr)
+                state[attr] = v if isinstance(v, bool) else int(v)
+            except Exception:
+                pass
+        try:
+            sample = dev.sample
+            if sample is None:
+                state['sample'] = None
+                return state
+            for attr in ('file_path', 'length', 'warping', 'warp_mode', 'gain', 'start_marker', 'end_marker',
+                         'slicing_style', 'slicing_sensitivity'):
+                try:
+                    v = getattr(sample, attr)
+                    state[attr] = v if isinstance(v, (bool, float)) else (u'%s' % (v,) if attr == 'file_path' else int(v))
+                except Exception:
+                    pass
+            try:
+                state['slices'] = len(list(sample.slices))
+            except Exception:
+                pass
+        except Exception as e:
+            state['sample_error'] = '%r' % (e,)
+        try:
+            i, p = self._param(dev, 'S Loop On')
+            state['loop'] = bool(p.value)
+        except Exception:
+            pass
+        return state
+
+    def _cmd_set_simpler(self, msg):
+        track = self._track(msg.get('track', 'selected'))
+        index, dev = self._simpler(track, msg.get('device'))
+        done, errors = [], {}
+
+        def op(label, fn):
+            try:
+                fn()
+                done.append(label)
+            except Exception as e:
+                errors[label] = '%s: %s' % (e.__class__.__name__, e)
+                self.log_message('ADEHack: set_simpler %s failed: %r' % (label, e))
+
+        if msg.get('mode') is not None:
+            op('mode', lambda: setattr(dev, 'playback_mode', self._enum_value(
+                Live.SimplerDevice.PlaybackMode, self.PLAYBACK_MODES, msg['mode'])))
+        if msg.get('warp') is not None:
+            op('warp', lambda: setattr(dev.sample, 'warping', bool(msg['warp'])))
+        if msg.get('warp_mode') is not None:
+            op('warp_mode', lambda: setattr(dev.sample, 'warp_mode', self._enum_value(
+                Live.Clip.WarpMode, self.WARP_MODES, msg['warp_mode'])))
+        if msg.get('loop') is not None:
+            def set_loop():
+                i, p = self._param(dev, 'S Loop On')
+                p.value = float(p.max) if msg['loop'] else float(p.min)
+            op('loop', set_loop)
+        if msg.get('gain_db') is not None:
+            op('gain_db', lambda: setattr(dev.sample, 'gain', float(msg['gain_db'])))
+        if msg.get('voices') is not None:
+            op('voices', lambda: setattr(dev, 'voices', max(1, min(32, int(msg['voices'])))))
+        if msg.get('retrigger') is not None:
+            op('retrigger', lambda: setattr(dev, 'retrigger', bool(msg['retrigger'])))
+        if msg.get('start_marker') is not None or msg.get('end_marker') is not None:
+            def set_markers():
+                sample = dev.sample
+                start = int(msg.get('start_marker', sample.start_marker))
+                end = int(msg.get('end_marker', sample.end_marker))
+                for order in (('end_marker', 'start_marker'), ('start_marker', 'end_marker')):
+                    try:
+                        for attr in order:
+                            setattr(sample, attr, end if attr == 'end_marker' else start)
+                        return
+                    except Exception:
+                        continue
+                raise ValueError('could not set markers %r..%r' % (start, end))
+            op('markers', set_markers)
+        unknown = [k for k in msg.keys() if k not in ('cmd', 'track', 'device', 'mode', 'warp', 'warp_mode', 'loop',
+                                                      'gain_db', 'voices', 'retrigger', 'start_marker', 'end_marker')]
+        if unknown:
+            errors['unknown_fields'] = '%r' % (unknown,)
+        return {'ok': not errors or bool(done), 'track': track.name,
+                'device': {'index': index, 'name': dev.name, 'class_name': getattr(dev, 'class_name', '')},
+                'done': done, 'errors': errors, 'state': self._simpler_state(dev)}
 
     def _cmd_set_send(self, msg):
         track = self._track(msg.get('track', 'selected'))
