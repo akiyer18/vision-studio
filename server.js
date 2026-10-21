@@ -436,11 +436,12 @@ const uploads = new Map();   // id -> wav path (this process only)
 app.post('/api/upload', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) throw new Error('no audio');
-    const id = `${Date.now()}`;
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const wav = path.join(TMP, `${id}-upload.wav`);
     await toWav(req.file.path, wav);
-    uploads.set(id, wav);
-    res.json({ id, seconds: await (await import('./lib/audio.js')).durationSeconds(wav) });
+    const name = String(req.body?.name || req.file.originalname || 'audio').replace(/[^\w .()-]+/g, '_').slice(0, 80);
+    uploads.set(id, { path: wav, name });
+    res.json({ id, name, seconds: await (await import('./lib/audio.js')).durationSeconds(wav) });
   } catch (e) { res.status(500).json({ error: e.message }); }
   finally { if (req.file) fs.unlink(req.file.path).catch(() => {}); }
 });
@@ -526,13 +527,15 @@ app.post('/api/chat', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream'); res.setHeader('Cache-Control', 'no-cache'); res.setHeader('Connection', 'keep-alive'); res.flushHeaders();
   const emit = (e) => res.write(`data: ${JSON.stringify(e)}\n\n`);
   try {
-    const { text = '', beatId, humId, reset } = req.body || {};
+    const { text = '', beatId, humId, refIds = [], reset } = req.body || {};
     if (reset) chat.history = [];
     if (!hasKey(process.env.ANTHROPIC_API_KEY)) throw new Error('ANTHROPIC_API_KEY is not set in .env (the producer agent needs Claude)');
     const { runProducer } = await import('./lib/agent.js');
     const recordings = {};
-    if (beatId && uploads.get(String(beatId))) recordings.beat = uploads.get(String(beatId));
-    if (humId && uploads.get(String(humId))) recordings.hum = uploads.get(String(humId));
+    if (beatId && uploads.get(String(beatId))) recordings.beat = uploads.get(String(beatId)).path;
+    if (humId && uploads.get(String(humId))) recordings.hum = uploads.get(String(humId)).path;
+    const refs = (Array.isArray(refIds) ? refIds : []).map((id) => uploads.get(String(id))).filter(Boolean);
+    if (refs.length) recordings.refs = refs.map((r) => ({ name: r.name, path: r.path }));
     const out = await runProducer({ history: chat.history, userText: String(text), recordings, ctx: makeCtx(emit) });
     chat.history = out.history;
     emit({ type: 'text', text: out.text });

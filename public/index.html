@@ -102,7 +102,7 @@
 <main>
   <section class="wide chat">
     <h2>Your producer</h2>
-    <div class="sub">Talk to it like a collaborator with Ableton open. It plans, synthesizes every sound with Stability AI, lays the layers into Live itself, and tells you what to try next.</div>
+    <div class="sub">Talk to it like a collaborator with Ableton open. Type, beatbox, hum, or attach audio files as references ("make the kick like this"). It plans, synthesizes every sound with Stability AI, lays the layers into Live itself, and tells you what to try next.</div>
     <div class="log" id="c-log"></div>
     <div class="chips" id="c-chips">
       <span class="chip">Start a dark techno beat at 128, kick first</span>
@@ -118,9 +118,12 @@
     <div class="actions">
       <button class="rec" id="c-beat">● Beatbox</button><span class="inline" id="c-beat-info">attach a beat</span>
       <button class="rec" id="c-hum">● Hum</button><span class="inline" id="c-hum-info">attach a melody</span>
+      <button id="c-attach" title="Attach audio files as references (wav, mp3, aiff, m4a, flac)">📎 Attach audio</button>
+      <input type="file" id="c-file" accept="audio/*,.wav,.mp3,.aif,.aiff,.m4a,.flac,.ogg" multiple style="display:none" />
       <button id="c-show">Show in Live</button>
       <button id="c-reset" title="Forget the conversation (Live tracks stay)">New session</button>
     </div>
+    <div class="chips" id="c-refs"></div>
   </section>
   <details class="wide" id="quick"><summary>One-button build (no conversation): describe or record, press once)</summary>
   <section class="wide easy">
@@ -674,7 +677,22 @@ $('e-tweak-go').onclick = async () => {
 $('e-tweak').addEventListener('keydown', e => { if (e.key === 'Enter') $('e-tweak-go').click(); });
 
 // ---------- the producer chat (SSE) ----------
-let beatUpload = null, humUpload = null, chatBusy = false;
+let beatUpload = null, humUpload = null, chatBusy = false, refUploads = [];   // refs: [{id, name, seconds}]
+$('c-attach').onclick = () => $('c-file').click();
+$('c-file').onchange = async () => {
+  for (const f of $('c-file').files) {
+    const chip = document.createElement('span'); chip.className = 'chip'; chip.textContent = `⏳ ${f.name}`; $('c-refs').appendChild(chip);
+    try {
+      const fd = new FormData(); fd.append('audio', f, f.name); fd.append('name', f.name);
+      const r = await fetch('/api/upload', { method:'POST', body: fd }); const j = await r.json();
+      if (!r.ok) throw new Error(j.error || r.statusText);
+      refUploads.push({ id: j.id, name: j.name, seconds: j.seconds });
+      chip.textContent = `🎧 ${j.name} (${j.seconds.toFixed(1)}s) ×`; chip.title = 'click to remove';
+      chip.onclick = () => { refUploads = refUploads.filter(x => x.id !== j.id); chip.remove(); };
+    } catch (e) { chip.textContent = `✗ ${f.name}: ${e.message}`; chip.style.color = 'var(--danger)'; }
+  }
+  $('c-file').value = '';
+};
 async function uploadBlob(b, infoId, label) {
   const fd = new FormData(); fd.append('audio', b, 'rec.webm');
   const r = await fetch('/api/upload', { method:'POST', body: fd }); const j = await r.json();
@@ -693,15 +711,15 @@ $('c-send').onclick = sendChat;
 $('c-text').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } });
 async function sendChat() {
   const text = $('c-text').value.trim();
-  if (chatBusy || (!text && !beatUpload && !humUpload)) return;
+  if (chatBusy || (!text && !beatUpload && !humUpload && !refUploads.length)) return;
   chatBusy = true; $('c-send').disabled = true; $('c-text').value = '';
-  addMsg('user', text + (beatUpload ? ' 🎙 beat' : '') + (humUpload ? ' 🎙 melody' : ''));
+  addMsg('user', text + (beatUpload ? ' 🎙 beat' : '') + (humUpload ? ' 🎙 melody' : '') + refUploads.map(r => ` 🎧 ${r.name}`).join(''));
   const bot = addBot(''); const tools = document.createElement('ul'); tools.className = 'tools'; bot.appendChild(tools);
   const body = document.createElement('div'); bot.appendChild(body); body.textContent = 'thinking…';
   const live = new Map();
   try {
-    const r = await fetch('/api/chat', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ text, beatId: beatUpload, humId: humUpload }) });
-    beatUpload = humUpload = null; $('c-beat-info').textContent = 'attach a beat'; $('c-hum-info').textContent = 'attach a melody'; $('c-beat').textContent = '● Beatbox'; $('c-hum').textContent = '● Hum';
+    const r = await fetch('/api/chat', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ text, beatId: beatUpload, humId: humUpload, refIds: refUploads.map(x => x.id) }) });
+    beatUpload = humUpload = null; refUploads = []; $('c-refs').innerHTML = ''; $('c-beat-info').textContent = 'attach a beat'; $('c-hum-info').textContent = 'attach a melody'; $('c-beat').textContent = '● Beatbox'; $('c-hum').textContent = '● Hum';
     const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
     while (true) {
       const { value, done } = await reader.read(); if (done) break;
