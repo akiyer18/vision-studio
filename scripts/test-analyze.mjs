@@ -22,7 +22,8 @@ await ff(["-f", "lavfi", "-i", "sine=frequency=60:duration=1", "-af", "afade=t=i
 const sine = await analyzeAudio(out("sine60.wav"));
 check(sine.ratings.subWeight.level === "high", `sine: subWeight high (share ${sine.spectrum.bands.sub.share})`);
 check(sine.ratings.brightness.level === "low", `sine: brightness low (centroid ${sine.spectrum.centroidHz} Hz)`);
-check(sine.pitch && Math.abs(sine.pitch.midi - 31) < 0.6, `sine: pitch midi ≈ 31 (got ${sine.pitch?.midi}, ${sine.pitch?.note})`);
+// 60 Hz is MIDI 34.5 (A1 = 55 Hz = MIDI 33); the directive's "≈ 31" would be 49 Hz, so the physically correct value is asserted
+check(sine.pitch && Math.abs(sine.pitch.hz - 60) < 1 && Math.abs(sine.pitch.midi - 34.5) < 0.3, `sine: pitch 60 Hz / midi ≈ 34.5 (got ${sine.pitch?.hz} Hz, midi ${sine.pitch?.midi}, ${sine.pitch?.note})`);
 check(sine.ratings.tonalness.level === "high", `sine: tonalness high (${sine.pitch?.confidence})`);
 check(sine.ratings.punch.level === "low", `sine: crest low (${sine.loudness.crestFactorDb} dB)`);
 check(!FORBIDDEN.test(sine.summary), `sine: summary neutral -> ${sine.summary}`);
@@ -52,7 +53,7 @@ check(mono.stereo === null && mono.channels === 1, `mono: stereo null, channels 
 
 // 5) renderPreview: kick on 0,4,8,12 + hat on every 2nd step, 1 bar at 120 -> 2.0 s, peak <= -1 dBFS, ~8-12 onsets
 await ff(["-f", "lavfi", "-i", "sine=frequency=55:duration=0.3", "-af", "afade=t=out:st=0.05:d=0.25,volume=0.9", "-ac", "2", "-ar", "44100", out("kick.wav")]);
-await ff(["-f", "lavfi", "-i", "anoisesrc=color=white:amplitude=0.6:duration=0.06:seed=4", "-af", "highpass=f=6000,afade=t=out:st=0.01:d=0.05", "-ac", "2", "-ar", "44100", out("hat.wav")]);
+await ff(["-f", "lavfi", "-i", "anoisesrc=color=white:amplitude=0.6:duration=0.06:seed=4", "-af", "highpass=f=2000,afade=t=out:st=0.01:d=0.05", "-ac", "2", "-ar", "44100", out("hat.wav")]);   // 2-8 kHz survives the 16 kHz onset analysis like a real hat
 const rendered = await renderPreview({
   bpm: 120, outPath: out("preview.wav"),
   layers: [

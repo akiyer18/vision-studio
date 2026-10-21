@@ -660,7 +660,12 @@ function makeCtx(emit) {
       },
       fireScene: async (arg) => { const index = typeof arg === 'object' && arg ? arg.index : arg; return okOrThrow(await (await liveClient())({ cmd: 'fire_scene', index: Number(index) }), 'fire_scene'); },
       listScenes: async () => okOrThrow(await (await liveClient())({ cmd: 'list_scenes' }), 'list_scenes'),
-      recordArrangement: async ({ bars, stop } = {}) => okOrThrow(await (await liveClient())(stop ? { cmd: 'arrangement_record', stop: true } : { cmd: 'arrangement_record', bars: clamp(Number(bars) || 8, 1, 64) }), 'arrangement_record'),
+      recordArrangement: async ({ bars, scenes, stop } = {}) => {
+        const send = await liveClient();
+        if (stop) return okOrThrow(await send({ cmd: 'arrangement_record', stop: true }), 'arrangement_record');
+        if (Array.isArray(scenes) && scenes.length) return okOrThrow(await send({ cmd: 'arrangement_record', scenes: scenes.map((sc) => ({ index: Number(sc.index) || 0, bars: clamp(Number(sc.bars) || 8, 1, 64) })) }), 'arrangement_record');
+        return okOrThrow(await send({ cmd: 'arrangement_record', bars: clamp(Number(bars) || 8, 1, 64) }), 'arrangement_record');
+      },
       async loadSample({ name, samplePath, role }) {
         const send = await liveClient();
         const t = await trackByName(send, name); if (!t) throw new Error(`no track named ${name}`);
