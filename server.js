@@ -994,9 +994,19 @@ app.post('/api/analyze', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// one producer turn at a time: two turns editing the same Live set and registry would interleave and confuse both
+let chatQueue = Promise.resolve();
+let chatBusy = false;
 app.post('/api/chat', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream'); res.setHeader('Cache-Control', 'no-cache'); res.setHeader('Connection', 'keep-alive'); res.flushHeaders();
   const emit = (e) => res.write(`data: ${JSON.stringify(e)}\n\n`);
+  if (chatBusy) emit({ type: 'tool_done', name: 'queue', ok: true, summary: 'another producer turn is still running; yours starts when it finishes' });
+  const myTurn = chatQueue.then(() => runChatTurn(req, res, emit));
+  chatQueue = myTurn.catch(() => {});
+  await myTurn;
+});
+async function runChatTurn(req, res, emit) {
+  chatBusy = true;
   try {
     const { text = '', beatId, humId, refIds = [], reset } = req.body || {};
     if (reset) { chat.history = []; chat.recordings = { refs: [] }; lastBuild.samples = {}; lastBuild.tracks = {}; await saveChat(); }
@@ -1024,9 +1034,9 @@ app.post('/api/chat', async (req, res) => {
   } catch (e) {
     console.error('[chat]', e);
     emit({ type: 'error', error: e.message });
-  }
+  } finally { chatBusy = false; }
   res.end();
-});
+}
 app.post('/api/chat/reset', async (_req, res) => { chat.history = []; chat.recordings = { refs: [] }; lastBuild.samples = {}; lastBuild.tracks = {}; await saveChat(); res.json({ ok: true }); });
 
 app.use((err, req, res, _next) => {   // multer limits, bad JSON, anything thrown synchronously -> JSON, not HTML
