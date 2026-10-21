@@ -1559,7 +1559,7 @@ async function runChatTurn(req, res, emit0) {
 app.get('/api/chat/last', (_req, res) => res.json(turns.last ? { ...turns.last, events: turns.last.events.slice(-200) } : { status: 'none' }));
 function resetSession() {   // a true fresh start: nothing remembered about the previous set, sounds, style or project
   chat.history = []; chat.recordings = { refs: [] };
-  for (const k of ['samples', 'tracks', 'clips', 'soundHistory']) lastBuild[k] = {};
+  for (const k of ['samples', 'tracks', 'clips', 'soundHistory', 'explanations']) lastBuild[k] = {};
   for (const k of ['groove', 'melody', 'project', 'reference', 'genreTarget', 'lastCapture', 'lastRender', 'bpm']) lastBuild[k] = null;
 }
 app.post('/api/chat/reset', async (_req, res) => { resetSession(); await saveChat(); res.json({ ok: true }); });
