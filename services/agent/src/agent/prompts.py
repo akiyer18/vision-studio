@@ -53,6 +53,41 @@ DESCRIPTORS = {
         "full_mix": "bright plucks, punchy kick and synth bass, clean modern production",
     },
 }
+# The anchor is the layer's main instrument. It already appears in that descriptor.
+ANCHORS = {
+    "warm and intimate": {
+        "drums": "drum kit",
+        "chords": "piano",
+        "bass": "sub bass",
+        "melody": "guitar lead",
+        "texture": "vinyl crackle",
+        "full_mix": "piano",
+    },
+    "wide and cinematic": {
+        "drums": "toms",
+        "chords": "string pads",
+        "bass": "cello",
+        "melody": "synth lead",
+        "texture": "reverb swells",
+        "full_mix": "strings",
+    },
+    "dark and electronic": {
+        "drums": "kick",
+        "chords": "synth pad chords",
+        "bass": "sub bass",
+        "melody": "saw lead",
+        "texture": "metallic hits",
+        "full_mix": "kick",
+    },
+    "bright and danceable": {
+        "drums": "four on the floor",
+        "chords": "plucked synth chords",
+        "bass": "synth bass",
+        "melody": "synth lead",
+        "texture": "risers",
+        "full_mix": "synth bass",
+    },
+}
 
 
 def compile_prompts(
@@ -91,6 +126,10 @@ def compile_prompts(
             )
         )
     return prompts
+
+
+def anchor_for(world: str, layer: str) -> str:
+    return ANCHORS[world][layer]
 
 
 def selected_layers(output: list[str]) -> list[str]:

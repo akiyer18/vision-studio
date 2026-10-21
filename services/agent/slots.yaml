@@ -69,3 +69,8 @@ must_keep:
     - the melody
     - the rhythm
     - the chords
+tempo:
+  impact: 0
+  ask_when: never
+  question: never asked
+  options: []

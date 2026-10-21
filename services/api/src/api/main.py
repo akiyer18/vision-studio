@@ -80,11 +80,27 @@ class SessionRecord:
     results: dict[str, list[RenderResult]] = field(default_factory=dict)
 
 
+def load_local_env() -> None:
+    """Load the repo .env for local API startup. The agent itself reads os.environ only."""
+    root = Path(__file__).resolve()
+    env_path: Path | None = None
+    for parent in root.parents:
+        candidate = parent / ".env"
+        if (parent / "docs" / "spec.md").is_file() and candidate.is_file():
+            env_path = candidate
+            break
+    if env_path is None:
+        return
+    from dotenv import load_dotenv
+
+    load_dotenv(env_path, override=False)
+
+
 def create_app(data_root: Path | None = None) -> FastAPI:
     provider = os.environ.get("PROVIDER", "mock")
     renderer_name = os.environ.get("RENDERER", "mock")
-    if provider != "mock":
-        raise RuntimeError("PROVIDER must be mock until the Bedrock provider exists")
+    if provider not in {"mock", "bedrock"}:
+        raise RuntimeError("PROVIDER must be mock or bedrock")
     if renderer_name != "mock":
         raise RuntimeError("RENDERER must be mock until another renderer exists")
 
@@ -395,4 +411,5 @@ async def _read_upload(file: UploadFile) -> bytes:
     return b"".join(chunks)
 
 
+load_local_env()
 app = create_app()

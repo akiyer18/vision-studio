@@ -4,7 +4,9 @@
 dev:
 	@set -e; \
 	if [ -f services/api/src/api/main.py ]; then \
-		uv run --package api uvicorn api.main:app --host 127.0.0.1 --port 8000 & \
+		env_args=""; \
+		if [ -f .env ]; then env_args="--env-file .env"; fi; \
+		uv run --package api uvicorn api.main:app --host 127.0.0.1 --port 8000 $$env_args & \
 		api_pid=$$!; \
 		trap 'kill $$api_pid 2>/dev/null' EXIT INT TERM; \
 	fi; \

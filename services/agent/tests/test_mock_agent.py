@@ -24,7 +24,9 @@ def test_slots_match_the_spec_table() -> None:
         "palette",
         "structure",
         "must_keep",
+        "tempo",
     ]
+    assert specs["tempo"].impact == 0
     assert specs["output"].impact == 1.0
     assert specs["output"].question == "What would help most right now?"
     assert specs["output"].options == ("drums", "chords", "all layers separately", "full song")
@@ -126,6 +128,9 @@ def test_detected_audio_features_then_skip_all() -> None:
     assert first.brief.slots.palette is not None
     assert first.brief.slots.palette.value == "piano, cello"
     assert first.brief.slots.palette.source == "detected"
+    assert first.brief.slots.tempo is not None
+    assert first.brief.slots.tempo.value == "90"
+    assert first.brief.slots.tempo.source == "detected"
     assert first.question is not None
     assert first.question.slot == "output"
     assert "tempo" not in first.question.text.lower()

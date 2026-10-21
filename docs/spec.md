@@ -3,6 +3,8 @@
 Single source of truth for Cursor. Every phase prompt refers to sections in this file.
 If something is not covered here or in .cursor/rules, ask before deciding.
 
+Vision Studio is a helper, not the author. The agent only works from what the producer said, played, or chose. It never changes a stated answer, never adds musical ideas the producer did not give, and every suggestion shows its reason so the producer can override it. Claude may only express what the user said or what was detected. It must never steer the song somewhere new.
+
 ## 1. Contracts (packages/contracts)
 
 ```
@@ -58,9 +60,10 @@ Semantics:
 | palette | 0.3 | rarely | Any instruments you hear in it? | free text |
 | structure | 0.2 | rarely | How long should it be? | 4 bars, 8 bars, 16 bars |
 | must_keep | 0.4 | audio input only | What must stay exactly as it is? | everything, the melody, the rhythm, the chords |
+| tempo | 0 | never | never asked | |
 
 Asking rule: score = impact x (1 - confidence). Ask the highest score above 0.35. Max 5 questions.
-Tempo is never asked. It is detected from audio or derived (section 3).
+Tempo is a real slot (value, source, reason, confidence) and it shows in the brief. It is never asked. A stated tempo wins over a measured one, and a measured tempo wins over a derived one (section 3 and section 10).
 First question when the input is almost empty: "What is this song about?" (free text, then re run extraction).
 Almost empty means no audio and no MIDI, and the text is blank or a single word that matches no keyword.
 The question is filed under the mood slot, because a question has to name a slot. Answering major or minor on the key question keeps the preset root and changes the mode. "not sure" uses the preset key.
@@ -74,7 +77,7 @@ The question is filed under the mood slot, because a question has to name a slot
 | longing | slow and breathing | warm and intimate | D minor | 76 | i VI III VII |
 | tense | steady | dark and electronic | E minor (Phrygian colour) | 110 | i bII |
 
-Tempo derivation when not detected: slow and breathing 76, steady 96, make people move 122,
+Tempo, in order: what the producer said, then what the audio measured, then derivation. Derivation when neither is present: slow and breathing 76, steady 96, make people move 122,
 then nudge halfway toward the mood preset BPM: round((energy BPM + preset BPM) / 2).
 When those two BPMs already agree and the mood is longing, the reason is
 "76 BPM because slow tempos read as sad". Every default carries a one line reason.
@@ -83,7 +86,7 @@ Output defaults to all_layers ("all layers separately"). full_mix is used only w
 Other empty slots: style "no reference", palette "no preference", structure "8 bars",
 must_keep "everything" when audio was uploaded and "nothing" otherwise.
 
-Mock text extraction keywords (MockProvider only, replaced by Bedrock later):
+Mock text extraction keywords (MockProvider, and the offline fallback when Bedrock is unavailable):
 - longing: miss, lonely, sad, rain, lost, heart, night drive
 - joyful: happy, sun, summer, dance, party, celebrate
 - peaceful: calm, peace, morning, sea, soft, sleep
@@ -111,7 +114,16 @@ Energy words: slow "gentle dynamics, slow build"; steady "steady groove"; high "
 | dark and electronic | tight electronic kit, deep kick, crisp hats | dark analog synth pad chords | distorted sub bass | detuned saw lead | metallic hits and cold noise sweeps | dark synths, deep kick, distorted sub and cold reverb |
 | bright and danceable | four on the floor kick, open hats, claps | bright plucked synth chords | punchy synth bass | catchy vocal chop style synth lead | white noise risers and sparkles | bright plucks, punchy kick and synth bass, clean modern production |
 
-Each layer gets three seeds. The base is a hash of layer, mood, world, key, and BPM, plus RenderJob.take.
+Anchor term for each layer and world. The anchor is the main instrument, it already appears in that descriptor, and a polished prompt must still contain it (section 10):
+
+| world | drums | chords | bass | melody | texture | full mix |
+| --- | --- | --- | --- | --- | --- | --- |
+| warm and intimate | drum kit | piano | sub bass | guitar lead | vinyl crackle | piano |
+| wide and cinematic | toms | string pads | cello | synth lead | reverb swells | strings |
+| dark and electronic | kick | synth pad chords | sub bass | saw lead | metallic hits | kick |
+| bright and danceable | four on the floor | plucked synth chords | synth bass | synth lead | risers | synth bass |
+
+Wide cinematic drums use "toms" because that is the instrument named in the descriptor. Each layer gets three seeds. The base is a hash of layer, mood, world, key, and BPM, plus RenderJob.take.
 Take 1 is the default and stays reproducible. A later take changes the seeds.
 kb_sources lists the documents used (in mock mode: the preset and world names).
 
@@ -192,4 +204,34 @@ Phase 2 choices: the section name is verse. Uploads live in audio/, rendered WAV
 - make dev: runs the API on port 8000 and the web app on port 5173
 - make test: pytest for services, typecheck and lint for apps/web
 - make contracts: regenerates TypeScript types and Pydantic models
-- Environment in .env (never committed): PROVIDER=mock, RENDERER=mock, AWS_PROFILE=vision, AWS_REGION=us-east-1
+- Environment in .env (never committed): PROVIDER=mock, RENDERER=mock, AWS_PROFILE=vision, AWS_REGION=us-east-1, BEDROCK_MODEL_ID. The agent reads os.environ only. The API startup and `make dev` load the repo .env (uvicorn `--env-file`, and python-dotenv in the API). AWS_PROFILE is passed to boto3 only when it is set.
+
+## 10. Bedrock provider
+
+BedrockProvider sits behind the same Provider protocol and `run_turn` as MockProvider. `PROVIDER=mock` (the default) or `PROVIDER=bedrock`. The asking rule, defaults, theory engine, seeds, and compiler are the MockProvider code, imported, not copied.
+
+Configuration, from the environment: `BEDROCK_MODEL_ID`, `AWS_REGION`, and `AWS_PROFILE` only when set. Otherwise boto3 uses the default credential chain, so the same client runs on AgentCore. The client is Bedrock Runtime Converse. Botocore connect timeout 2 seconds, read timeout 8 seconds, retries off (`total_max_attempts` 1). Inference config is temperature 0.2 and max tokens only: 600 for extraction, 300 per layer for polishing. Top p is not set.
+
+Extraction sends the user's text, any AudioFeatures, and the current brief. The tool schema is adapted from `packages/contracts` slot JSON Schema: slot names and the value, confidence, and reason fields come from those files. `source` is replaced by `evidence` (`text` or `audio`). Mood, energy, and world values are enums of the section 2 options. Every slot, including tempo, is optional. The tool is forced with toolChoice. Code maps evidence to source: `you` for text, `detected` for audio. Output is not taken from Claude. The producer, or the asking rule, chooses it.
+
+Merge, in order:
+- Drop a slot with no evidence, no reason, or a confidence outside 0 to 1.
+- Drop an invalid mood, energy, or world. Keep the previous value and say so in the trace.
+- A slot with source `you`, and anything set through overrides, is locked. Claude cannot change it.
+- A slot with source `detected` or `reference` can only be replaced by an explicit user statement (evidence `text`).
+- A slot with source `guessed` (You decide, Skip, defaults) is replaced only when the new confidence is higher. The trace says why.
+- When text and audio disagree, text wins. The trace names both values, for example "You said around 90 BPM, the audio measured 124, kept 90".
+- A key that the theory engine cannot read is dropped.
+
+Polishing runs after the compiler, one forced tool call for every layer. Wording only. Negative prompts are not sent and are not changed. A polished prompt is kept only when all of these hold:
+- It still contains the TrackType tag, the template's BPM, the key when the template has one, and that layer's anchor (case insensitive).
+- It contains no vocabulary word that is absent from both the template prompt and the brief. Words outside the vocabulary are allowed. Length is character count, and it must be between 0.6 and 1.5 times the template.
+Otherwise the template is kept and the trace says why, for example "Kept the template for the bass prompt: it added trumpet".
+
+Vocabulary is built at load time in `services/agent/src/agent/vocab.py` from the section 4 descriptors, mood words, and energy words, the section 2 option lists, the anchors, and `services/agent/vocab.yaml` for common instruments, genres, and moods that are not in the spec yet. Function words (and, with, the, and similar) are not vocabulary.
+
+On any Bedrock error or timeout, including a missing model id, extraction falls back to the MockProvider keyword extractor and polishing keeps the template prompts. The trace says "Bedrock unavailable, used the offline extractor" or "Bedrock unavailable, kept the template prompts". The demo does not break because the network does.
+
+Trace lines include "Claude read your idea", "Claude polished the drums prompt", "Kept your mood: joyful", and "Replaced the guessed mood peaceful with longing: …".
+
+Tests stub the Bedrock client. The live test is marked `bedrock` and runs only when `RUN_BEDROCK=1`.

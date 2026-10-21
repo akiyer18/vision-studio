@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from contracts import SlotValue
@@ -38,6 +39,17 @@ PRESETS = {
     "longing": Preset("longing", "slow and breathing", "warm and intimate", "D minor", "", 76, ("i", "VI", "III", "VII")),
     "tense": Preset("tense", "steady", "dark and electronic", "E minor", "Phrygian colour", 110, ("i", "bII")),
 }
+
+
+def parse_bpm(value: str) -> int | None:
+    """First positive integer in a stated or measured tempo."""
+    match = re.search(r"\d+", value)
+    if match is None:
+        return None
+    number = int(match.group())
+    if number <= 0:
+        return None
+    return number
 
 
 def preset_for(mood: str) -> Preset:

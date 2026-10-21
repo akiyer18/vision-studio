@@ -25,5 +25,6 @@ export interface TurnRequest {
     palette?: string;
     structure?: string;
     must_keep?: string;
+    tempo?: string;
   };
 }

@@ -15,6 +15,7 @@ export interface SongBrief {
     palette?: SlotValue;
     structure?: SlotValue;
     must_keep?: SlotValue;
+    tempo?: SlotValue;
   };
   output: OutputChoice[];
   questions_asked: number;

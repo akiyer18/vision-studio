@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from contracts import (
     AudioFeatures,
+    LayerPrompt,
     Question,
     SlotValue,
     SongBrief,
@@ -15,7 +18,7 @@ from contracts import (
 )
 
 from agent.asking import AskContext, almost_empty, next_question
-from agent.defaults import PRESETS, default_slot, derive_bpm, preset_for, skipped
+from agent.defaults import PRESETS, default_slot, derive_bpm, parse_bpm, preset_for, skipped
 from agent.extract import extract_audio, extract_text
 from agent.prompts import compile_prompts
 from agent.slots import ABOUT_QUESTION, MAX_QUESTIONS, slot_specs
@@ -43,6 +46,12 @@ class Pending:
     options: tuple[str, ...]
 
 
+class TurnHooks(Protocol):
+    def ingest_text(self, session: Session) -> None: ...
+
+    def polish(self, session: Session, prompts: list[LayerPrompt]) -> list[LayerPrompt]: ...
+
+
 @dataclass
 class Session:
     session_id: str
@@ -50,6 +59,8 @@ class Session:
     input_type: str | None = None
     gave_key: bool = False
     detected_bpm: float | None = None
+    features: AudioFeatures | None = None
+    locked: set[str] = field(default_factory=set)
     slots: dict[str, SlotValue] = field(default_factory=dict)
     output: list[str] = field(default_factory=list)
     questions_asked: int = 0
@@ -73,47 +84,78 @@ class Session:
         return mood.value
 
 
+class MockHooks:
+    def ingest_text(self, session: Session) -> None:
+        ingest_mock(session)
+
+    def polish(self, session: Session, prompts: list[LayerPrompt]) -> list[LayerPrompt]:
+        return prompts
+
+
 class MockProvider:
     def __init__(self) -> None:
         self.sessions: dict[str, Session] = {}
+        self.hooks: TurnHooks = MockHooks()
 
     def run_turn(self, request: TurnRequest) -> TurnResponse:
-        session = self.sessions.setdefault(request.session_id, Session(request.session_id))
-        if request.audio_features is not None:
-            _apply_audio(session, request.audio_features)
-        if request.output:
-            _set_output(session, list(request.output), "you", "You chose this output", 1.0)
-            session.note("answer", f"output: {session.slots['output'].value}")
-        if request.overrides is not None:
-            _apply_overrides(session, request.overrides)
-        if request.text:
-            _remember_text(session, request.text)
-        if request.answer is not None:
-            _apply_answer(session, request.answer.slot, request.answer.action, request.answer.value)
-        elif session.pending is not None:
-            return _question_response(session, session.pending, waiting=True)
-        if session.force_ready:
-            return _ready(session)
-        if _should_ask_about(session):
-            session.about_asked = True
-            pending = Pending("about", "mood", ABOUT_QUESTION, ())
-            return _ask(session, pending)
-        spec = next_question(_context(session))
-        if spec is not None and session.questions_asked < MAX_QUESTIONS:
-            pending = Pending("slot", spec.slot, spec.question, spec.options)
-            return _ask(session, pending)
-        return _ready(session)
+        return run_session(self.sessions, request, self.hooks)
 
 
-_provider = MockProvider()
+_mock = MockProvider()
 
 
 def run_turn(request: TurnRequest) -> TurnResponse:
-    return _provider.run_turn(request)
+    return _select_provider().run_turn(request)
 
 
-def _remember_text(session: Session, text: str) -> None:
-    session.text = f"{session.text} {text}".strip() if session.text else text.strip()
+def _select_provider():
+    provider = os.environ.get("PROVIDER", "mock")
+    if provider in {"", "mock"}:
+        return _mock
+    if provider == "bedrock":
+        from agent.bedrock import bedrock_provider
+
+        return bedrock_provider()
+    raise RuntimeError("PROVIDER must be mock or bedrock")
+
+
+def run_session(sessions: dict[str, Session], request: TurnRequest, hooks: TurnHooks) -> TurnResponse:
+    session = sessions.setdefault(request.session_id, Session(request.session_id))
+    if request.audio_features is not None:
+        _apply_audio(session, request.audio_features)
+    if request.output:
+        _set_output(session, list(request.output), "you", "You chose this output", 1.0)
+        session.note("answer", f"output: {session.slots['output'].value}")
+    if request.overrides is not None:
+        _apply_overrides(session, request.overrides)
+    if request.text:
+        _remember_text(session, request.text, hooks)
+    if request.answer is not None:
+        _apply_answer(session, request.answer.slot, request.answer.action, request.answer.value, hooks)
+    elif session.pending is not None:
+        return _question_response(session, session.pending, waiting=True)
+    if session.force_ready:
+        return _ready(session, hooks)
+    if _should_ask_about(session):
+        session.about_asked = True
+        pending = Pending("about", "mood", ABOUT_QUESTION, ())
+        return _ask(session, pending)
+    spec = next_question(_context(session))
+    if spec is not None and session.questions_asked < MAX_QUESTIONS:
+        pending = Pending("slot", spec.slot, spec.question, spec.options)
+        return _ask(session, pending)
+    return _ready(session, hooks)
+
+
+def _remember_text(session: Session, text: str, hooks: TurnHooks) -> None:
+    incoming = text.strip()
+    if incoming:
+        session.text = f"{session.text} {incoming}".strip() if session.text else incoming
+    if session.text:
+        hooks.ingest_text(session)
+
+
+def ingest_mock(session: Session) -> None:
     found = extract_text(session.text)
     if not found:
         session.note("extract", "No mood, energy, or scene in the text")
@@ -121,21 +163,46 @@ def _remember_text(session: Session, text: str) -> None:
     for name, value in found.items():
         if name in session.slots:
             continue
-        session.slots[name] = value
+        _store(session, name, value)
         session.note("extract", f"{name}: {value.value} ({value.reason})")
+
+
+def store_slot(session: Session, name: str, value: SlotValue) -> None:
+    session.slots[name] = value
+    if value.source == "you":
+        session.locked.add(name)
+
+
+_store = store_slot
 
 
 def _apply_audio(session: Session, features: AudioFeatures) -> None:
     session.input_type = features.input_type
+    session.features = features
     for name, value in extract_audio(features).items():
         if name in session.slots:
             continue
-        session.slots[name] = value
+        _store(session, name, value)
         session.note("detect", f"{name}: {value.value} ({value.reason})")
         if name == "key":
             session.gave_key = True
     if features.bpm is not None:
         session.detected_bpm = features.bpm
+        measured = str(int(features.bpm + 0.5))
+        current = session.slots.get("tempo")
+        if current is None or (current.source == "guessed" and "tempo" not in session.locked):
+            if current is not None and current.value != measured:
+                session.note("tempo", f"The audio measured {measured}, replacing the guessed {current.value}")
+            _store(
+                session,
+                "tempo",
+                SlotValue(
+                    value=measured,
+                    source="detected",
+                    reason="Detected from the audio",
+                    confidence=features.confidence,
+                ),
+            )
         session.note("detect", f"bpm: {features.bpm}")
     if features.chords:
         session.note("detect", "chords: " + ", ".join(features.chords))
@@ -147,18 +214,23 @@ def _apply_overrides(session: Session, overrides: object) -> None:
         if name == "output":
             _set_output(session, _enums_for_label(str(value)), "you", "You set this in the request", 1.0)
         else:
-            session.slots[name] = SlotValue(
-                value=str(value),
-                source="you",
-                reason="You set this in the request",
-                confidence=1.0,
+            _store(
+                session,
+                name,
+                SlotValue(
+                    value=str(value),
+                    source="you",
+                    reason="You set this in the request",
+                    confidence=1.0,
+                ),
             )
             if name == "key":
                 session.gave_key = True
+        session.locked.add(name)
         session.note("answer", f"{name}: {session.slots[name].value}")
 
 
-def _apply_answer(session: Session, slot: str, action: str, value: str | None) -> None:
+def _apply_answer(session: Session, slot: str, action: str, value: str | None, hooks: TurnHooks) -> None:
     pending = session.pending
     session.pending = None
     if action == "skip_all":
@@ -167,7 +239,7 @@ def _apply_answer(session: Session, slot: str, action: str, value: str | None) -
         session.force_ready = True
         return
     if pending is not None and pending.kind == "about" and action == "answer":
-        _remember_text(session, value or "")
+        _remember_text(session, value or "", hooks)
         session.note("answer", "Re-ran extraction on the description")
         return
     target = pending.slot if pending is not None else slot
@@ -185,7 +257,7 @@ def _apply_answer(session: Session, slot: str, action: str, value: str | None) -
         _set_output(session, choices, "you", "You answered", 1.0)
         session.note("answer", f"output: {session.slots['output'].value}")
         return
-    session.slots[target] = SlotValue(value=value or "", source="you", reason="You answered", confidence=1.0)
+    _store(session, target, SlotValue(value=value or "", source="you", reason="You answered", confidence=1.0))
     session.note("answer", f"{target}: {value or ''}")
 
 
@@ -207,14 +279,14 @@ def _set_key_mode(session: Session, mode: str) -> None:
     base = current.value if current is not None else preset_for(session.mood_name()).key
     note = base.split()[0]
     chosen = f"{note} {mode}"
-    session.slots["key"] = SlotValue(value=chosen, source="you", reason=f"You chose {mode}", confidence=1.0)
+    _store(session, "key", SlotValue(value=chosen, source="you", reason=f"You chose {mode}", confidence=1.0))
     session.gave_key = True
     session.note("answer", f"key: {chosen}")
 
 
 def _fill_gaps(session: Session, *, skipped_fill: bool) -> None:
     for spec in slot_specs():
-        if spec.slot in session.slots:
+        if spec.slot == "tempo" or spec.slot in session.slots:
             continue
         _use_default(session, spec.slot, mark_skipped=skipped_fill)
 
@@ -222,7 +294,7 @@ def _fill_gaps(session: Session, *, skipped_fill: bool) -> None:
 def _set_output(session: Session, choices: list[str], source: str, reason: str, confidence: float) -> None:
     session.output = choices
     label = ", ".join(OUTPUT_LABEL[choice] for choice in choices)
-    session.slots["output"] = SlotValue(value=label, source=source, reason=reason, confidence=confidence)
+    _store(session, "output", SlotValue(value=label, source=source, reason=reason, confidence=confidence))
 
 
 def _enums_for_label(value: str) -> list[str]:
@@ -280,22 +352,38 @@ def _question_response(session: Session, pending: Pending, *, waiting: bool) -> 
     )
 
 
-def _ready(session: Session) -> TurnResponse:
+def _tempo(session: Session, energy: str, mood: str) -> tuple[int, str]:
+    current = session.slots.get("tempo")
+    parsed = parse_bpm(current.value) if current is not None else None
+    if current is not None and parsed is not None:
+        if current.source == "detected":
+            return parsed, f"{parsed} BPM detected from the audio"
+        if current.source == "you":
+            reason = current.reason or f"{parsed} BPM from what you said"
+            return parsed, reason
+        return parsed, current.reason
+    bpm, reason = derive_bpm(energy, mood)
+    _store(
+        session,
+        "tempo",
+        SlotValue(value=str(bpm), source="guessed", reason=reason, confidence=0.4),
+    )
+    return bpm, reason
+
+
+def _ready(session: Session, hooks: TurnHooks) -> TurnResponse:
     _fill_gaps(session, skipped_fill=False)
     mood = session.mood_name()
     energy = session.slots["energy"].value
     world = session.slots["world"].value
     key = session.slots["key"].value
-    if session.detected_bpm is not None:
-        bpm = int(session.detected_bpm + 0.5)
-        tempo_reason = f"{bpm} BPM detected from the audio"
-    else:
-        bpm, tempo_reason = derive_bpm(energy, mood)
+    bpm, tempo_reason = _tempo(session, energy, mood)
     session.note("tempo", tempo_reason)
     romans = list(PRESETS.get(mood, PRESETS["peaceful"]).roman)
     chords = chords_for(key, romans)
     session.note("theory", f"{' '.join(romans)} in {key} is {', '.join(chords)}")
     prompts = compile_prompts(session.output, mood=mood, energy=energy, world=world, key=key, bpm=bpm)
+    prompts = hooks.polish(session, prompts)
     session.note("prompt", f"Wrote {len(prompts)} prompt" if len(prompts) == 1 else f"Wrote {len(prompts)} prompts")
     session.pending = None
     session.force_ready = True

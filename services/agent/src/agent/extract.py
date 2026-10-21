@@ -1,4 +1,4 @@
-"""Keyword extraction for MockProvider. Replaced by Bedrock later."""
+"""Keyword extraction for MockProvider, and the offline fallback when Bedrock is down."""
 
 from __future__ import annotations
 

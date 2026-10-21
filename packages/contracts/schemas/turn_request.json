@@ -34,7 +34,8 @@
         "style": { "type": "string" },
         "palette": { "type": "string" },
         "structure": { "type": "string" },
-        "must_keep": { "type": "string" }
+        "must_keep": { "type": "string" },
+        "tempo": { "type": "string" }
       }
     }
   }

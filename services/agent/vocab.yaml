@@ -1,0 +1,52 @@
+# Instruments and genres that are not already named in the spec.
+# Check (b) rejects a polished prompt that introduces one of these
+# unless the template or the brief already contains it.
+instruments:
+  - trumpet
+  - violin
+  - flute
+  - saxophone
+  - organ
+  - rhodes
+  - harp
+  - harmonica
+  - clarinet
+  - trombone
+  - upright bass
+  - electric bass
+  - acoustic guitar
+  - electric guitar
+  - drum machine
+  - congas
+  - shaker
+  - tambourine
+  - choir
+  - marimba
+  - banjo
+genres:
+  - jazz
+  - rock
+  - hip hop
+  - ambient
+  - folk
+  - classical
+  - reggae
+  - metal
+  - house
+  - techno
+  - pop
+  - blues
+  - country
+  - soul
+  - funk
+  - disco
+  - trap
+moods:
+  - angry
+  - happy
+  - sad
+  - hopeful
+  - nostalgic
+  - dreamy
+  - eerie
+  - playful

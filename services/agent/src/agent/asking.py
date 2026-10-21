@@ -45,6 +45,8 @@ def almost_empty(text: str, input_type: str | None, found_slots: bool) -> bool:
 
 
 def _condition(slot: str, context: AskContext) -> bool:
+    if slot == "tempo":
+        return False
     if slot == "output":
         return not context.output_set
     if slot == "key":

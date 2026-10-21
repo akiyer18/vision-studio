@@ -17,7 +17,8 @@
         "style": { "$ref": "slot_value.json" },
         "palette": { "$ref": "slot_value.json" },
         "structure": { "$ref": "slot_value.json" },
-        "must_keep": { "$ref": "slot_value.json" }
+        "must_keep": { "$ref": "slot_value.json" },
+        "tempo": { "$ref": "slot_value.json" }
       }
     },
     "output": {

@@ -1,4 +1,4 @@
-"""Song agent provider. MockProvider now, BedrockProvider later."""
+"""Song agent provider. MockProvider or BedrockProvider, selected by PROVIDER."""
 
 from __future__ import annotations
 
