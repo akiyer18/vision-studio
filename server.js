@@ -793,7 +793,7 @@ function makeCtx(emit) {
           const loop = await this.generateLoop({ prompt: body, bpm, bars, kind: 'drums' });
           let judged = { verdict: null, score: null, why: 'ears unavailable' };
           try {
-            const sc = await ears.scoreGenre(loop.loop.path, { genreTarget: target });
+            const sc = await ears.scoreGenre(loop.loop.path, { genreTarget: target, scope: 'drums' });
             judged = { verdict: sc.verdict, score: sc.overall, why: sc.why, dimensions: sc.dimensions, markersMissing: sc.markersMissing, fixPrompt: sc.fixPrompt };
           } catch (e) { judged.why = `ears: ${e.message.slice(0, 120)}`; }
           cands.push({ path: loop.loop.path, url: loop.loop.url, prompt: body, kit: loop.kit, ...judged });
@@ -852,7 +852,7 @@ function makeCtx(emit) {
         const res = await textToAudio({ prompt: full, duration: seconds, model: LOOP_MODEL });
         const f = await publish(res.buffer, `${(bp?.slug || genre || 'track').replace(/[^a-z0-9]+/gi, '-')}-track`, '.wav', 'loop');
         let judged = { verdict: null, score: null, why: 'ears unavailable' };
-        if (target) { stage('Gemini judging authenticity (strict rubric)'); try { const sc = await ears.scoreGenre(f.path, { genreTarget: target }); judged = { verdict: sc.verdict, score: sc.overall, why: sc.why, dimensions: sc.dimensions, markersMissing: sc.markersMissing, fixPrompt: sc.fixPrompt }; } catch (e) { judged.why = `ears: ${e.message.slice(0, 100)}`; } }
+        if (target) { stage('Gemini judging authenticity (strict rubric)'); try { const sc = await ears.scoreGenre(f.path, { genreTarget: target, scope: 'full' }); judged = { verdict: sc.verdict, score: sc.overall, why: sc.why, dimensions: sc.dimensions, markersMissing: sc.markersMissing, fixPrompt: sc.fixPrompt }; } catch (e) { judged.why = `ears: ${e.message.slice(0, 100)}`; } }
         cands.push({ path: f.path, url: f.url, prompt: full, ...judged });
         if (judged.verdict !== 'off') break;
       }
@@ -1360,7 +1360,7 @@ app.post('/api/lab/generate', async (req, res) => {
     const result = await textToAudio({ prompt: full, duration: seconds, model, ...(steps ? { steps: Number(steps) } : {}), ...(cfgScale ? { cfg_scale: Number(cfgScale) } : {}), ...(seed ? { seed: Number(seed) } : {}) });
     const f = await publish(result.buffer, `lab-${(genre || kind).replace(/[^a-z0-9]+/gi, '-')}`, '.wav', 'loop');
     let score = null;
-    if (genre) { try { const k = await import('./lib/knowledge.js'); const slug = k.matchGenre(genre) || genre; const bp = k.getBlueprint(slug); const markers = (bp.markdown.match(/^- .*$/gm) || []).filter((l) => /kick|snare|hat|bass|swing|clap|perc|chord/i.test(l)).slice(0, 10).map((l) => l.replace(/^- /, '').slice(0, 90)); score = await (await import('./lib/ears.js')).scoreGenre(f.path, { genreTarget: `${bp.title}: ${bp.summary}`, markers }); } catch (e) { score = { error: e.message }; } }
+    if (genre) { try { const k = await import('./lib/knowledge.js'); const slug = k.matchGenre(genre) || genre; const bp = k.getBlueprint(slug); const markers = (bp.markdown.match(/^- .*$/gm) || []).filter((l) => /kick|snare|hat|bass|swing|clap|perc|chord/i.test(l)).slice(0, 10).map((l) => l.replace(/^- /, '').slice(0, 90)); score = await (await import('./lib/ears.js')).scoreGenre(f.path, { genreTarget: `${bp.title}: ${bp.summary}`, markers, scope: kind === 'music' ? 'full' : 'drums' }); } catch (e) { score = { error: e.message }; } }
     res.json({ path: f.path, url: f.url, prompt: full, seed: result.seed, seconds, model, score });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
