@@ -1,0 +1,779 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ADE Hack · Producing Assistant</title>
+<style>
+  :root { --bg:#0e0f12; --panel:#16181d; --line:#262a33; --text:#e8e9ec; --muted:#8b919e; --accent:#ff6a3d; --accent2:#3ddc97; --danger:#ff4d4d; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 -apple-system, "Inter", system-ui, sans-serif; }
+  header { display:flex; align-items:center; justify-content:space-between; padding:18px 24px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:18px; margin:0; letter-spacing:.02em; }
+  header h1 span { color:var(--accent); }
+  .badges { display:flex; gap:8px; font-size:12px; color:var(--muted); }
+  .badge { padding:3px 8px; border:1px solid var(--line); border-radius:999px; }
+  .badge.ok { border-color:var(--accent2); color:var(--accent2); }
+  .badge.bad { border-color:var(--danger); color:var(--danger); }
+  main { display:grid; grid-template-columns:1fr 1fr; gap:20px; padding:20px 24px; max-width:1300px; margin:0 auto; }
+  @media (max-width:900px) { main { grid-template-columns:1fr; } }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; }
+  h2 { margin:0 0 4px; font-size:16px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:14px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; text-transform:uppercase; letter-spacing:.06em; }
+  input[type=text], textarea, select { width:100%; background:#0b0c0f; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:9px 10px; font:inherit; }
+  textarea { min-height:70px; resize:vertical; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+  button { background:#22252c; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:9px 14px; font:inherit; cursor:pointer; }
+  button:hover { border-color:#3a3f4a; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#111; font-weight:600; }
+  button.rec { background:#2a1a1a; border-color:var(--danger); color:var(--danger); }
+  button.rec.on { background:var(--danger); color:#fff; animation:pulse 1s infinite; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  @keyframes pulse { 50% { opacity:.6; } }
+  .actions { display:flex; gap:10px; align-items:center; margin-top:14px; flex-wrap:wrap; }
+  .status { font-size:13px; color:var(--muted); min-height:18px; margin-top:8px; }
+  .status.err { color:var(--danger); }
+  .results { margin-top:14px; display:flex; flex-direction:column; gap:10px; }
+  .file { background:#0b0c0f; border:1px solid var(--line); border-radius:8px; padding:10px; }
+  .file .top { display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:13px; }
+  .file .kind { color:var(--accent2); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
+  .file audio { width:100%; margin-top:6px; }
+  .file .path { color:var(--muted); font-size:11px; word-break:break-all; margin-top:4px; }
+  .grid { display:grid; gap:3px; margin-top:12px; overflow-x:auto; }
+  .lane { display:grid; grid-template-columns:90px repeat(var(--steps), 1fr); gap:3px; align-items:center; }
+  .lane .nm { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+  .cell { height:22px; border-radius:4px; background:#1d2027; min-width:14px; }
+  .cell.beat { background:#232730; }
+  .cell.on { background:var(--accent); opacity:var(--vel); }
+  .cell.cur { outline:2px solid var(--accent2); }
+  .hint { color:var(--muted); font-size:12px; margin-top:14px; }
+  input[type=range] { width:100%; }
+  .inline { display:flex; gap:8px; align-items:center; font-size:13px; color:var(--muted); }
+  code { background:#0b0c0f; padding:1px 5px; border-radius:4px; font-size:12px; }
+  section.wide { grid-column:1 / -1; }
+  section.chat { border-color:#3a2a22; background:linear-gradient(180deg,#1b1714,#16181d); }
+  .log { display:flex; flex-direction:column; gap:12px; max-height:52vh; overflow-y:auto; padding:4px 2px; }
+  .msg { max-width:900px; padding:12px 14px; border-radius:12px; font-size:15px; line-height:1.5; white-space:pre-wrap; }
+  .msg.user { background:#2a2420; align-self:flex-end; border:1px solid #3a2a22; }
+  .msg.bot { background:#0b0c0f; border:1px solid var(--line); align-self:flex-start; }
+  .msg .tools { list-style:none; padding:0; margin:0 0 8px; display:flex; flex-direction:column; gap:3px; font-size:13px; color:var(--muted); }
+  .msg .tools li::before { content:'…'; display:inline-block; width:20px; color:var(--muted); }
+  .msg .tools li.ok::before { content:'✓'; color:var(--accent2); }
+  .msg .tools li.bad::before { content:'✗'; color:var(--danger); }
+  .composer { display:flex; gap:10px; align-items:flex-end; margin-top:12px; }
+  .profile { display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:6px; margin:8px 0; }
+  .profile .r { background:#13151a; border:1px solid var(--line); border-radius:8px; padding:6px 8px; font-size:12px; }
+  .profile .r b { display:block; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+  .profile .lvl-low { color:#8fb4ff; } .profile .lvl-medium { color:#e8e9ec; } .profile .lvl-high { color:var(--accent); }
+  .profile .num { color:var(--muted); font-size:11px; }
+  .composer textarea { flex:1; min-height:56px; font-size:16px; }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  .chip { font-size:13px; padding:6px 10px; border-radius:999px; background:#22252c; border:1px solid var(--line); cursor:pointer; color:var(--text); }
+  .chip:hover { border-color:var(--accent); }
+  section.easy { border-color:#3a2a22; background:linear-gradient(180deg,#1b1714,#16181d); }
+  section.easy textarea { font-size:18px; min-height:84px; padding:14px; }
+  section.easy h2 { font-size:22px; }
+  .progress { list-style:none; padding:0; margin:12px 0 0; display:flex; flex-direction:column; gap:6px; font-size:14px; }
+  .progress li::before { content:'…'; display:inline-block; width:22px; color:var(--muted); }
+  .progress li.ok::before { content:'✓'; color:var(--accent2); }
+  .progress li.bad::before { content:'✗'; color:var(--danger); }
+  .progress li.bad { color:var(--danger); }
+  details.wide { grid-column:1 / -1; }
+  details.wide > summary { cursor:pointer; color:var(--muted); font-size:13px; padding:6px 0; user-select:none; }
+  .adv { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:12px; }
+  @media (max-width:900px) { .adv { grid-template-columns:1fr; } }
+  .cell.note { background:#5b8cff; opacity:var(--vel); }
+  #p-grid .cell { cursor:pointer; } #p-grid .cell:hover { outline:1px solid #4a5160; }
+  .tweak { display:flex; gap:10px; align-items:center; margin-top:14px; }
+  .tweak input { flex:1; font-size:16px; }
+  .livehint { font-size:12px; color:var(--accent2); margin-left:6px; }
+  .build { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  .build .big { font-size:16px; padding:12px 20px; }
+  .steps { font-size:12px; color:var(--muted); margin-top:8px; }
+  .steps .ok { color:var(--accent2); } .steps .bad { color:var(--danger); }
+</style>
+</head>
+<body>
+<header>
+  <h1><span>ADE Hack</span> · Producing Assistant</h1>
+  <div class="badges">
+    <span class="badge" id="b-stab">Stability …</span>
+    <span class="badge" id="b-claude">Claude …</span>
+    <span class="badge" id="b-dir" title="">Ableton folder</span>
+  </div>
+</header>
+<main>
+  <section class="wide chat">
+    <h2>Your producer</h2>
+    <div class="sub">Talk to it like a collaborator with Ableton open. Type, beatbox, hum, or attach audio files as references ("make the kick like this"). It plans, synthesizes every sound with Stability AI, lays the layers into Live itself, and tells you what to try next.</div>
+    <div class="log" id="c-log"></div>
+    <div class="chips" id="c-chips">
+      <span class="chip">Start a dark techno beat at 128, kick first</span>
+      <span class="chip">Add a snare on 2 and 4 and crisp 16th hats</span>
+      <span class="chip">Give me a hypnotic saw arp in F minor</span>
+      <span class="chip">The kick is too soft, make it punchier</span>
+      <span class="chip">Half time, more swing</span>
+    </div>
+    <div class="composer">
+      <textarea id="c-text" placeholder="e.g. let's build a lo-fi beat around my beatbox, 88 bpm"></textarea>
+      <select id="c-density" title="How many layers the producer builds by default" style="width:auto;align-self:stretch">
+        <option value="minimal">Minimal (3 layers)</option>
+        <option value="standard" selected>Standard (4–5)</option>
+        <option value="rich">Rich (up to 7)</option>
+      </select>
+      <button class="primary big" id="c-send">Send</button>
+    </div>
+    <div class="actions">
+      <button class="rec" id="c-beat">● Beatbox</button><span class="inline" id="c-beat-info">attach a beat</span>
+      <button class="rec" id="c-hum">● Hum</button><span class="inline" id="c-hum-info">attach a melody</span>
+      <button id="c-attach" title="Attach audio files as references (wav, mp3, aiff, m4a, flac)">📎 Attach audio</button>
+      <input type="file" id="c-file" accept="audio/*,video/*,.wav,.mp3,.mpeg,.mpg,.mp4,.mov,.m4a,.aac,.aif,.aiff,.flac,.ogg,.wma,.webm" multiple style="display:none" />
+      <button id="c-show">Show in Live</button>
+      <button id="c-arrange" title="Record the playing Session clips onto the Arrangement timeline">Lay out in Arrangement (8 bars)</button>
+      <button id="c-reset" title="Forget the conversation (Live tracks stay)">New session</button>
+    </div>
+    <div class="chips" id="c-refs"></div>
+  </section>
+  <details class="wide" id="quick"><summary>One-button build (no conversation): describe or record, press once)</summary>
+  <section class="wide easy">
+    <h2>What's in your head?</h2>
+    <div class="sub">Describe it, beatbox it, hum it, or all three. One button puts it in Ableton as a Drums track and a Saw track.</div>
+    <textarea id="e-text" placeholder="punchy snare, four on the floor with offbeat hats, dark saw arp in C minor, 124 bpm"></textarea>
+    <div class="actions">
+      <button class="rec" id="e-beat">● Beatbox the beat</button><span class="inline" id="e-beat-info">optional</span>
+      <button class="rec" id="e-hum">● Hum the melody</button><span class="inline" id="e-hum-info">optional</span>
+    </div>
+    <div class="actions">
+      <button class="primary big" id="e-go">⚡ Make it in Ableton</button>
+      <span class="inline">takes ~10–20 s · Live switches to Session view and plays it</span>
+    </div>
+    <div class="status" id="e-status"></div>
+    <ol class="progress" id="e-steps"></ol>
+    <div class="tweak" id="e-tweak-row" style="display:none">
+      <input type="text" id="e-tweak" placeholder="tweak it while it plays: faster hats · more swing · half time · change the kick to a boomy 808 · octave up" />
+      <button class="primary" id="e-tweak-go">Tweak →</button>
+      <button id="e-show" title="Bring Live to Session view">Show in Live</button>
+    </div>
+    <div class="status" id="e-tweak-status"></div>
+    <div class="grid" id="e-grid"></div>
+    <div class="hint" id="e-grid-hint" style="display:none">Click cells to toggle hits. Changes go straight into the Live clips.</div>
+  </section>
+  </details>
+  <details class="wide" id="advanced"><summary>Advanced controls (sounds, pattern, melody, send each part to Live separately)</summary><div class="adv">
+  <section>
+    <h2>1 · Hear it</h2>
+    <div class="sub">Hum or beatbox the sound in your head, describe it, and Stability AI turns it into a real sample.</div>
+    <div class="row">
+      <div><label>Name</label><input type="text" id="s-name" value="snare" /></div>
+      <div><label>Mode</label>
+        <select id="s-mode">
+          <option value="oneshot">One-shot (hum a single hit)</option>
+          <option value="loop">Loop (beatbox a bar or two)</option>
+          <option value="text">Text only (no recording)</option>
+        </select></div>
+    </div>
+    <label>Describe the sound</label>
+    <textarea id="s-prompt" placeholder="punchy acoustic snare, tight, bright crack, slight room">punchy snare drum, tight, bright crack, dry</textarea>
+    <div class="row">
+      <div><label>Strength <span id="s-strength-v">0.70</span> <span class="inline">(0 = copy my hum · 1 = ignore it)</span></label>
+        <input type="range" id="s-strength" min="0.1" max="1" step="0.05" value="0.7" /></div>
+      <div><label>Model</label>
+        <select id="s-model">
+          <option value="stable-audio-2.5">Stable Audio 2.5 (fast, 8 credits)</option>
+          <option value="stable-audio-3">Stable Audio 3.0 (async, 8 credits)</option>
+          <option value="stable-audio-2">Stable Audio 2.0 (slow, 20 credits)</option>
+        </select></div>
+    </div>
+    <div class="actions">
+      <button class="rec" id="s-rec">● Record</button>
+      <span class="inline" id="s-rec-info">no recording</span>
+      <button class="primary" id="s-go">Synthesize →</button>
+    </div>
+    <div class="status" id="s-status"></div>
+    <div class="results" id="s-results"></div>
+    <div class="hint">Files land in Live's browser under <b>User Library › ADE Hack</b>. Drag the one-shot onto a MIDI track (Simpler) or a Drum Rack pad.</div>
+  </section>
+
+  <section>
+    <h2>2 · Pattern</h2>
+    <div class="sub">Describe the groove in words. You get a MIDI clip, and you can audition it here with your new sample.</div>
+    <label>Describe the pattern</label>
+    <textarea id="p-desc" placeholder="four on the floor, snare on 2 and 4, offbeat open hats, ghost notes before the snare">four on the floor, snare on 2 and 4, offbeat hats</textarea>
+    <div class="row3">
+      <div><label>BPM</label><input type="text" id="p-bpm" value="124" /></div>
+      <div><label>Bars</label><input type="text" id="p-bars" value="1" /></div>
+      <div><label>MIDI mapping</label>
+        <select id="p-map">
+          <option value="gm">Drum Rack (GM notes)</option>
+          <option value="single">Single sample (all hits on C3)</option>
+        </select></div>
+    </div>
+    <div class="actions">
+      <button class="primary" id="p-go">Generate pattern →</button>
+      <button id="p-beatbox" title="Analyze the recording from panel 1 (beatbox a bar or two) into a pattern">Beatbox → pattern</button>
+      <button id="p-play" disabled>▶ Play</button>
+      <button id="p-live" disabled title="Create the clip on the selected track in Live (needs ADEHack remote script)">→ Live</button>
+      <span class="inline">use my sample for
+        <select id="p-lane" style="width:auto"><option value="">(nothing)</option></select></span>
+    </div>
+    <div class="status" id="p-status"></div>
+    <div class="grid" id="p-grid"></div>
+    <div class="results" id="p-results"></div>
+    <div class="hint">Drag the <code>.mid</code> from Live's browser onto a track with a Drum Rack (GM mapping) or your Simpler (single mapping).</div>
+  </section>
+  <section class="wide">
+    <h2>3 · Melody &amp; Saw</h2>
+    <div class="sub">Hum a melody (or describe one) to get MIDI notes, make the synth sound with Stability AI, then build the whole thing in Live.</div>
+    <div class="row3">
+      <div><label>Name</label><input type="text" id="m-name" value="saw" /></div>
+      <div><label>Key</label><input type="text" id="m-key" value="C minor" /></div>
+      <div><label>BPM</label><input type="text" id="m-bpm" value="124" /></div>
+    </div>
+    <div class="row">
+      <div><label>Describe the melody (if you don't hum)</label><input type="text" id="m-desc" value="arp in C minor, 8th notes, 2 bars" /></div>
+      <div><label>Describe the synth sound</label><input type="text" id="m-sound" value="fat supersaw synth, single sustained note, bright, analog, no drums" /></div>
+    </div>
+    <div class="actions">
+      <button class="rec" id="m-rec">● Record melody</button>
+      <span class="inline" id="m-rec-info">no recording</span>
+      <button class="primary" id="m-hum">Hum → MIDI</button>
+      <button id="m-describe">Describe → MIDI</button>
+      <button id="m-saw">Make saw sound ✦</button>
+      <button id="m-play" disabled>▶ Play</button>
+      <button id="m-live" disabled title="Create the melody clip on the selected track in Live">→ Live</button>
+    </div>
+    <div class="status" id="m-status"></div>
+    <div class="grid" id="m-grid"></div>
+    <div class="results" id="m-results"></div>
+    <hr style="border:0;border-top:1px solid var(--line);margin:18px 0" />
+    <div class="build">
+      <button class="primary big" id="b-go">⚡ Build in Live</button>
+      <span class="inline">creates a <b>Drums</b> track (your drum sample + pattern) and a <b>Saw</b> track (saw sound + melody), sets the tempo and fires both</span>
+    </div>
+    <div class="status" id="b-status"></div>
+    <div class="steps" id="b-steps"></div>
+  </section>
+  </div></details>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const INSTR = ['kick','snare','clap','rim','hat_closed','hat_open','tom_low','tom_high','ride','crash','perc'];
+let recorder = null, chunks = [], blob = null, recStart = 0, recTimer = null;
+let lastSample = null, lastSamplePath = null;      // latest drum one-shot (AudioBuffer + path on disk)
+let melBlob = null, melody = null, sawBuffer = null, sawPath = null, melPlaying = null;
+let laneSamples = {}, lastOnsets = [], built = false, plan = null, beatBlob = null;
+const DEFAULT_DRUM_PROMPTS = { kick:'punchy kick drum, deep, tight, dry one-shot', snare:'punchy snare drum, tight, bright crack, dry one-shot', clap:'tight layered clap, short, bright, dry one-shot', hat_closed:'crisp closed hi-hat, short, metallic, dry one-shot', hat_open:'open hi-hat, sizzling, medium decay, dry one-shot', rim:'woody rimshot, short click, dry one-shot', perc:'short percussion hit, woody, dry one-shot', tom_low:'low floor tom, deep, round, dry one-shot', tom_high:'high tom, tight, punchy, dry one-shot', ride:'ride cymbal, bright ping, long decay', crash:'crash cymbal, bright, long decay' };
+const LANE_LABEL = { kick:'Kick', snare:'Snare', clap:'Clap', hat_closed:'Hats', hat_open:'Open Hats', rim:'Rim', perc:'Perc', tom_low:'Tom', tom_high:'Tom Hi', ride:'Ride', crash:'Crash' };
+let pattern = null, playing = null;
+const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+// ---------- health ----------
+fetch('/api/health').then(r => r.json()).then(h => {
+  $('b-stab').textContent = 'Stability ' + (h.stabilityKey ? 'key ok' : 'key missing');
+  $('b-stab').className = 'badge ' + (h.stabilityKey ? 'ok' : 'bad');
+  $('b-claude').textContent = h.anthropicKey ? 'Claude patterns' : 'Rule-based patterns';
+  $('b-claude').className = 'badge ' + (h.anthropicKey ? 'ok' : '');
+  if (h.live) { const lv = document.createElement('span'); lv.className = 'badge ' + (!h.live.reachable ? 'bad' : h.live.restartNeeded ? '' : 'ok'); lv.textContent = !h.live.reachable ? 'Live: not connected' : h.live.restartNeeded ? `Live: restart to load script v${h.live.installed}` : `Live script v${h.live.running}`; lv.title = 'Ableton remote script status'; $('b-dir').before(lv); }
+  const ears = document.createElement('span'); ears.className = 'badge ' + (h.ears ? 'ok' : ''); ears.textContent = h.ears ? 'Ears: ' + ((h.earsProviders && h.earsProviders.length) ? h.earsProviders.map(p => p === 'flamingo' ? 'Music Flamingo' : 'Gemini').join(' + ') : 'quota exhausted') : 'Ears off (add HF_TOKEN or GEMINI_API_KEY)'; $('b-claude').after(ears);
+  $('b-dir').title = h.outDir; $('b-dir').textContent = '📁 ' + h.outDir.split('/').slice(-2).join('/');
+});
+INSTR.forEach(i => { const o = document.createElement('option'); o.value = i; o.textContent = i.replace('_',' '); $('p-lane').appendChild(o); });
+$('p-lane').value = 'snare';
+$('s-strength').oninput = () => $('s-strength-v').textContent = Number($('s-strength').value).toFixed(2);
+
+// ---------- recording ----------
+function makeRecorder(btnId, infoId, onBlob) {
+  let rec = null, parts = [], start = 0, timer = null;
+  $(btnId).onclick = async () => {
+    if (rec && rec.state === 'recording') { rec.stop(); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false } });
+      const mime = ['audio/webm;codecs=opus','audio/webm','audio/mp4',''].find(m => !m || MediaRecorder.isTypeSupported(m));
+      rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      parts = [];
+      rec.ondataavailable = e => parts.push(e.data);
+      rec.onstop = () => {
+        const b = new Blob(parts, { type: rec.mimeType });
+        stream.getTracks().forEach(t => t.stop());
+        clearInterval(timer);
+        $(btnId).classList.remove('on'); $(btnId).textContent = '● Record again';
+        const secs = ((Date.now() - start) / 1000).toFixed(1);
+        $(infoId).innerHTML = `recorded ${secs}s &nbsp;<audio controls src="${URL.createObjectURL(b)}" style="height:28px;vertical-align:middle"></audio>`;
+        onBlob(b);
+      };
+      rec.start(); start = Date.now();
+      $(btnId).classList.add('on'); $(btnId).textContent = '■ Stop';
+      timer = setInterval(() => $(infoId).textContent = `recording ${((Date.now()-start)/1000).toFixed(1)}s …`, 100);
+    } catch (e) { alert('Mic error: ' + e.message); }
+  };
+}
+makeRecorder('s-rec', 's-rec-info', b => { blob = b; if ($('s-mode').value === 'text') $('s-mode').value = 'oneshot'; });
+makeRecorder('m-rec', 'm-rec-info', b => { melBlob = b; });
+
+async function postJson(url, body) { try { const r = await fetch(url, { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) }); const j = await r.json(); return r.ok ? { ok:true, ...j } : { ok:false, error: j.error || r.statusText }; } catch (e) { return { ok:false, error: e.message }; } }
+function setStatus(id, msg, err) { const el = $(id); el.textContent = msg; el.className = 'status' + (err ? ' err' : ''); }
+
+function fileCard(f, extra) {
+  const div = document.createElement('div'); div.className = 'file';
+  div.innerHTML = `<div class="top"><span><span class="kind">${f.kind}</span> &nbsp; ${f.name}</span>
+      <span><button data-reveal="${encodeURIComponent(f.path)}">Reveal in Finder</button>
+      ${f.kind === 'oneshot' || f.kind === 'loop' || f.kind === 'raw' ? `<button data-live="${encodeURIComponent(f.path)}" title="Load into the selected track in Live (needs ADEHack remote script)">→ Live</button>` : ''}</span></div>
+    ${f.url.endsWith('.mid') ? '' : `<audio controls src="${f.url}"></audio>`}
+    <div class="path">${f.path}</div>${extra || ''}`;
+  div.querySelector('[data-reveal]').onclick = () => fetch('/api/reveal', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ path: f.path }) });
+  const lb = div.querySelector('[data-live]');
+  if (lb) lb.onclick = async () => { lb.textContent = '…'; const r = await postJson('/api/live/sample', { path: f.path, role: f.name }); lb.textContent = r.ok ? '✓ in Live' : '→ Live'; if (!r.ok) setStatus('s-status', r.error, true); };
+  return div;
+}
+
+// ---------- synth ----------
+$('s-go').onclick = async () => {
+  const mode = $('s-mode').value;
+  if (mode !== 'text' && !blob) return setStatus('s-status', 'Record something first (or switch to Text only).', true);
+  const fd = new FormData();
+  if (mode !== 'text' && blob) fd.append('audio', blob, 'rec.' + (blob.type.includes('mp4') ? 'mp4' : 'webm'));
+  fd.append('prompt', $('s-prompt').value); fd.append('mode', mode);
+  fd.append('strength', $('s-strength').value); fd.append('model', $('s-model').value); fd.append('name', $('s-name').value);
+  $('s-go').disabled = true; setStatus('s-status', 'Sending to Stability AI… (5–30 s)');
+  try {
+    const r = await fetch('/api/synth', { method:'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    setStatus('s-status', `Done · seed ${j.seed ?? '?'} · saved to Ableton User Library`);
+    const box = $('s-results');
+    j.files.forEach(f => box.prepend(fileCard(f)));
+    const one = j.files.find(f => f.kind === 'oneshot') || j.files[0];
+    if (one) { lastSamplePath = one.path; const ab = await (await fetch(one.url)).arrayBuffer(); lastSample = await ctx.decodeAudioData(ab); }
+  } catch (e) { setStatus('s-status', e.message, true); }
+  $('s-go').disabled = false;
+};
+
+// ---------- pattern ----------
+$('p-go').onclick = async () => {
+  $('p-go').disabled = true; setStatus('p-status', 'Generating pattern…');
+  try {
+    const body = { description: $('p-desc').value, bpm: Number($('p-bpm').value), bars: Number($('p-bars').value), mapping: $('p-map').value, name: $('s-name').value + '-pattern' };
+    const r = await fetch('/api/pattern', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    pattern = j.pattern;
+    setStatus('p-status', `"${pattern.name}" · ${pattern.bpm} BPM · ${pattern.bars} bar(s) · via ${j.source}`);
+    renderGrid(pattern);
+    $('p-results').prepend(fileCard(j.midi));
+    $('p-play').disabled = false; $('p-live').disabled = false;
+  } catch (e) { setStatus('p-status', e.message, true); }
+  $('p-go').disabled = false;
+};
+
+function renderGrid(p) {
+  const steps = p.bars * p.stepsPerBar;
+  for (const gid of ['p-grid', 'e-grid']) {
+    const g = $(gid); g.innerHTML = ''; g.style.setProperty('--steps', steps);
+    p.lanes.forEach(l => {
+      const lane = document.createElement('div'); lane.className = 'lane'; lane.style.setProperty('--steps', steps);
+      lane.innerHTML = `<div class="nm">${l.instrument.replace('_',' ')}</div>`;
+      const on = new Map(l.steps.map(s => [s.step, s.velocity]));
+      for (let i = 0; i < steps; i++) {
+        const c = document.createElement('div'); c.className = 'cell' + (i % 4 === 0 ? ' beat' : '') + (on.has(i) ? ' on' : '');
+        c.dataset.step = i; if (on.has(i)) c.style.setProperty('--vel', (0.35 + 0.65 * on.get(i) / 127).toFixed(2));
+        c.onclick = () => toggleStep(l.instrument, i);
+        lane.appendChild(c);
+      }
+      g.appendChild(lane);
+    });
+  }
+  $('e-grid-hint').style.display = built ? '' : 'none';
+}
+let updateTimer = null, dirtyLanes = new Set();
+function toggleStep(instrument, step) {
+  const lane = pattern.lanes.find(l => l.instrument === instrument); if (!lane) return;
+  const i = lane.steps.findIndex(s => s.step === step);
+  if (i >= 0) lane.steps.splice(i, 1); else lane.steps.push({ step, velocity: 100 });
+  renderGrid(pattern); dirtyLanes.add(instrument);
+  if (built) { clearTimeout(updateTimer); updateTimer = setTimeout(pushPatternUpdate, 350); }
+}
+async function pushPatternUpdate() {
+  const instruments = [...dirtyLanes]; dirtyLanes = new Set();
+  const r = await postJson('/api/live/update', { pattern, instruments });
+  setStatus('e-tweak-status', r.ok ? `Live updated: ${r.updated.join(', ')}` : r.error, !r.ok);
+}
+
+// ---------- browser audition (tiny drum synth + your sample) ----------
+function hit(instr, time, vel) {
+  const g = ctx.createGain(); g.gain.value = vel / 127; g.connect(ctx.destination);
+  const laneSel = $('p-lane').value;
+  if (lastSample && instr === laneSel) { const s = ctx.createBufferSource(); s.buffer = lastSample; s.connect(g); s.start(time); return; }
+  if (instr === 'kick' || instr.startsWith('tom')) {
+    const o = ctx.createOscillator(); const f = instr === 'kick' ? 150 : instr === 'tom_low' ? 110 : 180;
+    o.frequency.setValueAtTime(f, time); o.frequency.exponentialRampToValueAtTime(instr === 'kick' ? 40 : f/2, time + 0.25);
+    const e = ctx.createGain(); e.gain.setValueAtTime(1, time); e.gain.exponentialRampToValueAtTime(0.001, time + 0.3);
+    o.connect(e); e.connect(g); o.start(time); o.stop(time + 0.3); return;
+  }
+  const len = instr === 'hat_open' || instr === 'ride' || instr === 'crash' ? 0.5 : instr === 'hat_closed' ? 0.06 : 0.2;
+  const buf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * len), ctx.sampleRate); const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, instr === 'snare' || instr === 'clap' ? 2 : 4);
+  const s = ctx.createBufferSource(); s.buffer = buf;
+  const flt = ctx.createBiquadFilter(); flt.type = instr.startsWith('hat') || instr === 'ride' || instr === 'crash' ? 'highpass' : 'bandpass';
+  flt.frequency.value = instr.startsWith('hat') ? 7000 : instr === 'snare' ? 1800 : instr === 'clap' ? 1200 : 3000; flt.Q.value = 0.7;
+  s.connect(flt); flt.connect(g); s.start(time);
+}
+
+$('p-play').onclick = () => {
+  if (playing) { stopPlay(); return; }
+  ctx.resume();
+  const steps = pattern.bars * pattern.stepsPerBar, stepDur = 60 / pattern.bpm / 4;
+  const swing = (pattern.swing || 0) * 0.5 * stepDur;
+  let step = 0, next = ctx.currentTime + 0.05;
+  const cells = [...document.querySelectorAll('.cell')];
+  playing = setInterval(() => {
+    while (next < ctx.currentTime + 0.15) {
+      const t = next + (step % 2 ? swing : 0);
+      pattern.lanes.forEach(l => l.steps.filter(s => s.step === step).forEach(s => hit(l.instrument, t, s.velocity)));
+      const cur = step; setTimeout(() => { cells.forEach(c => c.classList.toggle('cur', Number(c.dataset.step) === cur)); }, Math.max(0, (t - ctx.currentTime) * 1000));
+      step = (step + 1) % steps; next += stepDur;
+    }
+  }, 25);
+  $('p-play').textContent = '■ Stop';
+};
+$('p-live').onclick = async () => {
+  $('p-live').textContent = '…';
+  const r = await postJson('/api/live/pattern', { pattern, mapping: $('p-map').value, slot: 0, fire: true });
+  $('p-live').textContent = r.ok ? '✓ in Live' : '→ Live';
+  setStatus('p-status', r.ok ? `Clip created in Live (${r.noteCount} notes, tempo set to ${pattern.bpm})` : r.error, !r.ok);
+};
+function stopPlay() { clearInterval(playing); playing = null; $('p-play').textContent = '▶ Play'; document.querySelectorAll('.cell.cur').forEach(c => c.classList.remove('cur')); }
+
+// ---------- beatbox -> pattern ----------
+$('p-beatbox').onclick = async () => {
+  if (!blob) return setStatus('p-status', 'Record a beatbox in panel 1 first (loop mode, a bar or two).', true);
+  $('p-beatbox').disabled = true; setStatus('p-status', 'Listening to your beatbox…');
+  try {
+    const fd = new FormData(); fd.append('audio', blob, 'beat.webm');
+    if ($('p-bpm').value) fd.append('bpm', $('p-bpm').value);
+    if ($('p-bars').value) fd.append('bars', $('p-bars').value);
+    fd.append('mapping', $('p-map').value); fd.append('name', $('s-name').value + '-beatbox');
+    const r = await fetch('/api/rhythm', { method:'POST', body: fd }); const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    pattern = j.pattern; $('p-bpm').value = pattern.bpm; $('p-bars').value = pattern.bars;
+    setStatus('p-status', `heard ${j.onsets.length} hits → ${pattern.bpm} BPM · ${pattern.bars} bar(s)`);
+    renderGrid(pattern); $('p-results').prepend(fileCard(j.midi));
+    $('p-play').disabled = false; $('p-live').disabled = false;
+  } catch (e) { setStatus('p-status', e.message, true); }
+  $('p-beatbox').disabled = false;
+};
+
+// ---------- melody ----------
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const noteName = p => NOTE_NAMES[p % 12] + (Math.floor(p / 12) - 1);
+function renderMelody(m) {
+  const steps = m.bars * 16, g = $('m-grid'); g.innerHTML = ''; g.style.setProperty('--steps', steps);
+  const pitches = [...new Set(m.notes.map(n => n.pitch))].sort((a, b) => b - a);
+  pitches.forEach(p => {
+    const lane = document.createElement('div'); lane.className = 'lane'; lane.style.setProperty('--steps', steps);
+    lane.innerHTML = `<div class="nm">${noteName(p)}</div>`;
+    const cells = [];
+    for (let i = 0; i < steps; i++) { const c = document.createElement('div'); c.className = 'cell' + (i % 4 === 0 ? ' beat' : ''); c.dataset.mstep = i; lane.appendChild(c); cells.push(c); }
+    m.notes.filter(n => n.pitch === p).forEach(n => {
+      const s0 = Math.round(n.startBeats * 4), len = Math.max(1, Math.round(n.durationBeats * 4));
+      for (let i = s0; i < Math.min(steps, s0 + len); i++) { cells[i].classList.add('note'); cells[i].style.setProperty('--vel', (0.4 + 0.6 * n.velocity / 127).toFixed(2)); }
+    });
+    g.appendChild(lane);
+  });
+}
+async function melodyRequest(fd) {
+  $('m-hum').disabled = $('m-describe').disabled = true;
+  try {
+    const r = await fetch('/api/melody', { method:'POST', body: fd }); const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    melody = j; renderMelody(j);
+    setStatus('m-status', `${j.notes.length} notes · ${j.bars} bar(s) · ${j.bpm} BPM · via ${j.source}${j.key ? ' · ' + j.key : ''}`);
+    $('m-results').prepend(fileCard(j.midi)); $('m-play').disabled = false; $('m-live').disabled = false;
+  } catch (e) { setStatus('m-status', e.message, true); }
+  $('m-hum').disabled = $('m-describe').disabled = false;
+}
+$('m-hum').onclick = () => {
+  if (!melBlob) return setStatus('m-status', 'Record a melody first.', true);
+  const fd = new FormData(); fd.append('audio', melBlob, 'mel.webm'); fd.append('bpm', $('m-bpm').value); fd.append('name', $('m-name').value + '-melody');
+  setStatus('m-status', 'Pitch-tracking your hum…'); melodyRequest(fd);
+};
+$('m-describe').onclick = () => {
+  const fd = new FormData(); fd.append('description', $('m-desc').value); fd.append('key', $('m-key').value); fd.append('bpm', $('m-bpm').value); fd.append('name', $('m-name').value + '-melody');
+  const bars = ($('m-desc').value.match(/(\d+)\s*bars?/) || [])[1]; if (bars) fd.append('bars', bars);
+  setStatus('m-status', 'Writing melody…'); melodyRequest(fd);
+};
+$('m-saw').onclick = async () => {
+  $('m-saw').disabled = true; setStatus('m-status', 'Stability AI is making the synth sound… (5–15 s)');
+  try {
+    const fd = new FormData(); fd.append('prompt', $('m-sound').value); fd.append('mode', 'text'); fd.append('kind', 'tone'); fd.append('oneshotSeconds', '2.5'); fd.append('name', $('m-name').value); fd.append('model', $('s-model').value);
+    const r = await fetch('/api/synth', { method:'POST', body: fd }); const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    const one = j.files.find(f => f.kind === 'oneshot') || j.files[0];
+    sawPath = one.path; sawBuffer = await ctx.decodeAudioData(await (await fetch(one.url)).arrayBuffer());
+    j.files.forEach(f => $('m-results').prepend(fileCard(f)));
+    setStatus('m-status', `Saw sound ready (seed ${j.seed ?? '?'}). Play the melody to hear it pitched.`);
+  } catch (e) { setStatus('m-status', e.message, true); }
+  $('m-saw').disabled = false;
+};
+function playNote(pitch, time, dur, vel) {
+  const g = ctx.createGain(); g.gain.setValueAtTime(vel / 127 * 0.6, time); g.gain.setTargetAtTime(0.0001, time + dur - 0.03, 0.02); g.connect(ctx.destination);
+  if (sawBuffer) { const s = ctx.createBufferSource(); s.buffer = sawBuffer; s.playbackRate.value = Math.pow(2, (pitch - 60) / 12); s.connect(g); s.start(time); s.stop(time + dur + 0.05); return; }
+  const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 440 * Math.pow(2, (pitch - 69) / 12);
+  const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 2200; o.connect(f); f.connect(g); o.start(time); o.stop(time + dur + 0.05);
+}
+$('m-play').onclick = () => {
+  if (melPlaying) { clearInterval(melPlaying); melPlaying = null; $('m-play').textContent = '▶ Play'; document.querySelectorAll('#m-grid .cell.cur').forEach(c => c.classList.remove('cur')); return; }
+  ctx.resume();
+  const beat = 60 / melody.bpm, loopBeats = melody.bars * 4;
+  let loopStart = ctx.currentTime + 0.05, idx = 0;
+  const sorted = [...melody.notes].sort((a, b) => a.startBeats - b.startBeats);
+  const cells = [...document.querySelectorAll('#m-grid .cell')];
+  melPlaying = setInterval(() => {
+    while (true) {
+      if (idx >= sorted.length) { idx = 0; loopStart += loopBeats * beat; }
+      const n = sorted[idx], t = loopStart + n.startBeats * beat;
+      if (t > ctx.currentTime + 0.2) break;
+      playNote(n.pitch, t, n.durationBeats * beat, n.velocity);
+      const st = Math.round(n.startBeats * 4);
+      setTimeout(() => cells.forEach(c => c.classList.toggle('cur', Number(c.dataset.mstep) === st)), Math.max(0, (t - ctx.currentTime) * 1000));
+      idx++;
+    }
+  }, 25);
+  $('m-play').textContent = '■ Stop';
+};
+$('m-live').onclick = async () => {
+  $('m-live').textContent = '…';
+  const r = await postJson('/api/live/melody', { notes: melody.notes, bpm: melody.bpm, bars: melody.bars, slot: 0, fire: true, name: 'Melody' });
+  $('m-live').textContent = r.ok ? '✓ in Live' : '→ Live';
+  setStatus('m-status', r.ok ? `Melody clip created in Live (${r.noteCount} notes)` : r.error, !r.ok);
+};
+
+// ---------- build everything in Live ----------
+$('b-go').onclick = async () => {
+  if (!pattern && !melody) return setStatus('b-status', 'Generate a pattern (panel 2) and/or a melody (panel 3) first.', true);
+  $('b-go').disabled = true; setStatus('b-status', 'Building tracks in Live…'); $('b-steps').innerHTML = '';
+  const body = { bpm: Number((melody && melody.bpm) || (pattern && pattern.bpm) || $('p-bpm').value) };
+  if (pattern) body.drums = { pattern, mapping: lastSamplePath ? 'single' : $('p-map').value, samplePath: lastSamplePath };
+  if (melody) body.synth = { notes: melody.notes, bars: melody.bars, samplePath: sawPath };
+  const r = await postJson('/api/live/build', body);
+  $('b-steps').innerHTML = (r.steps || []).map(s => `<span class="${s.ok ? 'ok' : 'bad'}">${s.ok ? '✓' : '✗'} ${s.label}${s.error ? ': ' + s.error : ''}</span>`).join(' &nbsp;·&nbsp; ');
+  setStatus('b-status', r.ok ? 'Done. Drums and Saw tracks are playing in Live.' : r.error, !r.ok);
+  $('b-go').disabled = false;
+};
+
+// ---------- easy mode: one sentence -> everything in Live ----------
+makeRecorder('e-beat', 'e-beat-info', b => { beatBlob = b; });
+makeRecorder('e-hum', 'e-hum-info', b => { melBlob = b; });
+function stepEl(label) {
+  const li = document.createElement('li'); li.textContent = label; $('e-steps').appendChild(li);
+  return { ok: t => { li.className = 'ok'; li.textContent = label + (t ? ' — ' + t : ''); }, fail: t => { li.className = 'bad'; li.textContent = label + ' — ' + t; } };
+}
+async function synthStep(label, { prompt, name, audio, mode, oneshotSeconds, offsetSeconds, kind }) {
+  const s = stepEl(label);
+  try {
+    const fd = new FormData();
+    if (audio) fd.append('audio', audio, 'rec.webm');
+    fd.append('prompt', prompt); fd.append('mode', mode); fd.append('name', name); fd.append('model', $('s-model').value);
+    fd.append('strength', $('s-strength').value); if (oneshotSeconds) fd.append('oneshotSeconds', oneshotSeconds); if (offsetSeconds != null) fd.append('offsetSeconds', offsetSeconds); if (kind) fd.append('kind', kind);
+    const r = await fetch('/api/synth', { method:'POST', body: fd }); const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    const one = j.files.find(f => f.kind === 'oneshot') || j.files[0];
+    const buf = await ctx.decodeAudioData(await (await fetch(one.url)).arrayBuffer());
+    s.ok(one.name); return { one, buf, files: j.files };
+  } catch (e) { s.fail(e.message); throw e; }
+}
+$('e-go').onclick = async () => {
+  const text = $('e-text').value.trim();
+  if (!text && !beatBlob && !melBlob) return setStatus('e-status', 'Type what you hear, or record something first.', true);
+  $('e-go').disabled = true; $('e-steps').innerHTML = ''; setStatus('e-status', '');
+  try {
+    const st = stepEl('Planning');
+    const planR = await postJson('/api/plan', { text, hasBeatbox: !!beatBlob, hasHum: !!melBlob });
+    if (!planR.ok) { st.fail(planR.error); throw new Error(planR.error); }
+    plan = planR.plan;
+    st.ok(`${plan.bpm} BPM · ${plan.drum.name}${plan.synth ? ' + ' + plan.synth.name : ''} · via ${planR.source}`);
+    $('s-name').value = plan.drum.name; $('s-prompt').value = plan.drum.prompt; $('p-desc').value = plan.pattern.description; $('p-bpm').value = plan.bpm; $('p-bars').value = plan.bars; $('p-map').value = 'single';
+    if (plan.melody) { $('m-desc').value = plan.melody.description; $('m-key').value = plan.melody.key; $('m-bpm').value = plan.bpm; }
+    if (plan.synth) { $('m-name').value = plan.synth.name; $('m-sound').value = plan.synth.prompt; }
+
+    // 1) pattern (from beatbox or text) and melody, in parallel
+    const partTasks = [(async () => {
+      const s = stepEl(beatBlob ? 'Listening to your beatbox' : 'Writing the drum pattern');
+      try {
+        let r;
+        if (beatBlob) { const fd = new FormData(); fd.append('audio', beatBlob, 'beat.webm'); if (/\d{2,3}\s*bpm/i.test(text)) fd.append('bpm', plan.bpm); fd.append('mapping', 'single'); fd.append('name', 'beatbox'); r = await fetch('/api/rhythm', { method:'POST', body: fd }); }
+        else r = await fetch('/api/pattern', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ description: plan.pattern.description, bpm: plan.bpm, bars: plan.bars, mapping: 'single', name: 'pattern' }) });
+        const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText);
+        pattern = j.pattern; lastOnsets = j.onsets || []; if (beatBlob && pattern.bpm) { plan.bpm = pattern.bpm; $('p-bpm').value = pattern.bpm; $('m-bpm').value = pattern.bpm; } renderGrid(pattern); $('p-results').prepend(fileCard(j.midi)); $('p-play').disabled = false; $('p-live').disabled = false;
+        s.ok(`${pattern.lanes.filter(l => l.steps.length).map(l => LANE_LABEL[l.instrument] || l.instrument).join(', ')} · ${pattern.bars} bar(s)`);
+      } catch (e) { s.fail(e.message); throw e; }
+    })()];
+    if (plan.melody) partTasks.push((async () => {
+      const s = stepEl(melBlob ? 'Pitch-tracking your hum' : 'Writing the melody');
+      try {
+        const fd = new FormData();
+        if (melBlob) fd.append('audio', melBlob, 'mel.webm'); else { fd.append('description', plan.melody.description); fd.append('key', plan.melody.key); fd.append('bars', plan.melody.bars); }
+        fd.append('bpm', plan.bpm); fd.append('name', (plan.synth ? plan.synth.name : 'synth') + '-melody');
+        const r = await fetch('/api/melody', { method:'POST', body: fd }); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText);
+        melody = j; renderMelody(j); $('m-results').prepend(fileCard(j.midi)); $('m-play').disabled = false; $('m-live').disabled = false;
+        s.ok(`${j.notes.length} notes · ${j.bars} bar(s)`);
+      } catch (e) { s.fail(e.message); throw e; }
+    })());
+    await Promise.all(partTasks);
+
+    // 2) one sound per drum lane (+ the synth sound), all in parallel
+    laneSamples = {};
+    const soundTasks = pattern.lanes.filter(l => l.steps.length).map(lane => {
+      const planned = (plan.drums || []).find(d => d.role === lane.instrument || (d.role === 'hat_closed' && lane.instrument === 'hat_open'));
+      const prompt = planned ? planned.prompt : DEFAULT_DRUM_PROMPTS[lane.instrument] || 'drum hit, dry one-shot';
+      const onset = lastOnsets.find(o => o.instrument === lane.instrument);
+      return synthStep(`Synthesizing the ${LANE_LABEL[lane.instrument] || lane.instrument}${onset ? ' from your beatbox' : ''}`, { prompt, name: lane.instrument.replace('_', '-'), audio: onset ? beatBlob : null, mode: onset ? 'oneshot' : 'text', offsetSeconds: onset ? onset.time : undefined })
+        .then(({ one, buf, files }) => { laneSamples[lane.instrument] = one.path; if (lane.instrument === 'snare' || !lastSamplePath) { lastSamplePath = one.path; lastSample = buf; } files.forEach(f => $('s-results').prepend(fileCard(f))); });
+    });
+    if (plan.synth) soundTasks.push(synthStep(`Synthesizing the ${plan.synth.name} sound`, { prompt: plan.synth.prompt, name: plan.synth.name, mode: 'text', kind: 'tone', oneshotSeconds: 2.5 })
+      .then(({ one, buf, files }) => { sawPath = one.path; sawBuffer = buf; files.forEach(f => $('m-results').prepend(fileCard(f))); }));
+    const settled = await Promise.allSettled(soundTasks);
+    if (settled.every(x => x.status === 'rejected')) throw new Error('Every sound failed: ' + settled[0].reason.message);
+
+    const b = stepEl('Building tracks in Live');
+    const body = { bpm: plan.bpm, drums: { pattern, lanes: Object.entries(laneSamples).map(([instrument, samplePath]) => ({ instrument, samplePath })) } };
+    if (melody) body.synth = { notes: melody.notes, bars: melody.bars, samplePath: sawPath, role: plan.synth ? plan.synth.name : 'synth' };
+    const r = await postJson('/api/live/build', body);
+    if (!r.ok) { b.fail(r.error); throw new Error(r.error); }
+    built = true;
+    b.ok(Object.values(r.tracks || {}).map(t => t.name).join(', ') + ' playing');
+    setStatus('e-status', 'Done. Look at Live — and tweak it below while it plays.');
+    $('e-tweak-row').style.display = ''; renderGrid(pattern);
+  } catch (e) { setStatus('e-status', e.message, true); }
+  $('e-go').disabled = false;
+};
+
+// ---------- tweak while it plays ----------
+$('e-show').onclick = () => postJson('/api/live/show', {});
+$('e-tweak-go').onclick = async () => {
+  const text = $('e-tweak').value.trim(); if (!text) return;
+  $('e-tweak-go').disabled = true; setStatus('e-tweak-status', 'Thinking…');
+  try {
+    const r = await postJson('/api/tweak', { text, state: { bpm: (pattern && pattern.bpm) || Number($('p-bpm').value), pattern, melody: melody ? { notes: melody.notes, bars: melody.bars, key: melody.key } : null, plan } });
+    if (!r.ok) throw new Error(r.error);
+    const c = r.changes, did = [];
+    if (c.bpm) { await postJson('/api/live/tempo', { bpm: c.bpm }); if (pattern) pattern.bpm = c.bpm; if (melody) melody.bpm = c.bpm; $('p-bpm').value = c.bpm; did.push(`${c.bpm} BPM`); }
+    if (c.pattern) {
+      pattern = c.pattern; renderGrid(pattern);
+      // new lanes need a sound before they can be heard
+      for (const lane of pattern.lanes) if (lane.steps.length && !laneSamples[lane.instrument]) {
+        try { const { one, files } = await synthStep(`Synthesizing the new ${LANE_LABEL[lane.instrument] || lane.instrument}`, { prompt: DEFAULT_DRUM_PROMPTS[lane.instrument] || 'drum hit, dry one-shot', name: lane.instrument.replace('_', '-'), mode: 'text' }); laneSamples[lane.instrument] = one.path; files.forEach(f => $('s-results').prepend(fileCard(f))); } catch (e) { console.warn(e); }
+      }
+      const u = await postJson('/api/live/update', { pattern }); if (!u.ok) throw new Error(u.error); did.push('pattern');
+      for (const lane of pattern.lanes) if (lane.steps.length && laneSamples[lane.instrument] && !(u.hadTracks || []).includes(lane.instrument)) { /* load sound onto any newly created track */ await postJson('/api/live/sample', { path: laneSamples[lane.instrument], instrument: lane.instrument }); }
+    }
+    if (c.melody) { melody = { notes: c.melody.notes, bars: c.melody.bars, key: c.melody.key, bpm: (c.bpm || (melody && melody.bpm) || (pattern && pattern.bpm) || Number($('m-bpm').value)) }; renderMelody(melody); const u = await postJson('/api/live/melody', { notes: melody.notes, bpm: melody.bpm, bars: melody.bars, name: 'Melody' }); if (!u.ok) throw new Error(u.error); did.push('melody'); }
+    if (c.drums) for (const d of c.drums) {
+      const instrument = ({ hat: 'hat_closed', tom: 'tom_low' })[d.role] || d.role;
+      if (!laneSamples[instrument] && !(pattern && pattern.lanes.some(l => l.instrument === instrument))) { setStatus('e-tweak-status', `There is no ${d.role} in this beat yet. Say "add a ${d.role}" first.`, true); continue; }
+      const { one, buf, files } = await synthStep(`Re-synthesizing the ${LANE_LABEL[instrument] || d.role}`, { prompt: d.prompt, name: instrument.replace('_', '-'), mode: 'text' });
+      laneSamples[instrument] = one.path; files.forEach(f => $('s-results').prepend(fileCard(f)));
+      const u = await postJson('/api/live/sample', { path: one.path, instrument }); if (!u.ok) throw new Error(u.error); did.push(d.role + ' sound');
+    }
+    if (c.synth) {
+      const { one, buf, files } = await synthStep('Re-synthesizing the synth sound', { prompt: c.synth.prompt, name: (plan && plan.synth ? plan.synth.name : 'synth'), mode: 'text', kind: 'tone', oneshotSeconds: 2.5 });
+      sawPath = one.path; sawBuffer = buf; files.forEach(f => $('s-results').prepend(fileCard(f)));
+      const u = await postJson('/api/live/sample', { path: one.path, instrument: 'synth', role: 'synth' }); if (!u.ok) throw new Error(u.error); did.push('synth sound');
+    }
+    setStatus('e-tweak-status', `${c.summary || 'Tweaked'}${did.length ? ' → ' + did.join(', ') : ''} (via ${r.source})`);
+    $('e-tweak').value = '';
+  } catch (e) { setStatus('e-tweak-status', e.message, true); }
+  $('e-tweak-go').disabled = false;
+};
+$('e-tweak').addEventListener('keydown', e => { if (e.key === 'Enter') $('e-tweak-go').click(); });
+
+// ---------- the producer chat (SSE) ----------
+let beatUpload = null, humUpload = null, chatBusy = false, refUploads = [];   // refs: [{id, name, seconds}]
+$('c-attach').onclick = () => $('c-file').click();
+$('c-file').onchange = async () => {
+  for (const f of $('c-file').files) {
+    const chip = document.createElement('span'); chip.className = 'chip'; chip.textContent = `⏳ ${f.name}`; $('c-refs').appendChild(chip);
+    try {
+      const fd = new FormData(); fd.append('audio', f, f.name); fd.append('name', f.name);
+      const r = await fetch('/api/upload', { method:'POST', body: fd }); const j = await r.json();
+      if (!r.ok) throw new Error(j.error || r.statusText);
+      refUploads.push({ id: j.id, name: j.name, seconds: j.seconds });
+      chip.textContent = `🎧 ${j.name} (${j.seconds.toFixed(1)}s) ×`; chip.title = 'click to remove';
+      chip.onclick = () => { refUploads = refUploads.filter(x => x.id !== j.id); chip.remove(); };
+    } catch (e) { chip.textContent = `✗ ${f.name}: ${e.message}`; chip.style.color = 'var(--danger)'; }
+  }
+  $('c-file').value = '';
+};
+async function uploadBlob(b, infoId, label) {
+  const fd = new FormData(); fd.append('audio', b, 'rec.webm');
+  const r = await fetch('/api/upload', { method:'POST', body: fd }); const j = await r.json();
+  if (!r.ok) { $(infoId).textContent = j.error; return null; }
+  $(infoId).innerHTML = `${label} attached (${j.seconds.toFixed(1)}s) &nbsp;<audio controls src="${URL.createObjectURL(b)}" style="height:28px;vertical-align:middle"></audio>`;
+  return j.id;
+}
+makeRecorder('c-beat', 'c-beat-info', async b => { beatBlob = b; beatUpload = await uploadBlob(b, 'c-beat-info', 'beat'); });
+makeRecorder('c-hum', 'c-hum-info', async b => { melBlob = b; humUpload = await uploadBlob(b, 'c-hum-info', 'melody'); });
+$('c-show').onclick = () => postJson('/api/live/show', {});
+$('c-arrange').onclick = async () => { $('c-arrange').disabled = true; const r = await postJson('/api/live/arrange', { bars: 8 }); addBot(r.ok ? `Recording the playing clips into the Arrangement for 8 bars. Press Tab in Live to watch the timeline fill; it stops by itself.` : 'Could not start arrangement recording: ' + r.error); $('c-arrange').disabled = false; };
+function profileCard(profile, title) {
+  if (!profile || !profile.ratings) return null;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-top:6px">${title || 'Technical profile'}${profile.durationSeconds ? ` · ${Number(profile.durationSeconds).toFixed(2)} s` : ''}</div>`;
+  const g = document.createElement('div'); g.className = 'profile';
+  for (const [k, r] of Object.entries(profile.ratings)) {
+    const d = document.createElement('div'); d.className = 'r';
+    const v = r.value != null ? Number(r.value) : null;
+    d.innerHTML = `<b>${k.replace(/([A-Z])/g, ' $1')}</b><span class="lvl-${r.level}">${r.level}</span> <span class="num">${v != null ? v.toFixed(Math.abs(v) >= 100 ? 0 : 1) : ''}${r.unit ? ' ' + r.unit : ''}</span>`;
+    g.appendChild(d);
+  }
+  wrap.appendChild(g);
+  if (profile.summary) { const p = document.createElement('div'); p.style.cssText = 'font-size:13px;color:var(--muted)'; p.textContent = profile.summary; wrap.appendChild(p); }
+  return wrap;
+}
+$('c-reset').onclick = async () => { await postJson('/api/chat/reset', {}); $('c-log').innerHTML = ''; addBot('New session. Live keeps whatever is already there.'); };
+document.querySelectorAll('#c-chips .chip').forEach(ch => ch.onclick = () => { $('c-text').value = ch.textContent; $('c-text').focus(); });
+function addMsg(cls, text) { const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text; $('c-log').appendChild(d); $('c-log').scrollTop = 1e9; return d; }
+function addBot(text) { return addMsg('bot', text); }
+$('c-send').onclick = sendChat;
+$('c-text').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } });
+async function sendChat() {
+  const text = $('c-text').value.trim();
+  if (chatBusy || (!text && !beatUpload && !humUpload && !refUploads.length)) return;
+  chatBusy = true; $('c-send').disabled = true; $('c-text').value = '';
+  const density = $('c-density').value;
+  addMsg('user', text + (beatUpload ? ' 🎙 beat' : '') + (humUpload ? ' 🎙 melody' : '') + refUploads.map(r => ` 🎧 ${r.name}`).join('') + (density !== 'standard' ? ` · ${density}` : ''));
+  const bot = addBot(''); const tools = document.createElement('ul'); tools.className = 'tools'; bot.appendChild(tools);
+  const body = document.createElement('div'); bot.appendChild(body); body.textContent = 'thinking…';
+  const live = new Map();
+  try {
+    const r = await fetch('/api/chat', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ text: (density !== 'standard' ? `[density: ${density}] ` : '') + text, beatId: beatUpload, humId: humUpload, refIds: refUploads.map(x => x.id) }) });
+    beatUpload = humUpload = null; refUploads = []; $('c-refs').innerHTML = ''; $('c-beat-info').textContent = 'attach a beat'; $('c-hum-info').textContent = 'attach a melody'; $('c-beat').textContent = '● Beatbox'; $('c-hum').textContent = '● Hum';
+    const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i; while ((i = buf.indexOf('\n\n')) >= 0) {
+        const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+        if (!chunk.startsWith('data: ')) continue;
+        const ev = JSON.parse(chunk.slice(6));
+        if (ev.type === 'tool') { const li = document.createElement('li'); li.textContent = ev.summary || ev.name; tools.appendChild(li); live.set(ev.id || ev.name + tools.children.length, li); li.dataset.name = ev.name; }
+        else if (ev.type === 'tool_done') {
+          const li = [...tools.children].reverse().find(l => l.dataset.name === ev.name && !l.className); if (li) { li.className = ev.ok === false ? 'bad' : 'ok'; if (ev.summary) li.textContent = ev.summary; }
+          const prof = ev.data && (ev.data.profile || (ev.data.ratings ? ev.data : null));
+          if (prof) { const card = profileCard(prof, ev.name === 'render_preview' ? 'Preview render (no Live effects)' : 'Technical profile'); if (card) bot.insertBefore(card, body); }
+          if (ev.name === 'render_preview' && ev.data && ev.data.url) { const a = document.createElement('audio'); a.controls = true; a.src = ev.data.url; a.style.width = '100%'; bot.insertBefore(a, body); }
+        }
+        else if (ev.type === 'text') { body.textContent = ev.text || ''; }
+        else if (ev.type === 'error') { body.textContent = 'Error: ' + ev.error; body.style.color = 'var(--danger)'; }
+        else if (ev.type === 'done') { if (!body.textContent) body.textContent = 'Done.'; }
+        $('c-log').scrollTop = 1e9;
+      }
+    }
+  } catch (e) { body.textContent = 'Error: ' + e.message; }
+  chatBusy = false; $('c-send').disabled = false; $('c-text').focus();
+}
+addBot('Hi. Tell me what you hear, or beatbox a beat and hum a melody, and I\'ll build it in Live layer by layer. I\'ll tell you what I did and what to try next.');
+</script>
+</body>
+</html>
