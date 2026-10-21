@@ -422,14 +422,21 @@ app.post('/api/project/scan', async (req, res) => {
     const set = await send({ cmd: 'describe_set' });
     if (!set?.ok) throw new Error(set?.error || 'describe_set failed');
     const tracks = (set.tracks || []).map((t) => ({ index: t.index, name: t.name, kind: t.is_midi ? 'midi' : 'audio', devices: (t.devices || []).map((d) => d.name || d.class_name).filter(Boolean).slice(0, 4), clips: Array.isArray(t.clips) ? t.clips.filter((c) => c && (c.name != null || c.has_clip)).length : (t.clip_count ?? undefined), muted: t.mute ?? t.muted ?? undefined, arrangementClips: t.arrangement_clips ?? undefined }));
-    lastBuild.bpm = lastBuild.bpm || Math.round(Number(set.tempo) || 0) || lastBuild.bpm;
-    let genreTarget = lastBuild.genreTarget;
+    const setNames = new Set((set.tracks || []).map((t) => t.name));
+    const ours = Object.values(lastBuild.tracks || {}).map((t) => t.name);
+    if (ours.length && !ours.every((n) => setNames.has(n))) {   // a different set is open: everything we remembered belongs to the old one
+      lastBuild.tracks = {}; lastBuild.samples = {}; lastBuild.groove = null; lastBuild.melody = null; lastBuild.lastCapture = null; lastBuild.genreTarget = null;
+      chat.history = []; await saveChat().catch(() => {});
+    }
+    lastBuild.bpm = Math.round(Number(set.tempo) || 0) || lastBuild.bpm;
+    let genreTarget = null;   // never judge a new project against a style left over from another one; the user picks it per scan
     if (req.body?.genre) { try { const k = await import('./lib/knowledge.js'); const slug = k.matchGenre(String(req.body.genre)); const bp = slug && k.getBlueprint(slug); if (bp?.summary) { genreTarget = `${bp.title}: ${bp.summary}`; lastBuild.genreTarget = genreTarget; } } catch {} }
     const ctx = makeCtx(() => {});
     let capture = null, critique = null, captureError = null;
     try { capture = await ctx.captureLive({ bars }); } catch (e) { captureError = e.message; }
-    if (capture && !capture.silent) { try { critique = await ctx.critiqueCapture(capture.path, null, { genreTarget }); } catch (e) { critique = { error: e.message }; } }
-    const project = { scannedAt: Date.now(), tempo: Number(set.tempo), signature: set.signature, loop: set.loop, position: set.current_song_time, selectedTrack: set.selected_track?.name, scenes: (set.scenes || []).length, tracks, capture: capture ? { url: capture.url, path: capture.path, seconds: capture.seconds, silent: capture.silent, profile: capture.profile } : null, captureError, critique, genreTarget, toldAgent: false };
+    let arrangement = null; try { arrangement = await send({ cmd: 'arrangement_info' }); } catch {}
+    if (capture && !capture.silent) { try { critique = await ctx.critiqueCapture(capture.path, null, { genreTarget, hints: `The Live set is at ${Math.round(Number(set.tempo))} BPM and its tracks are named: ${tracks.map((t) => t.name).join(', ')}.` }); } catch (e) { critique = { error: e.message }; } }
+    const project = { scannedAt: Date.now(), tempo: Number(set.tempo), signature: set.signature, loop: set.loop, position: set.current_song_time, arrangementBars: arrangement?.bars ?? null, selectedTrack: set.selected_track?.name, scenes: (set.scenes || []).length, tracks, capture: capture ? { url: capture.url, path: capture.path, seconds: capture.seconds, silent: capture.silent, profile: capture.profile } : null, captureError, critique, genreTarget, toldAgent: false };
     lastBuild.project = project;
     res.json({ ok: true, project });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
@@ -661,7 +668,7 @@ function makeCtx(emit) {
       const cap = await import('./lib/capture.js');
       if (!cap.captureAvailable()) throw new Error('Live audio capture not built: run `bash tools/capture/build.sh` (needs Xcode command line tools), then grant System Audio Recording to the terminal app in System Settings > Privacy & Security');
       const send = await liveClient();
-      const bpm = lastBuild.bpm || Number((await send({ cmd: 'ping' }))?.tempo) || 120;
+      const bpm = Number((await send({ cmd: 'ping' }))?.tempo) || lastBuild.bpm || 120;   // the set's tempo is authoritative
       const seconds = Math.ceil(clamp(Number(bars) || 4, 1, 16) * 4 * 60 / bpm) + 1;
       const barSec = 4 * 60 / bpm;
       const total = seconds + Math.ceil(barSec) + 2;   // pre-roll: launch quantization can delay the start up to a bar
@@ -675,8 +682,17 @@ function makeCtx(emit) {
       await ffmpeg(['-i', r.path, '-af', `silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05,atrim=0:${seconds - 1}`, '-ac', '2', '-ar', '44100', outPath]).catch(async () => fs.copyFile(r.path, outPath));
       const audio = await import('./lib/audio.js');
       const dur = await audio.durationSeconds(outPath).catch(() => 0);
-      const silent = Boolean(r.silent) || dur < 0.5;
-      const out = { path: outPath, url: `/out/${encodeURIComponent(path.basename(outPath))}`, bars, seconds: Number(dur.toFixed(2)), silent, peakDbfs: r.peakDbfs, note: silent ? undefined : 'leading silence trimmed to the first downbeat' };
+      // sounding time: a -37 dBFS blip in 20 s of silence is not a performance; Gemini will happily invent a track from it
+      let sounding = dur;
+      try {
+        const sd = await new Promise((resolve) => { execFileCb('ffmpeg', ['-hide_banner', '-nostdin', '-i', outPath, '-af', 'silencedetect=noise=-40dB:d=0.25', '-f', 'null', '-'], { maxBuffer: 4e6 }, (_e, _o, se) => resolve(String(se || ''))); });
+        let quiet = 0, start = null;
+        for (const m of sd.matchAll(/silence_(start|end): ([\d.]+)/g)) { if (m[1] === 'start') start = Number(m[2]); else if (start != null) { quiet += Number(m[2]) - start; start = null; } }
+        if (start != null) quiet += Math.max(0, dur - start);
+        sounding = Math.max(0, dur - quiet);
+      } catch {}
+      const silent = Boolean(r.silent) || dur < 0.5 || (r.peakDbfs != null && r.peakDbfs < -30) || sounding < Math.min(barSec, dur * 0.3);
+      const out = { path: outPath, url: `/out/${encodeURIComponent(path.basename(outPath))}`, bars, bpm, seconds: Number(dur.toFixed(2)), soundingSeconds: Number(sounding.toFixed(2)), silent, peakDbfs: r.peakDbfs, note: silent ? `Live produced (almost) no sound: peak ${r.peakDbfs != null ? r.peakDbfs.toFixed(1) + ' dBFS' : 'none'}, ${sounding.toFixed(1)} s sounding of ${dur.toFixed(1)} s. Check: is the playhead on a section with clips, are the audio files online (no orange missing clips), is Back to Arrangement lit, is Live's output device the one it plays through?` : 'leading silence trimmed to the first downbeat' };
       if (!silent) { try { out.profile = await (await import('./lib/analyze.js')).analyzeAudio(outPath); } catch (e) { out.profileError = e.message; } }
       lastBuild.lastCapture = outPath;
       return out;
@@ -684,7 +700,7 @@ function makeCtx(emit) {
     async critiqueCapture(p, refPath, opts = {}) {
       if (!audioPathOk(p)) throw new Error('critique: path outside project audio');
       if (refPath && !audioPathOk(refPath)) throw new Error('critique: reference path outside project audio');
-      return (await import('./lib/ears.js')).critiqueMix(p, refPath, { genreTarget: opts.genreTarget || lastBuild.genreTarget, mixDetail: Boolean(opts.mixDetail) || chat.room === 'analyse' });
+      return (await import('./lib/ears.js')).critiqueMix(p, refPath, { genreTarget: opts.genreTarget || lastBuild.genreTarget, mixDetail: Boolean(opts.mixDetail) || chat.room === 'analyse', hints: opts.hints });
     },
     async importSample({ path: src, track, name, toneFix = {}, mode = 'oneshot' }) {
       if (!audioPathOk(src)) throw new Error('import: path outside project audio');
