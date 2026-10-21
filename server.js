@@ -517,6 +517,17 @@ async function getUpload(id) {
   try { const u = JSON.parse(await fs.readFile(path.join(TMP, `${id}-upload.json`), 'utf8')); await fs.access(u.path); uploads.set(id, u); return u; } catch { return null; }
 }
 
+// one-second C3 (MIDI 60) voices rendered once with ffmpeg, used only to stand in for Live presets in offline previews
+async function genericVoice(kind = 'synth') {
+  const f = path.join(TMP, `voice-${kind}.wav`);
+  try { await fs.access(f); return f; } catch {}
+  const expr = kind === 'bass'
+    ? "0.5*sin(2*PI*261.63*t)*exp(-2*t)+0.25*sin(2*PI*523.25*t)*exp(-6*t)"          // soft sub-ish with a 2nd harmonic
+    : "0.3*(2*(261.63*t-floor(261.63*t))-1)*exp(-1.5*t)";                               // decaying saw
+  await ffmpeg(['-f', 'lavfi', '-i', `aevalsrc=${expr}:s=44100:d=1.2`, '-af', 'lowpass=f=1800,afade=t=out:st=1.0:d=0.2', '-ac', '2', f]);
+  return f;
+}
+
 async function trackByName(send, name) {
   const r = await send({ cmd: 'list_tracks' });
   if (!r?.ok) throw new Error(r?.error || 'list_tracks failed');
@@ -585,11 +596,15 @@ function makeCtx(emit) {
         const byKind = {};
         for (const o of onsets) { const f = onsetFeatures(x, o.sample); const k = classifyOnset(f); (byKind[k] ||= []).push({ ...o, rms: f.rms }); }
         for (const [k, list] of Object.entries(byKind)) {
-          const best = list.sort((a, b) => b.rms - a.rms)[0];
-          const len = k === 'kick' ? 0.6 : k === 'snare' ? 0.4 : 0.15;
-          const piece = await this.slice(loop.path, { startSeconds: Math.max(0, best.time - 0.005), lengthSeconds: len, name: `${kind}loop-${k}` });
-          out.kit.push({ kind: k, samplePath: piece.path, path: piece.path, url: piece.url, time: Number(best.time.toFixed(3)) });
+          const picks = list.sort((a, b) => b.rms - a.rms).slice(0, 2);
+          for (const [i, best] of picks.entries()) {
+            const len = k === 'kick' ? 0.6 : k === 'snare' ? 0.4 : 0.15;
+            const piece = await this.slice(loop.path, { startSeconds: Math.max(0, best.time - 0.005), lengthSeconds: len, name: `${kind}loop-${k}${i ? '-alt' : ''}` });
+            out.kit.push({ kind: k, alt: i > 0, samplePath: piece.path, path: piece.path, url: piece.url, time: Number(best.time.toFixed(3)) });
+          }
         }
+        out.classesFound = Object.keys(byKind);
+        if (!byKind.snare && !byKind.clap) out.note2 = 'no snare/clap-class hit detected in this loop; synthesize the clap/snare separately (same prompt words) so it matches';
         out.note = 'kit sliced from one loop: shared room/compression/character';
       }
       return out;
@@ -739,7 +754,12 @@ function makeCtx(emit) {
       const layers = [];
       for (const [key, clip] of Object.entries(lastBuild.clips || {})) {
         const sound = lastBuild.samples[key];
-        if (!sound?.samplePath || !(clip.steps?.length || clip.notes?.length)) continue;
+        if (!(clip.steps?.length || clip.notes?.length)) continue;
+        if (!sound?.samplePath && clip.notes?.length) {   // preset-based layer (Live instrument): stand in with a generic synth voice so the review hears it
+          layers.push({ name: key, samplePath: await genericVoice(/bass|sub|808/.test(key) ? 'bass' : 'synth'), notes: clip.notes, swing: 0, gainDb: -6, standIn: true });
+          continue;
+        }
+        if (!sound?.samplePath) continue;
         layers.push({ name: key, samplePath: sound.samplePath, steps: clip.steps, notes: clip.notes, swing: clip.swing || 0 });
       }
       if (!layers.length) throw new Error('nothing to render: no tracks with both a sound and a clip in the registry');
