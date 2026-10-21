@@ -155,6 +155,7 @@
       <button id="c-show">Show in Live</button>
       <button id="c-arrange" title="Record the playing Session clips onto the Arrangement timeline">Lay out in Arrangement (8 bars)</button>
       <button id="c-listen" title="Capture 4 bars of what Live is actually playing and have the producer hear it">🎧 Listen to Live</button>
+      <label class="inline" style="gap:6px;cursor:pointer" title="After every change, record the new material onto the Arrangement timeline (Live 10 cannot write arrangement clips directly)"><input type="checkbox" id="c-arrmode" /> Arrangement mode</label>
       <button id="c-reset" title="Forget the conversation (Live tracks stay)">New session</button>
     </div>
     <div class="chips" id="c-refs"></div>
@@ -785,6 +786,8 @@ function variantsPanel(ev) {
   });
   return w;
 }
+fetch('/api/settings').then(r => r.json()).then(s => { $('c-arrmode').checked = !!s.arrangementMode; }).catch(() => {});
+$('c-arrmode').onchange = async () => { const s = await postJson('/api/settings', { arrangementMode: $('c-arrmode').checked }); addBot(s.arrangementMode ? 'Arrangement mode on: after each change I record the new material onto the timeline at the end of what is there. Session keeps the loops.' : 'Arrangement mode off.'); };
 $('c-show').onclick = () => postJson('/api/live/show', {});
 $('c-arrange').onclick = async () => { $('c-arrange').disabled = true; const r = await postJson('/api/live/arrange', { bars: 8 }); addBot(r.ok ? `Recording the playing clips into the Arrangement for 8 bars. Press Tab in Live to watch the timeline fill; it stops by itself.` : 'Could not start arrangement recording: ' + r.error); $('c-arrange').disabled = false; };
 function profileCard(profile, title) {

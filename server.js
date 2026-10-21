@@ -463,8 +463,8 @@ app.post('/api/tweak', async (req, res) => {
 
 // ================= v3: the producer agent (Claude with tools) =================
 const STATE_FILE = path.join(TMP, 'chat-state.json');
-const chat = { history: [], recordings: { refs: [] } };   // attachments persist for the whole session (and across restarts)
-try { const st = JSON.parse(await fs.readFile(STATE_FILE, 'utf8')); chat.history = st.history || []; chat.recordings = st.recordings || { refs: [] }; if (st.samples) lastBuild.samples = st.samples; if (st.tracks) lastBuild.tracks = st.tracks; if (st.bpm) lastBuild.bpm = st.bpm; if (st.clips) lastBuild.clips = st.clips; if (st.explanations) lastBuild.explanations = st.explanations; if (st.soundHistory) lastBuild.soundHistory = st.soundHistory; if (st.groove) lastBuild.groove = st.groove; if (st.lastRender) lastBuild.lastRender = st.lastRender; chat.promptHash = st.promptHash; } catch {}
+const chat = { history: [], recordings: { refs: [] }, settings: { arrangementMode: false, arrangementBars: 8 } };   // attachments + settings persist (and across restarts)
+try { const st = JSON.parse(await fs.readFile(STATE_FILE, 'utf8')); chat.history = st.history || []; chat.recordings = st.recordings || { refs: [] }; if (st.settings) chat.settings = { ...chat.settings, ...st.settings }; if (st.samples) lastBuild.samples = st.samples; if (st.tracks) lastBuild.tracks = st.tracks; if (st.bpm) lastBuild.bpm = st.bpm; if (st.clips) lastBuild.clips = st.clips; if (st.explanations) lastBuild.explanations = st.explanations; if (st.soundHistory) lastBuild.soundHistory = st.soundHistory; if (st.groove) lastBuild.groove = st.groove; if (st.lastRender) lastBuild.lastRender = st.lastRender; chat.promptHash = st.promptHash; } catch {}
 lastBuild.samples ||= {};   // track name (lower) -> { samplePath, slotPath, role }
 // Thinking blocks are bound to the system prompt + tool list that produced them; after we change either, replaying them is a 400.
 import { createHash } from 'node:crypto';
@@ -490,7 +490,7 @@ function safeHistory(h, max = 60) {   // cut only at a plain user text message s
   while (i < h.length && !(h[i].role === 'user' && typeof h[i].content === 'string')) i++;
   return i < h.length ? h.slice(i) : [];
 }
-async function saveChat() { try { await fs.writeFile(STATE_FILE, JSON.stringify({ history: safeHistory(chat.history), recordings: chat.recordings, explanations: lastBuild.explanations || {}, samples: lastBuild.samples, soundHistory: lastBuild.soundHistory, tracks: lastBuild.tracks, bpm: lastBuild.bpm, clips: lastBuild.clips, groove: lastBuild.groove || null, lastRender: lastBuild.lastRender || null, promptHash: chat.promptHash })); } catch (e) { console.warn('[state]', e.message); } }
+async function saveChat() { try { await fs.writeFile(STATE_FILE, JSON.stringify({ history: safeHistory(chat.history), recordings: chat.recordings, settings: chat.settings, explanations: lastBuild.explanations || {}, samples: lastBuild.samples, soundHistory: lastBuild.soundHistory, tracks: lastBuild.tracks, bpm: lastBuild.bpm, clips: lastBuild.clips, groove: lastBuild.groove || null, lastRender: lastBuild.lastRender || null, promptHash: chat.promptHash })); } catch (e) { console.warn('[state]', e.message); } }
 lastBuild.soundHistory ||= {};   // track -> previous sounds (newest last), so a change is always undoable
 function rememberSound(trackName, samplePath, slotPath, role) {
   reservedSlots.delete(path.basename(slotPath || ''));
@@ -1068,6 +1068,8 @@ app.post('/api/refine', async (req, res) => {
     res.json(await ctx.refineSound({ path: String(p), intent: String(intent), currentPrompt: currentPrompt || intent, role: role || 'drum', rounds: rounds || 2, track }));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+app.get('/api/settings', (_req, res) => res.json(chat.settings));
+app.post('/api/settings', async (req, res) => { chat.settings = { ...chat.settings, ...(req.body || {}) }; await saveChat(); res.json(chat.settings); });
 app.get('/api/explanations', (_req, res) => res.json(lastBuild.explanations || {}));
 app.post('/api/render', async (req, res) => {
   try { const ctx = makeCtx(() => {}); const r = await ctx.render({ bars: req.body?.bars }); res.json(r); }
@@ -1124,6 +1126,18 @@ async function runChatTurn(req, res, emit0) {
     chat.history = out.history;
     await saveChat();
     emit({ type: 'text', text: out.text });
+    // Arrangement mode: Live 10 can't create arrangement clips via API, so record the playing scene onto the timeline after changes
+    const BUILD_TOOLS = /^(build_drum_layer|build_melody_layer|update_layer|import_sample|generate_loop|replace_sound|refine_sound|create_scene|fire_scene)$/;
+    const changed = turn.events.some((e) => e.type === 'tool' && BUILD_TOOLS.test(e.name));
+    if (chat.settings.arrangementMode && changed) {
+      try {
+        const send = await liveClient();
+        const bars = clamp(Number(chat.settings.arrangementBars) || 8, 1, 64);
+        emit({ type: 'tool', name: 'arrangement_mode', summary: `arrangement mode: recording ${bars} bars onto the timeline` });
+        const r = await send({ cmd: 'arrangement_record', scenes: [{ index: 0, bars }], at: 'end' });
+        emit({ type: 'tool_done', name: 'arrangement_mode', ok: Boolean(r?.ok), summary: r?.ok ? `laid out ${bars} bars in Arrangement (press Tab in Live)` : `arrangement recording failed: ${r?.error}` });
+      } catch (e) { emit({ type: 'tool_done', name: 'arrangement_mode', ok: false, summary: `arrangement mode: ${e.message}` }); }
+    }
     turn.status = 'done';
     emit({ type: 'done', tracks: lastBuild.tracks });
   } catch (e) {
