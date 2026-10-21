@@ -66,6 +66,10 @@
   .adv { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:12px; }
   @media (max-width:900px) { .adv { grid-template-columns:1fr; } }
   .cell.note { background:#5b8cff; opacity:var(--vel); }
+  #p-grid .cell { cursor:pointer; } #p-grid .cell:hover { outline:1px solid #4a5160; }
+  .tweak { display:flex; gap:10px; align-items:center; margin-top:14px; }
+  .tweak input { flex:1; font-size:16px; }
+  .livehint { font-size:12px; color:var(--accent2); margin-left:6px; }
   .build { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
   .build .big { font-size:16px; padding:12px 20px; }
   .steps { font-size:12px; color:var(--muted); margin-top:8px; }
@@ -96,6 +100,14 @@
     </div>
     <div class="status" id="e-status"></div>
     <ol class="progress" id="e-steps"></ol>
+    <div class="tweak" id="e-tweak-row" style="display:none">
+      <input type="text" id="e-tweak" placeholder="tweak it while it plays: faster hats · more swing · half time · change the kick to a boomy 808 · octave up" />
+      <button class="primary" id="e-tweak-go">Tweak →</button>
+      <button id="e-show" title="Bring Live to Session view">Show in Live</button>
+    </div>
+    <div class="status" id="e-tweak-status"></div>
+    <div class="grid" id="e-grid"></div>
+    <div class="hint" id="e-grid-hint" style="display:none">Click cells to toggle hits. Changes go straight into the Live clips.</div>
   </section>
   <details class="wide" id="advanced"><summary>Advanced controls (sounds, pattern, melody, send each part to Live separately)</summary><div class="adv">
   <section>
@@ -199,6 +211,9 @@ const INSTR = ['kick','snare','clap','rim','hat_closed','hat_open','tom_low','to
 let recorder = null, chunks = [], blob = null, recStart = 0, recTimer = null;
 let lastSample = null, lastSamplePath = null;      // latest drum one-shot (AudioBuffer + path on disk)
 let melBlob = null, melody = null, sawBuffer = null, sawPath = null, melPlaying = null;
+let laneSamples = {}, lastOnsets = [], built = false, plan = null;
+const DEFAULT_DRUM_PROMPTS = { kick:'punchy kick drum, deep, tight, dry one-shot', snare:'punchy snare drum, tight, bright crack, dry one-shot', clap:'tight layered clap, short, bright, dry one-shot', hat_closed:'crisp closed hi-hat, short, metallic, dry one-shot', hat_open:'open hi-hat, sizzling, medium decay, dry one-shot', rim:'woody rimshot, short click, dry one-shot', perc:'short percussion hit, woody, dry one-shot', tom_low:'low floor tom, deep, round, dry one-shot', tom_high:'high tom, tight, punchy, dry one-shot', ride:'ride cymbal, bright ping, long decay', crash:'crash cymbal, bright, long decay' };
+const LANE_LABEL = { kick:'Kick', snare:'Snare', clap:'Clap', hat_closed:'Hats', hat_open:'Open Hats', rim:'Rim', perc:'Perc', tom_low:'Tom', tom_high:'Tom Hi', ride:'Ride', crash:'Crash' };
 let pattern = null, playing = null;
 const ctx = new (window.AudioContext || window.webkitAudioContext)();
 
@@ -300,18 +315,35 @@ $('p-go').onclick = async () => {
 
 function renderGrid(p) {
   const steps = p.bars * p.stepsPerBar;
-  const g = $('p-grid'); g.innerHTML = ''; g.style.setProperty('--steps', steps);
-  p.lanes.forEach(l => {
-    const lane = document.createElement('div'); lane.className = 'lane'; lane.style.setProperty('--steps', steps);
-    lane.innerHTML = `<div class="nm">${l.instrument.replace('_',' ')}</div>`;
-    const on = new Map(l.steps.map(s => [s.step, s.velocity]));
-    for (let i = 0; i < steps; i++) {
-      const c = document.createElement('div'); c.className = 'cell' + (i % 4 === 0 ? ' beat' : '') + (on.has(i) ? ' on' : '');
-      c.dataset.step = i; if (on.has(i)) c.style.setProperty('--vel', (0.35 + 0.65 * on.get(i) / 127).toFixed(2));
-      lane.appendChild(c);
-    }
-    g.appendChild(lane);
-  });
+  for (const gid of ['p-grid', 'e-grid']) {
+    const g = $(gid); g.innerHTML = ''; g.style.setProperty('--steps', steps);
+    p.lanes.forEach(l => {
+      const lane = document.createElement('div'); lane.className = 'lane'; lane.style.setProperty('--steps', steps);
+      lane.innerHTML = `<div class="nm">${l.instrument.replace('_',' ')}</div>`;
+      const on = new Map(l.steps.map(s => [s.step, s.velocity]));
+      for (let i = 0; i < steps; i++) {
+        const c = document.createElement('div'); c.className = 'cell' + (i % 4 === 0 ? ' beat' : '') + (on.has(i) ? ' on' : '');
+        c.dataset.step = i; if (on.has(i)) c.style.setProperty('--vel', (0.35 + 0.65 * on.get(i) / 127).toFixed(2));
+        c.onclick = () => toggleStep(l.instrument, i);
+        lane.appendChild(c);
+      }
+      g.appendChild(lane);
+    });
+  }
+  $('e-grid-hint').style.display = built ? '' : 'none';
+}
+let updateTimer = null, dirtyLanes = new Set();
+function toggleStep(instrument, step) {
+  const lane = pattern.lanes.find(l => l.instrument === instrument); if (!lane) return;
+  const i = lane.steps.findIndex(s => s.step === step);
+  if (i >= 0) lane.steps.splice(i, 1); else lane.steps.push({ step, velocity: 100 });
+  renderGrid(pattern); dirtyLanes.add(instrument);
+  if (built) { clearTimeout(updateTimer); updateTimer = setTimeout(pushPatternUpdate, 350); }
+}
+async function pushPatternUpdate() {
+  const instruments = [...dirtyLanes]; dirtyLanes = new Set();
+  const r = await postJson('/api/live/update', { pattern, instruments });
+  setStatus('e-tweak-status', r.ok ? `Live updated: ${r.updated.join(', ')}` : r.error, !r.ok);
 }
 
 // ---------- browser audition (tiny drum synth + your sample) ----------
@@ -483,13 +515,13 @@ function stepEl(label) {
   const li = document.createElement('li'); li.textContent = label; $('e-steps').appendChild(li);
   return { ok: t => { li.className = 'ok'; li.textContent = label + (t ? ' — ' + t : ''); }, fail: t => { li.className = 'bad'; li.textContent = label + ' — ' + t; } };
 }
-async function synthStep(label, { prompt, name, audio, mode, oneshotSeconds }) {
+async function synthStep(label, { prompt, name, audio, mode, oneshotSeconds, offsetSeconds }) {
   const s = stepEl(label);
   try {
     const fd = new FormData();
     if (audio) fd.append('audio', audio, 'rec.webm');
     fd.append('prompt', prompt); fd.append('mode', mode); fd.append('name', name); fd.append('model', $('s-model').value);
-    fd.append('strength', $('s-strength').value); if (oneshotSeconds) fd.append('oneshotSeconds', oneshotSeconds);
+    fd.append('strength', $('s-strength').value); if (oneshotSeconds) fd.append('oneshotSeconds', oneshotSeconds); if (offsetSeconds != null) fd.append('offsetSeconds', offsetSeconds);
     const r = await fetch('/api/synth', { method:'POST', body: fd }); const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
     const one = j.files.find(f => f.kind === 'oneshot') || j.files[0];
@@ -505,28 +537,25 @@ $('e-go').onclick = async () => {
     const st = stepEl('Planning');
     const planR = await postJson('/api/plan', { text, hasBeatbox: !!blob, hasHum: !!melBlob });
     if (!planR.ok) { st.fail(planR.error); throw new Error(planR.error); }
-    const plan = planR.plan;
+    plan = planR.plan;
     st.ok(`${plan.bpm} BPM · ${plan.drum.name}${plan.synth ? ' + ' + plan.synth.name : ''} · via ${planR.source}`);
     $('s-name').value = plan.drum.name; $('s-prompt').value = plan.drum.prompt; $('p-desc').value = plan.pattern.description; $('p-bpm').value = plan.bpm; $('p-bars').value = plan.bars; $('p-map').value = 'single';
     if (plan.melody) { $('m-desc').value = plan.melody.description; $('m-key').value = plan.melody.key; $('m-bpm').value = plan.bpm; }
     if (plan.synth) { $('m-name').value = plan.synth.name; $('m-sound').value = plan.synth.prompt; }
 
-    const tasks = [
-      synthStep(`Synthesizing the ${plan.drum.name}`, { prompt: plan.drum.prompt, name: plan.drum.name, audio: blob, mode: blob ? 'oneshot' : 'text' })
-        .then(({ one, buf, files }) => { lastSamplePath = one.path; lastSample = buf; files.forEach(f => $('s-results').prepend(fileCard(f))); }),
-      (async () => {
-        const s = stepEl(blob ? 'Listening to your beatbox' : 'Writing the drum pattern');
-        try {
-          let r;
-          if (blob) { const fd = new FormData(); fd.append('audio', blob, 'beat.webm'); fd.append('bpm', plan.bpm); fd.append('mapping', 'single'); fd.append('name', plan.drum.name + '-beatbox'); r = await fetch('/api/rhythm', { method:'POST', body: fd }); }
-          else r = await fetch('/api/pattern', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ description: plan.pattern.description, bpm: plan.bpm, bars: plan.bars, mapping: 'single', name: plan.drum.name + '-pattern' }) });
-          const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText);
-          pattern = j.pattern; renderGrid(pattern); $('p-results').prepend(fileCard(j.midi)); $('p-play').disabled = false; $('p-live').disabled = false;
-          s.ok(`${pattern.lanes.reduce((n, l) => n + l.steps.length, 0)} hits · ${pattern.bars} bar(s)`);
-        } catch (e) { s.fail(e.message); throw e; }
-      })(),
-    ];
-    if (plan.melody) tasks.push((async () => {
+    // 1) pattern (from beatbox or text) and melody, in parallel
+    const partTasks = [(async () => {
+      const s = stepEl(blob ? 'Listening to your beatbox' : 'Writing the drum pattern');
+      try {
+        let r;
+        if (blob) { const fd = new FormData(); fd.append('audio', blob, 'beat.webm'); fd.append('bpm', plan.bpm); fd.append('mapping', 'single'); fd.append('name', 'beatbox'); r = await fetch('/api/rhythm', { method:'POST', body: fd }); }
+        else r = await fetch('/api/pattern', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ description: plan.pattern.description, bpm: plan.bpm, bars: plan.bars, mapping: 'single', name: 'pattern' }) });
+        const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText);
+        pattern = j.pattern; lastOnsets = j.onsets || []; renderGrid(pattern); $('p-results').prepend(fileCard(j.midi)); $('p-play').disabled = false; $('p-live').disabled = false;
+        s.ok(`${pattern.lanes.filter(l => l.steps.length).map(l => LANE_LABEL[l.instrument] || l.instrument).join(', ')} · ${pattern.bars} bar(s)`);
+      } catch (e) { s.fail(e.message); throw e; }
+    })()];
+    if (plan.melody) partTasks.push((async () => {
       const s = stepEl(melBlob ? 'Pitch-tracking your hum' : 'Writing the melody');
       try {
         const fd = new FormData();
@@ -537,20 +566,63 @@ $('e-go').onclick = async () => {
         s.ok(`${j.notes.length} notes · ${j.bars} bar(s)`);
       } catch (e) { s.fail(e.message); throw e; }
     })());
-    if (plan.synth) tasks.push(synthStep(`Synthesizing the ${plan.synth.name} sound`, { prompt: plan.synth.prompt, name: plan.synth.name, mode: 'text', oneshotSeconds: 2.5 })
+    await Promise.all(partTasks);
+
+    // 2) one sound per drum lane (+ the synth sound), all in parallel
+    laneSamples = {};
+    const soundTasks = pattern.lanes.filter(l => l.steps.length).map(lane => {
+      const planned = (plan.drums || []).find(d => d.role === lane.instrument || (d.role === 'hat_closed' && lane.instrument === 'hat_open'));
+      const prompt = planned ? planned.prompt : DEFAULT_DRUM_PROMPTS[lane.instrument] || 'drum hit, dry one-shot';
+      const onset = lastOnsets.find(o => o.instrument === lane.instrument);
+      return synthStep(`Synthesizing the ${LANE_LABEL[lane.instrument] || lane.instrument}${onset ? ' from your beatbox' : ''}`, { prompt, name: lane.instrument.replace('_', '-'), audio: onset ? blob : null, mode: onset ? 'oneshot' : 'text', offsetSeconds: onset ? onset.time : undefined })
+        .then(({ one, buf, files }) => { laneSamples[lane.instrument] = one.path; if (lane.instrument === 'snare' || !lastSamplePath) { lastSamplePath = one.path; lastSample = buf; } files.forEach(f => $('s-results').prepend(fileCard(f))); });
+    });
+    if (plan.synth) soundTasks.push(synthStep(`Synthesizing the ${plan.synth.name} sound`, { prompt: plan.synth.prompt, name: plan.synth.name, mode: 'text', oneshotSeconds: 2.5 })
       .then(({ one, buf, files }) => { sawPath = one.path; sawBuffer = buf; files.forEach(f => $('m-results').prepend(fileCard(f))); }));
-    await Promise.all(tasks);
+    await Promise.all(soundTasks);
 
     const b = stepEl('Building tracks in Live');
-    const body = { bpm: plan.bpm, drums: { pattern, mapping: 'single', samplePath: lastSamplePath, role: plan.drum.name } };
+    const body = { bpm: plan.bpm, drums: { pattern, lanes: Object.entries(laneSamples).map(([instrument, samplePath]) => ({ instrument, samplePath })) } };
     if (melody) body.synth = { notes: melody.notes, bars: melody.bars, samplePath: sawPath, role: plan.synth ? plan.synth.name : 'synth' };
     const r = await postJson('/api/live/build', body);
     if (!r.ok) { b.fail(r.error); throw new Error(r.error); }
-    b.ok('Drums' + (melody ? ' + ' + (plan.synth ? plan.synth.name : 'synth') : '') + ' tracks playing');
-    setStatus('e-status', 'Done. Look at Live.');
+    built = true;
+    b.ok(Object.values(r.tracks || {}).map(t => t.name).join(', ') + ' playing');
+    setStatus('e-status', 'Done. Look at Live — and tweak it below while it plays.');
+    $('e-tweak-row').style.display = ''; renderGrid(pattern);
   } catch (e) { setStatus('e-status', e.message, true); }
   $('e-go').disabled = false;
 };
+
+// ---------- tweak while it plays ----------
+$('e-show').onclick = () => postJson('/api/live/show', {});
+$('e-tweak-go').onclick = async () => {
+  const text = $('e-tweak').value.trim(); if (!text) return;
+  $('e-tweak-go').disabled = true; setStatus('e-tweak-status', 'Thinking…');
+  try {
+    const r = await postJson('/api/tweak', { text, state: { bpm: (pattern && pattern.bpm) || Number($('p-bpm').value), pattern, melody: melody ? { notes: melody.notes, bars: melody.bars, key: melody.key } : null, plan } });
+    if (!r.ok) throw new Error(r.error);
+    const c = r.changes, did = [];
+    if (c.bpm) { await postJson('/api/live/tempo', { bpm: c.bpm }); if (pattern) pattern.bpm = c.bpm; if (melody) melody.bpm = c.bpm; $('p-bpm').value = c.bpm; did.push(`${c.bpm} BPM`); }
+    if (c.pattern) { pattern = c.pattern; renderGrid(pattern); const u = await postJson('/api/live/update', { pattern }); if (!u.ok) throw new Error(u.error); did.push('pattern'); }
+    if (c.melody) { melody = { ...(melody || {}), ...c.melody, bpm: (c.bpm || (melody && melody.bpm) || pattern.bpm) }; renderMelody(melody); const u = await postJson('/api/live/melody', { notes: melody.notes, bpm: melody.bpm, bars: melody.bars, name: 'Melody' }); if (!u.ok) throw new Error(u.error); did.push('melody'); }
+    if (c.drums) for (const d of c.drums) {
+      const instrument = d.role === 'hat' ? 'hat_closed' : d.role;
+      const { one, buf, files } = await synthStep(`Re-synthesizing the ${LANE_LABEL[instrument] || d.role}`, { prompt: d.prompt, name: instrument.replace('_', '-'), mode: 'text' });
+      laneSamples[instrument] = one.path; files.forEach(f => $('s-results').prepend(fileCard(f)));
+      const u = await postJson('/api/live/sample', { path: one.path, instrument }); if (!u.ok) throw new Error(u.error); did.push(d.role + ' sound');
+    }
+    if (c.synth) {
+      const { one, buf, files } = await synthStep('Re-synthesizing the synth sound', { prompt: c.synth.prompt, name: (plan && plan.synth ? plan.synth.name : 'synth'), mode: 'text', oneshotSeconds: 2.5 });
+      sawPath = one.path; sawBuffer = buf; files.forEach(f => $('s-results').prepend(fileCard(f)));
+      const u = await postJson('/api/live/sample', { path: one.path, instrument: 'synth', role: 'synth' }); if (!u.ok) throw new Error(u.error); did.push('synth sound');
+    }
+    setStatus('e-tweak-status', `${c.summary || 'Tweaked'}${did.length ? ' → ' + did.join(', ') : ''} (via ${r.source})`);
+    $('e-tweak').value = '';
+  } catch (e) { setStatus('e-tweak-status', e.message, true); }
+  $('e-tweak-go').disabled = false;
+};
+$('e-tweak').addEventListener('keydown', e => { if (e.key === 'Enter') $('e-tweak-go').click(); });
 </script>
 </body>
 </html>
