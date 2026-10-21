@@ -40,7 +40,7 @@ void FindReferencesTab::updateStatus ()
     if (! processor.getReferencesText().isEmpty())
         resultBox.setText (processor.getReferencesText());
     else
-        resultBox.setText ("Enter a genre/artist and click Find references.", dontSendNotification);
+        resultBox.setText ("Enter a genre/artist and click Find references.");
 }
 
 void FindReferencesTab::paint (Graphics&)

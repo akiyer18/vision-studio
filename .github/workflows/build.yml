@@ -15,11 +15,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Configure
-        run: cmake -S vst_plugin -B vst_plugin/build -G "Visual Studio 17 2022" -A x64
-
+      
       - name: Build
         run: cmake --build vst_plugin/build --config Release
 

@@ -49,7 +49,7 @@ void CarryOnTab::updateStatus ()
     if (! processor.getCarryOnText().isEmpty())
         resultBox.setText (processor.getCarryOnText());
     else
-        resultBox.setText ("Select a generated track and click Generate carry-on development ideas.", dontSendNotification);
+        resultBox.setText ("Select a generated track and click Generate carry-on development ideas.");
 }
 
 void CarryOnTab::paint (Graphics&)
