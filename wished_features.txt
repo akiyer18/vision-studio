@@ -1,0 +1,19 @@
+AI generates - instructions how to make it
+
+writing music, the producer visualizes it in the head. implementation in DAW can then be painful, describing with words might be easier
+
+start and 
+
+specific notes - instead of cold drum beat
+snare drum beat - sound exactly like i want
+some snare edm, another 
+splice librarz -  genre, duration of the sound, mood
+brightness - frequencies that are in the beat - 
+
+sometimes people describe the beat with their mouth. or play an analog instrument for description
+
+logic daw - mac users
+
+explain how AI arrived to a track, so one can use this knowledge to learn and get new ideas about production
+
+gemini does a good job comparing tracks with minimal prompt ("you are a music production explainer. please analyse the beginning beat and the resulting lo fi prod and explain the changes made"). what would be useful is when the genre detected, **giving a brief history of the genre, and some artists samples to understand the style**
