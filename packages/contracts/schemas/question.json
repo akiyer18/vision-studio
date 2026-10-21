@@ -12,6 +12,7 @@
       "items": { "type": "string" }
     },
     "index": { "type": "integer" },
-    "max": { "type": "integer" }
+    "max": { "type": "integer" },
+    "facet": { "type": "string" }
   }
 }

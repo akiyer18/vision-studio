@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -17,10 +18,12 @@ from contracts import (
     TurnResponse,
 )
 
+from agent.arc import Motion, detect_arc
 from agent.asking import AskContext, almost_empty, next_one_sound, next_question
 from agent.defaults import PRESETS, default_slot, derive_bpm, parse_bpm, preset_for, skipped
 from agent.extract import extract_audio, extract_numbers, extract_text, stated_tempo
-from agent.prompts import compile_one_sound, compile_prompts
+from agent.facets import Facet, FacetPick, applicable, by_importance, catalog, facet_by_id, fallback_pick, guard_pick, resolve_answer
+from agent.prompts import compile_one_sound, compile_prompts, selected_layers
 from agent.slots import ABOUT_QUESTION, MAX_QUESTIONS, slot_specs
 from agent.theory import chords_for
 
@@ -44,6 +47,7 @@ class Pending:
     slot: str
     text: str
     options: tuple[str, ...]
+    facet: str = ""
 
 
 @dataclass
@@ -54,6 +58,7 @@ class Choice:
     text: str = ""
     options: tuple[str, ...] = ()
     reason: str = ""
+    facet: str = ""
 
 
 class TurnHooks(Protocol):
@@ -84,6 +89,16 @@ class Session:
     summary: str = ""
     transcript: list[dict[str, str]] = field(default_factory=list)
     trace: list[TraceStep] = field(default_factory=list)
+    facet_values: dict[str, str] = field(default_factory=dict)
+    facet_descriptors: dict[str, str] = field(default_factory=dict)
+    asked_facets: set[str] = field(default_factory=set)
+    references: list[str] = field(default_factory=list)
+    style_descriptors: str = ""
+    references_noted: bool = False
+    arc: Motion | None = None
+    extra: int = 0
+    budget: int = MAX_QUESTIONS
+    deepening: bool = False
 
     def note(self, step: str, detail: str) -> None:
         self.trace.append(TraceStep(step=step, detail=detail))
@@ -153,16 +168,38 @@ def run_session(sessions: dict[str, Session], request: TurnRequest, hooks: TurnH
     if request.text:
         _remember_text(session, request.text, hooks)
     if request.answer is not None:
-        _apply_answer(session, request.answer.slot, request.answer.action, request.answer.value, hooks)
-    elif session.pending is not None:
+        _apply_answer(
+            session,
+            request.answer.slot,
+            request.answer.action,
+            request.answer.value,
+            hooks,
+            request.answer.facet,
+        )
+    elif session.pending is not None and not request.deepen:
         return _question_response(session, session.pending, waiting=True)
+    if request.deepen:
+        session.force_ready = False
+        session.extra += 3
+        session.budget += 3
+        session.deepening = True
+        session.note("ask", "Going deeper")
     if session.force_ready:
+        return _ready(session, hooks)
+    if session.deepening:
+        facet_turn = _facet_turn(session, hooks)
+        if facet_turn is not None:
+            return facet_turn
+        session.deepening = False
+        session.extra = 0
         return _ready(session, hooks)
     picked = hooks.choose(session)
     if picked is not None and picked.ready:
         if picked.summary:
             session.summary = picked.summary
         return _ready(session, hooks)
+    if picked is not None and picked.facet:
+        return _ask_choice_facet(session, picked)
     if picked is not None:
         return _ask(session, Pending("slot", picked.slot, picked.text, picked.options), picked.reason)
     if session.mode != "one_sound" and _should_ask_about(session):
@@ -174,9 +211,12 @@ def run_session(sessions: dict[str, Session], request: TurnRequest, hooks: TurnH
         if session.mode == "one_sound"
         else next_question(_context(session))
     )
-    if spec is not None and session.questions_asked < MAX_QUESTIONS:
+    if spec is not None and session.questions_asked < session.budget:
         pending = Pending("slot", spec.slot, spec.question, spec.options)
         return _ask(session, pending)
+    facet_turn = _facet_turn(session, hooks)
+    if facet_turn is not None:
+        return facet_turn
     return _ready(session, hooks)
 
 
@@ -186,6 +226,8 @@ def _remember_text(session: Session, text: str, hooks: TurnHooks) -> None:
         session.text = f"{session.text} {incoming}".strip() if session.text else incoming
         session.transcript.append({"role": "user", "text": incoming})
         _apply_numbers(session, incoming)
+        _remember_arc(session, incoming)
+        _remember_names(session, incoming)
     if session.text:
         hooks.ingest_text(session)
 
@@ -303,7 +345,14 @@ def _apply_numbers(session: Session, text: str) -> None:
             session.gave_key = True
 
 
-def _apply_answer(session: Session, slot: str, action: str, value: str | None, hooks: TurnHooks) -> None:
+def _apply_answer(
+    session: Session,
+    slot: str,
+    action: str,
+    value: str | None,
+    hooks: TurnHooks,
+    facet: str | None = None,
+) -> None:
     pending = session.pending
     session.pending = None
     if action == "skip_all":
@@ -311,6 +360,10 @@ def _apply_answer(session: Session, slot: str, action: str, value: str | None, h
         session.note("answer", "skip all, filling the remaining slots")
         _fill_gaps(session, skipped_fill=True)
         session.force_ready = True
+        return
+    facet_id = facet or (pending.facet if pending is not None and pending.kind == "facet" else "")
+    if facet_id:
+        _answer_facet(session, facet_id, action, value or "", hooks)
         return
     if pending is not None and pending.kind == "about" and action == "answer":
         _remember_text(session, value or "", hooks)
@@ -340,6 +393,8 @@ def _apply_answer(session: Session, slot: str, action: str, value: str | None, h
         return
     _store(session, target, SlotValue(value=value or "", source="you", reason="You answered", confidence=1.0))
     session.note("answer", f"{target}: {value or ''}")
+    if target == "style" and value:
+        _remember_name(session, value)
 
 
 def _use_default(session: Session, slot: str, *, mark_skipped: bool) -> None:
@@ -415,6 +470,8 @@ def _context(session: Session) -> AskContext:
 
 def _ask(session: Session, pending: Pending, reason: str = "") -> TurnResponse:
     session.questions_asked += 1
+    if pending.kind == "facet" and pending.facet:
+        session.asked_facets.add(pending.facet)
     session.pending = pending
     session.transcript.append({"role": "agent", "text": pending.text})
     session.note("ask", reason or f"Asked: {pending.text}")
@@ -431,7 +488,8 @@ def _question_response(session: Session, pending: Pending, *, waiting: bool) -> 
             text=pending.text,
             options=list(pending.options),
             index=session.questions_asked,
-            max=MAX_QUESTIONS,
+            max=session.budget,
+            facet=pending.facet or None,
         ),
         brief=_brief(session),
         trace=list(session.trace),
@@ -471,6 +529,7 @@ def _ready(session: Session, hooks: TurnHooks) -> TurnResponse:
     key = session.slots["key"].value
     bpm, tempo_reason = _tempo(session, energy, mood)
     session.note("tempo", tempo_reason)
+    arrangement = _style_descriptors(session, hooks)
     romans = list(PRESETS.get(mood, PRESETS["peaceful"]).roman)
     chords = chords_for(key, romans)
     session.note("theory", f"{' '.join(romans)} in {key} is {', '.join(chords)}")
@@ -483,10 +542,25 @@ def _ready(session: Session, hooks: TurnHooks) -> TurnResponse:
             energy=energy,
             key=key,
             bpm=bpm,
+            facets=_facet_text(session, "sound"),
+            arrangement=arrangement,
+            arc=session.arc,
         )
     else:
-        prompts = compile_prompts(session.output, mood=mood, energy=energy, world=world, key=key, bpm=bpm)
+        prompts = compile_prompts(
+            session.output,
+            mood=mood,
+            energy=energy,
+            world=world,
+            key=key,
+            bpm=bpm,
+            facets=_facet_texts(session),
+            arrangement=arrangement,
+            arc=session.arc,
+        )
     prompts = hooks.polish(session, prompts)
+    prompts = [_scrub_prompt(prompt, session.references) for prompt in prompts]
+    _note_references(session)
     session.note("prompt", f"Wrote {len(prompts)} prompt" if len(prompts) == 1 else f"Wrote {len(prompts)} prompts")
     session.pending = None
     session.force_ready = True
@@ -519,11 +593,237 @@ def _summary(session: Session, bpm: int) -> str:
 
 
 def _brief(session: Session) -> SongBrief:
-    return SongBrief.model_validate(
-        {
-            "slots": {name: value.model_dump() for name, value in session.slots.items()},
-            "output": session.output,
-            "questions_asked": session.questions_asked,
-            "skipped": session.skipped,
+    payload: dict = {
+        "slots": {name: value.model_dump() for name, value in session.slots.items()},
+        "output": session.output,
+        "questions_asked": session.questions_asked,
+        "skipped": session.skipped,
+    }
+    rows = _facet_rows(session)
+    if rows:
+        payload["facets"] = rows
+    if session.arc is not None:
+        payload["arc"] = {"label": session.arc.label, "start": session.arc.start, "end": session.arc.end}
+    return SongBrief.model_validate(payload)
+
+
+_REFERENCE = re.compile(
+    r"\b(?:like|inspired by|in the style of)\s+"
+    r"([A-Z][A-Za-z0-9'&.-]+(?:\s+[A-Z][A-Za-z0-9'&.-]+){0,3})"
+)
+_NOT_A_NAME = {"no reference", "no preference", "none", "nothing"}
+
+
+def _facet_turn(session: Session, hooks: TurnHooks) -> TurnResponse | None:
+    if session.deepening:
+        if session.extra <= 0:
+            return None
+    elif session.questions_asked >= session.budget:
+        return None
+    candidates = _candidates(session)
+    if not candidates:
+        return None
+    pick = _offered_facet(session, hooks, candidates)
+    if session.deepening:
+        session.extra -= 1
+    return _ask(session, Pending("facet", "palette", pick.text, pick.options, pick.facet_id), pick.reason)
+
+
+def _ask_choice_facet(session: Session, picked: Choice) -> TurnResponse | None:
+    candidates = _candidates(session)
+    guarded = guard_pick(
+        FacetPick(picked.facet, picked.text, picked.options, picked.reason),
+        candidates,
+        session.asked_facets,
+    )
+    if isinstance(guarded, str):
+        session.note("ask", guarded)
+        match = next((facet for facet in candidates if facet.id == picked.facet), None)
+        if match is None:
+            return None
+        guarded = fallback_pick(match)
+    return _ask(session, Pending("facet", "palette", guarded.text, guarded.options, guarded.facet_id), guarded.reason)
+
+
+def _offered_facet(session: Session, hooks: TurnHooks, candidates: list[Facet]) -> FacetPick:
+    chooser = getattr(hooks, "choose_facet", None)
+    offered: FacetPick | None = None
+    if chooser is not None:
+        try:
+            offered = chooser(session, candidates)
+        except Exception:
+            session.note("fallback", "Bedrock unavailable, used the facet order")
+            offered = None
+    if offered is None:
+        facet = by_importance(candidates)
+        if facet is None:
+            raise RuntimeError("no facet to ask")
+        return fallback_pick(facet)
+    guarded = guard_pick(offered, candidates, session.asked_facets)
+    if isinstance(guarded, str):
+        session.note("ask", guarded)
+        facet = by_importance(candidates)
+        if facet is None:
+            raise RuntimeError("no facet to ask")
+        return fallback_pick(facet)
+    return guarded
+
+
+def _candidates(session: Session) -> list[Facet]:
+    sound = session.slots.get("sound")
+    return applicable(
+        catalog(),
+        mode=session.mode,
+        layers=set(selected_layers(session.output)),
+        sound=sound.value if sound is not None else "",
+        answers=session.facet_values,
+        asked=session.asked_facets,
+    )
+
+
+def _answer_facet(session: Session, facet_id: str, action: str, value: str, hooks: TurnHooks) -> None:
+    facet = facet_by_id(facet_id)
+    spoken = "You decide" if action == "you_decide" else "Skip this" if action == "skip" else value
+    session.transcript.append({"role": "user", "text": spoken})
+    session.asked_facets.add(facet_id)
+    if facet is None:
+        session.note("answer", f"Ignored unknown facet {facet_id}")
+        return
+    if action == "skip":
+        session.note("answer", f"Skipped {facet.label}")
+        return
+    text = facet.values[0].label if action == "you_decide" else value
+    mapped = ""
+    if action == "answer" and facet.find(text) is None:
+        mapper = getattr(hooks, "map_facet", None)
+        if mapper is not None:
+            try:
+                mapped = mapper(session, facet, text) or ""
+            except Exception:
+                session.note("fallback", "Bedrock unavailable, kept your words")
+    label, descriptor = resolve_answer(facet, text, mapped)
+    descriptor = _without_all(descriptor, session.references)
+    session.facet_values[facet.id] = label
+    session.facet_descriptors[facet.id] = descriptor
+    session.note("answer", f"{facet.id}: {label}")
+
+
+def _facet_rows(session: Session) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for facet in catalog():
+        if facet.id not in session.facet_values:
+            continue
+        rows.append(
+            {
+                "id": facet.id,
+                "layer": facet.layer,
+                "label": facet.label,
+                "value": session.facet_values[facet.id],
+                "descriptor": session.facet_descriptors.get(facet.id, ""),
+                "options": list(facet.labels),
+            }
+        )
+    return rows
+
+
+def _facet_texts(session: Session) -> dict[str, str]:
+    grouped: dict[str, list[str]] = {}
+    for facet in catalog():
+        if facet.layer == "sound":
+            continue
+        descriptor = session.facet_descriptors.get(facet.id, "")
+        if descriptor:
+            grouped.setdefault(facet.layer, []).append(descriptor)
+    return {layer: _without_all(", ".join(parts), session.references) for layer, parts in grouped.items()}
+
+
+def _facet_text(session: Session, layer: str) -> str:
+    parts = [
+        session.facet_descriptors[facet.id]
+        for facet in catalog()
+        if facet.layer == layer and facet.id in session.facet_descriptors
+    ]
+    return _without_all(", ".join(parts), session.references)
+
+
+def _style_descriptors(session: Session, hooks: TurnHooks) -> str:
+    if session.style_descriptors:
+        return session.style_descriptors
+    if not session.references:
+        return ""
+    text = ""
+    describer = getattr(hooks, "describe_reference", None)
+    if describer is not None:
+        try:
+            text = describer(session) or ""
+        except Exception:
+            session.note("fallback", "Bedrock unavailable, kept the reference out of the prompt")
+    session.style_descriptors = _without_all(text, session.references)
+    return session.style_descriptors
+
+
+def _note_references(session: Session) -> None:
+    if session.references_noted or not session.references:
+        return
+    session.references_noted = True
+    for name in session.references:
+        session.note("prompt", f"Used musical descriptors instead of {name}")
+
+
+def _scrub_prompt(prompt: LayerPrompt, names: list[str]) -> LayerPrompt:
+    if not names:
+        return prompt
+    return prompt.model_copy(
+        update={
+            "prompt": _without_all(prompt.prompt, names),
+            "negative": _without_all(prompt.negative, names),
         }
     )
+
+
+def _remember_arc(session: Session, text: str) -> None:
+    if session.arc is not None:
+        return
+    found = detect_arc(text)
+    if found is None:
+        return
+    session.arc = found
+    session.note("extract", f"The idea moves: {found.label}")
+
+
+def _remember_names(session: Session, text: str) -> None:
+    for match in _REFERENCE.finditer(text):
+        _remember_name(session, match.group(1))
+
+
+def _remember_name(session: Session, value: str) -> None:
+    cleaned = " ".join(value.split()).strip(" .,!")
+    if not _looks_like_name(cleaned):
+        return
+    if any(cleaned.lower() == item.lower() for item in session.references):
+        return
+    session.references.append(cleaned)
+
+
+def _looks_like_name(value: str) -> bool:
+    if value.lower() in _NOT_A_NAME:
+        return False
+    parts = value.split()
+    if not parts or len(parts) > 5:
+        return False
+    return all(part[:1].isupper() for part in parts)
+
+
+def _without_all(text: str, names: list[str]) -> str:
+    for name in names:
+        text = _without(text, name)
+    return text
+
+
+def _without(text: str, name: str) -> str:
+    if len(name.strip()) < 3:
+        return text
+    cleaned = re.sub(re.escape(name), "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+,", ",", cleaned)
+    cleaned = re.sub(r",\s*,", ",", cleaned)
+    return re.sub(r"\s{2,}", " ", cleaned).strip()

@@ -1,0 +1,136 @@
+# Drum kit facets. A child applies whenever drums are selected.
+# when: facet_id~fragment means that answer's label contains the fragment.
+layer: drums
+groups:
+  - id: kick
+    label: Kick
+    facets:
+      - id: kick_character
+        question: What kind of kick?
+        intent: kick character
+        importance: 95
+        values:
+          - label: punchy club
+            descriptor: punchy club kick
+          - label: deep boomy
+            descriptor: deep boomy kick
+          - label: distorted industrial
+            descriptor: distorted industrial kick
+          - label: clicky tight
+            descriptor: clicky tight kick
+      - id: kick_distortion
+        question: How distorted should the kick be?
+        intent: distortion amount
+        importance: 90
+        when: kick_character~distorted
+        values:
+          - label: gritty saturation
+            descriptor: gritty saturation
+          - label: full clipping
+            descriptor: full clipping
+      - id: kick_tail
+        question: How long is the kick tail?
+        intent: kick tail
+        importance: 80
+        values:
+          - label: short tight
+            descriptor: short tight tail
+          - label: medium
+            descriptor: medium kick tail
+          - label: long boomy
+            descriptor: long boomy tail
+      - id: kick_tuning
+        question: Should the kick be tuned?
+        intent: kick tuning
+        importance: 70
+        values:
+          - label: tuned to the key
+            descriptor: kick tuned to the key
+          - label: untuned
+            descriptor: untuned kick
+      - id: kick_transient
+        question: How sharp is the kick attack?
+        intent: kick transient
+        importance: 60
+        values:
+          - label: soft
+            descriptor: soft kick transient
+          - label: sharp
+            descriptor: sharp kick transient
+          - label: very sharp
+            descriptor: very sharp kick transient
+  - id: snare
+    label: Snare
+    facets:
+      - id: snare_character
+        question: What kind of snare?
+        intent: snare character
+        importance: 55
+        values:
+          - label: tight acoustic
+            descriptor: tight acoustic snare
+          - label: fat clap snare
+            descriptor: fat clap snare
+          - label: loose rim
+            descriptor: loose rim snare
+          - label: metallic
+            descriptor: metallic snare
+      - id: snare_snap
+        question: How snappy is the snare?
+        intent: snare snap
+        importance: 36
+        values:
+          - label: soft brush
+            descriptor: soft brushed snare
+          - label: crisp snap
+            descriptor: crisp snare snap
+          - label: cracked
+            descriptor: cracked snare
+  - id: hats
+    label: Hats
+    facets:
+      - id: hats_character
+        question: What kind of hats?
+        intent: hat character
+        importance: 50
+        values:
+          - label: closed tight
+            descriptor: closed tight hats
+          - label: open wash
+            descriptor: open hat wash
+          - label: shuffled
+            descriptor: shuffled hats
+          - label: rolling
+            descriptor: rolling hats
+  - id: percussion
+    label: Percussion
+    facets:
+      - id: percussion_character
+        question: How much percussion sits around the kit?
+        intent: percussion
+        importance: 45
+        values:
+          - label: sparse
+            descriptor: sparse percussion
+          - label: syncopated
+            descriptor: syncopated percussion
+          - label: busy
+            descriptor: busy percussion
+          - label: none
+            descriptor: no extra percussion
+  - id: groove
+    label: Groove
+    facets:
+      - id: groove_feel
+        question: How does the groove sit?
+        intent: groove
+        importance: 40
+        values:
+          - label: straight
+            descriptor: straight drum groove
+          - label: swung
+            descriptor: swung drum groove
+          - label: broken
+            descriptor: broken drum groove
+          - label: half-time
+            descriptor: half-time drum groove

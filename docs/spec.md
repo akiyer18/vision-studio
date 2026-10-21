@@ -20,14 +20,21 @@ AudioFeatures   { input_type: InputType, key?: string, mode?: string, bpm?: numb
                   chords?: string[], instruments?: string[], confidence: number }
 
 SongBrief       { slots: Partial<Record<SlotName, SlotValue>>, output: OutputChoice[],
-                  questions_asked: integer, skipped: SlotName[] }
+                  questions_asked: integer, skipped: SlotName[],
+                  facets?: FacetAnswer[], arc?: Arc }
 
-Question        { slot: SlotName, text: string, options: string[], index: integer, max: integer }
+FacetAnswer     { id: string, layer: string, label: string, value: string,
+                  descriptor: string, options: string[] }
+Arc             { label: string, start: string, end: string }
+
+Question        { slot: SlotName, text: string, options: string[], index: integer, max: integer,
+                  facet?: string }
 
 TurnRequest     { session_id: string, text?: string, audio_features?: AudioFeatures,
-                  answer?: { slot: SlotName, action: AnswerAction, value?: string },
+                  answer?: { slot: SlotName, action: AnswerAction, value?: string, facet?: string },
                   output?: OutputChoice[], overrides?: Record<SlotName, string>,
-                  mode?: "full" | "one_sound", reference?: Record<SlotName, string> }
+                  mode?: "full" | "one_sound", reference?: Record<SlotName, string>,
+                  deepen?: boolean }
 
 LayerPrompt     { layer: string, prompt: string, negative: string,
                   seeds: [number, number, number], kb_sources: string[] }
@@ -49,6 +56,9 @@ Semantics:
 - "you_decide" fills the slot with the default, source "guessed", reason from the default rule.
 - "skip" does the same and prefixes the reason with "skipped: ".
 - "skip_all" fills every remaining slot with defaults and returns status "ready".
+- deepen asks up to three more facet questions after a ready brief. It can be sent again.
+- A facet answer is stored on the brief, not in the slot named by the question. The question's slot is only the carrier.
+- An arc is a from-to change in the idea. Section prompts use its start and end. The brief shows the label, for example "Dark to bright".
 - Edited prompts in the UI are sent back as overrides of the LayerPrompt text at render time.
 
 ## 2. Slots (services/agent/slots.yaml)
@@ -131,6 +141,10 @@ Anchor term for each layer and world. The anchor is the main instrument, it alre
 Wide cinematic drums use "toms" because that is the instrument named in the descriptor. Each layer gets three seeds. The base is a hash of layer, mood, world, key, and BPM, plus RenderJob.take.
 Take 1 is the default and stays reproducible. A later take changes the seeds.
 kb_sources lists the documents used (in mock mode: the preset and world names).
+
+Filled facet descriptors are added on the instrument and rhythm side of that order, after the layer descriptor and before the mood words. Reference descriptors, when Claude has written them, go in the arrangement position, immediately before the BPM. An empty facet list leaves the template unchanged.
+
+When the idea moves from one state to another, each selected layer is written twice: Section A uses the start mood, energy, and world, and Section B uses the end. The layer ids are `{layer}_a` and `{layer}_b`. The mock renderer plays each section with that layer's sound. Artist and song names are never interpolated. See section 11.
 
 ## 5. Theory engine
 
@@ -264,6 +278,10 @@ Guardrails in code, always: never ask a slot filled with source you or detected;
 
 Both providers read numbers from the text before Claude or the keyword extractor: "94 bpm" is tempo 94, source you, "Heard 94 BPM in your words"; "F minor" is the key; "8 bars" is the structure. A stated tempo still beats a measured one.
 
+Facet questions. The catalog is `kb/facets`, one YAML file per layer and one for one-sound types. A facet has an id, a question, an intent, allowed values with the short descriptor used in prompts, a condition, and an importance. A condition `kick_character~distorted` applies only when that answer contains the fragment. The interviewer may return a facet on the same tool call. A separate forced call, used once the section 2 slots that still score above 0.35 are filled or when the producer goes deeper, asks Claude to choose the applicable facet that most changes the sound, phrase the question, and pick 2 to 4 of its values. Code refuses a facet that does not apply, an option that is not one of its values, and a facet already asked. A refusal falls back to importance order and the facet's own question. Free text that matches no value is mapped by Claude to the closest label, or stored as a descriptor. If that call fails, the words are stored as the descriptor. The trace for a failed facet call is "Bedrock unavailable, used the facet order".
+
+An artist or song name is kept as a reference and is not passed to the compiler. Claude may turn it into musical descriptors. The trace says "Used musical descriptors instead of {name}". If that call fails, the name still stays out of the prompt.
+
 Trace lines include "Claude read your idea", "Claude polished the drums prompt", "Kept your mood: joyful", and "Replaced the guessed mood peaceful with longing: …".
 
 Tests stub the Bedrock client. The live test is marked `bedrock` and runs only when `RUN_BEDROCK=1`.
@@ -272,7 +290,7 @@ Tests stub the Bedrock client. The live test is marked `bedrock` and runs only w
 
 Vision Studio is a producer's translator. The producer describes what they hear, in words, with their voice, or with an instrument. The product makes that sound, explains how it got there, and teaches them to make it themselves in Logic. Text and sound can arrive in the same turn. "Here's my beatbox, make it a dusty lo-fi kit" is the headline example.
 
-There is no level setting. Nothing in the interface, the brief, or the agent changes with Beginner, Producer, or Pro. Bedrock asks in the producer's own words, one question at a time, up to 5 (section 10). MockProvider, and Bedrock when it fails, use the section 2 question text and the asking rule.
+There is no level setting. Nothing in the interface, the brief, or the agent changes with Beginner, Producer, or Pro. Detail comes from facets, which branch from the answers, and from Go deeper. Bedrock asks in the producer's own words, one question at a time, up to 5 (section 10). MockProvider, and Bedrock when it fails, use the section 2 question text and the asking rule, then facet importance order and the facet question text.
 
 The thread is the conversation. Each agent question is an agent message with its option chips and You decide, Skip this, and Skip all and build. After an answer, that message collapses into the question and the answer. The recognition line after an upload is the first agent message. When the brief is ready, the agent posts the one-line summary with the Build button in that message. After the first turn, the composer placeholder is "Answer, or add a detail". Trace lines are plain sentences, for example "Heard 94 BPM in your words", "Industrial and aggressive means a dark, high energy world", and "Asked about texture because the style was unclear".
 
@@ -292,6 +310,14 @@ Create:
 3. The agent asks only what is missing. Every question can be answered, decided, skipped, or skipped entirely.
 4. Hear three variations. Pick one, or ask for another take.
 5. Learn from the result. Under the layer cards, collapsed by default: "How this was made" and "Make it in Logic".
+
+Facets. Files in `kb/facets` describe drums (kick, snare, hats, percussion, groove), bass (sub, 808, reese, synth bass), chords (instrument, voicing, rhythm), melody (instrument, register, movement), texture (ambience, foley, risers, vinyl), and the one-sound types (kick, snare, clap, hat, 808, pad, pluck, riser, impact). Kick character includes punchy club, deep boomy, distorted industrial, and clicky tight. Distortion is asked only after a distorted character, and its values are gritty saturation and full clipping. Tail, tuning, and transient follow.
+
+Facet questions start once the selected layers, or the one-sound type, are known and the section 2 questions that still score above 0.35 are done. That keeps the demo's output, key, and style questions in place. The base limit stays 5. After "Ready to build", Go deeper asks up to three more facet questions and can be pressed again. Build now renders. The layers card still says Build.
+
+The brief shows filled facets under each selected layer as a compact row, for example "Kick: distorted industrial, full clipping, short tight". Clicking a row edits a value.
+
+An idea that says "from dark to bright" stores an arc and is written as Section A and Section B. The brief shows "Dark to bright". Names that look like an artist or a song, including "like Billie Eilish", stay a reference. Descriptors may be written instead. The name is never sent to the compiler.
 
 One sound is a sample-library request, such as "a snappy EDM snare" or "a warm 808". It asks only what is missing among sound type, genre, duration, mood, and brightness, still one at a time and still at most 5. MockProvider asks them in that order. Bedrock may ask any of those five that are still empty. Duration uses the structure slot and its existing question. Sound type, genre, and brightness use the questions in section 2. The other slots are not asked. The same answer, You decide, Skip this, and Skip all and build rules apply. You decide and Skip use these defaults: sound "pad", genre "no genre", brightness "balanced", plus the section 3 defaults for duration and mood. Skip all fills whatever of those five is still empty, then the remaining section 3 defaults, and returns one prompt.
 

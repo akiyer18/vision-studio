@@ -10,9 +10,10 @@ from contracts import LayerPrompt, SlotValue
 
 from agent.defaults import parse_bpm
 from agent.extract import user_mood
-from agent.interview import Ready, interpret
+from agent.facets import Facet, FacetPick, applicable, catalog
+from agent.interview import NextFacet, Ready, interpret
 from agent.polish import rejection_reason
-from agent.prompts import anchor_for
+from agent.prompts import anchor_for, base_layer, selected_layers
 from agent.slots import MAX_QUESTIONS, slot_specs
 from agent.theory import chords_for
 from agent.tool_schema import extraction_schema
@@ -51,6 +52,8 @@ _INTERVIEW_SYSTEM = (
     "or say the brief is ready and summarise it in one line. "
     "Never ask tempo. Never ask a slot whose source is you or detected. "
     "Options for a slot that lists allowed values must be those labels. "
+    "When facets are listed, you may ask one of them instead of a slot. Set facet to its id and options to 2 to 4 of its values. "
+    "Choose the facet that most changes the sound, and only one whose condition is already met. "
     "Do not invent a mood, instrument, genre, or tempo. Do not steer the song somewhere new."
 )
 
@@ -65,8 +68,59 @@ _INTERVIEW_SCHEMA: dict[str, object] = {
         "options": {"type": "array", "items": {"type": "string"}},
         "reason": {"type": "string"},
         "summary": {"type": "string"},
+        "facet": {"type": "string"},
     },
 }
+
+_FACET = "facet_question"
+_MAP = "map_facet"
+_REFERENCE = "describe_reference"
+
+_FACET_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["facet", "question", "options", "reason"],
+    "properties": {
+        "facet": {"type": "string"},
+        "question": {"type": "string"},
+        "options": {"type": "array", "items": {"type": "string"}},
+        "reason": {"type": "string"},
+    },
+}
+
+_MAP_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["value", "descriptor"],
+    "properties": {
+        "value": {"type": "string"},
+        "descriptor": {"type": "string"},
+    },
+}
+
+_REFERENCE_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["descriptors"],
+    "properties": {"descriptors": {"type": "string"}},
+}
+
+_FACET_SYSTEM = (
+    "You choose the next facet question for Vision Studio. You are a helper, not the author. "
+    "Pick the facet that most changes the sound from the list. Phrase one short question in the producer's context. "
+    "options must be 2 to 4 labels copied from that facet. Do not invent a value."
+)
+
+_MAP_SYSTEM = (
+    "Map the producer's free-text answer onto a facet. You are a helper, not the author. "
+    "If it is close to one allowed label, set value to that label and descriptor to that label's meaning. "
+    "Otherwise leave value empty and put their meaning in descriptor, without adding a new musical idea."
+)
+
+_REFERENCE_SYSTEM = (
+    "Turn an artist or song reference into musical descriptors. You are a helper, not the author. "
+    "Describe timbre, mood, and arrangement. Do not include the artist name, the song title, or lyrics."
+)
 
 _POLISH_SCHEMA: dict[str, object] = {
     "type": "object",
@@ -193,7 +247,71 @@ class _Hooks:
             return None
         if isinstance(result, Ready):
             return Choice(ready=True, summary=result.summary)
+        if isinstance(result, NextFacet):
+            return Choice(
+                ready=False,
+                slot="palette",
+                facet=result.facet,
+                text=result.text,
+                options=result.options,
+                reason=result.reason,
+            )
         return Choice(ready=False, slot=result.slot, text=result.text, options=result.options, reason=result.reason)
+
+    def choose_facet(self, session: Session, candidates: list[Facet]) -> FacetPick:
+        payload = _converse(
+            self.provider,
+            name=_FACET,
+            description="The next facet question.",
+            schema=_FACET_SCHEMA,
+            system=_FACET_SYSTEM,
+            message=_facet_message(session, candidates),
+            max_tokens=_INTERVIEW_TOKENS,
+        )
+        options = payload.get("options")
+        if not isinstance(options, list):
+            options = []
+        return FacetPick(
+            str(payload.get("facet") or ""),
+            str(payload.get("question") or ""),
+            tuple(str(item) for item in options),
+            str(payload.get("reason") or ""),
+        )
+
+    def map_facet(self, session: Session, facet: Facet, text: str) -> str:
+        payload = _converse(
+            self.provider,
+            name=_MAP,
+            description="The closest facet value, or a descriptor for the producer's words.",
+            schema=_MAP_SCHEMA,
+            system=_MAP_SYSTEM,
+            message=json.dumps(
+                {
+                    "facet": facet.id,
+                    "question": facet.question,
+                    "values": [{"label": value.label, "descriptor": value.descriptor} for value in facet.values],
+                    "answer": text,
+                }
+            ),
+            max_tokens=200,
+        )
+        value = str(payload.get("value") or "").strip()
+        descriptor = str(payload.get("descriptor") or "").strip()
+        if value and facet.find(value) is not None:
+            return value
+        return descriptor or value
+
+    def describe_reference(self, session: Session) -> str:
+        payload = _converse(
+            self.provider,
+            name=_REFERENCE,
+            description="Musical descriptors for a reference. No artist or song name.",
+            schema=_REFERENCE_SCHEMA,
+            system=_REFERENCE_SYSTEM,
+            message=json.dumps({"references": session.references, "idea": session.text}),
+            max_tokens=200,
+        )
+        return str(payload.get("descriptors") or "").strip()
 
     def polish(self, session: Session, prompts: list[LayerPrompt]) -> list[LayerPrompt]:
         if not prompts:
@@ -256,16 +374,48 @@ def _interview_message(session: Session) -> str:
         for name, slot in session.slots.items()
     }
     schema = [{"slot": spec.slot, "options": list(spec.options)} for spec in slot_specs() if spec.slot != "tempo"]
+    sound = session.slots.get("sound")
+    facets = applicable(
+        catalog(),
+        mode=session.mode,
+        layers=set(selected_layers(session.output)),
+        sound=sound.value if sound is not None else "",
+        answers=session.facet_values,
+        asked=session.asked_facets,
+    )
     return json.dumps(
         {
             "conversation": session.transcript,
             "brief": brief,
             "audio_features": features,
             "slots": schema,
-            "questions_remaining": max(0, MAX_QUESTIONS - session.questions_asked),
+            "facets": [_facet_brief(facet) for facet in facets],
+            "questions_remaining": max(0, session.budget - session.questions_asked),
         },
         indent=2,
     )
+
+
+def _facet_message(session: Session, candidates: list[Facet]) -> str:
+    return json.dumps(
+        {
+            "conversation": session.transcript,
+            "answers": session.facet_values,
+            "facets": [_facet_brief(facet) for facet in candidates],
+        },
+        indent=2,
+    )
+
+
+def _facet_brief(facet: Facet) -> dict[str, object]:
+    return {
+        "id": facet.id,
+        "intent": facet.intent,
+        "importance": facet.importance,
+        "when": facet.when,
+        "question": facet.question,
+        "values": [value.label for value in facet.values],
+    }
 
 
 def _extract_message(session: Session) -> str:
@@ -435,10 +585,16 @@ def _apply_polish(session: Session, prompts: list[LayerPrompt], payload: dict) -
 
 
 def _anchor(session: Session, layer: str) -> str:
-    if layer == "sound":
+    base = base_layer(layer)
+    if base == "sound":
         sound = session.slots.get("sound")
         return sound.value if sound is not None else "sound"
-    return anchor_for(session.slots["world"].value, layer)
+    world = session.slots["world"].value
+    if session.arc is not None and layer.endswith("_a"):
+        world = session.arc.start_world
+    elif session.arc is not None and layer.endswith("_b"):
+        world = session.arc.end_world
+    return anchor_for(world, base)
 
 
 def _polished_by_layer(payload: dict) -> dict[str, str]:

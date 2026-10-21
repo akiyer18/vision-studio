@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from .arc import Arc
+from .facet_answer import FacetAnswer
 from .slot_value import SlotValue
 
 
@@ -39,3 +41,5 @@ class SongBrief(BaseModel):
     output: list[Literal["drums", "chords", "bass", "melody", "texture", "all_layers", "full_mix"]]
     questions_asked: int
     skipped: list[Literal["output", "mood", "energy", "world", "key", "style", "palette", "structure", "must_keep", "tempo", "sound", "genre", "brightness", "pattern", "production"]]
+    facets: list[FacetAnswer] | None = None
+    arc: Arc | None = None

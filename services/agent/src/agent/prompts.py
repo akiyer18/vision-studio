@@ -6,6 +6,8 @@ import hashlib
 
 from contracts import LayerPrompt
 
+from agent.arc import Motion
+
 LAYER_ORDER = ("drums", "chords", "bass", "melody", "texture")
 TONAL = {"chords", "bass", "melody"}
 MOOD_WORDS = {
@@ -115,23 +117,79 @@ def compile_one_sound(
     key: str,
     bpm: int,
     take: int = 1,
+    facets: str = "",
+    arrangement: str = "",
+    arc: Motion | None = None,
 ) -> list[LayerPrompt]:
+    if arc is not None:
+        return [
+            _one_section("a", arc.start_mood, arc.start_energy, sound, genre, brightness, key, bpm, take, facets, arrangement),
+            _one_section("b", arc.end_mood, arc.end_energy, sound, genre, brightness, key, bpm, take, facets, arrangement),
+        ]
+    return [
+        _one_layer("sound", sound, genre, brightness, mood, energy, key, bpm, take, facets, arrangement),
+    ]
+
+
+def _one_section(
+    letter: str,
+    mood: str,
+    energy: str,
+    sound: str,
+    genre: str,
+    brightness: str,
+    key: str,
+    bpm: int,
+    take: int,
+    facets: str,
+    arrangement: str,
+) -> LayerPrompt:
+    return _one_layer(
+        f"sound_{letter}",
+        sound,
+        genre,
+        brightness,
+        mood,
+        energy,
+        key,
+        bpm,
+        take,
+        facets,
+        arrangement,
+        letter.upper(),
+    )
+
+
+def _one_layer(
+    layer: str,
+    sound: str,
+    genre: str,
+    brightness: str,
+    mood: str,
+    energy: str,
+    key: str,
+    bpm: int,
+    take: int,
+    facets: str,
+    arrangement: str,
+    section: str = "",
+) -> LayerPrompt:
     kind = track_type(sound)
     body = f"{sound} in {key}" if kind == "Instrument" else sound
+    body = _with_facets(body, facets)
     bright = BRIGHTNESS_WORDS.get(brightness, brightness)
+    section_bit = f", Section {section}" if section else ""
     prompt = (
-        f"TrackType: {kind}, {body}, {genre}, {bright}, "
+        f"TrackType: {kind}, {body}{section_bit}, {genre}, {bright}, "
         f"{MOOD_WORDS[mood]}, {ENERGY_WORDS[energy]}, {bpm} BPM"
     )
-    return [
-        LayerPrompt(
-            layer="sound",
-            prompt=prompt,
-            negative="vocals",
-            seeds=seeds_for("sound", mood, genre, key, bpm, take),
-            kb_sources=[mood, genre],
-        )
-    ]
+    return LayerPrompt(
+        layer=layer,
+        prompt=_arrange(prompt, arrangement, bpm),
+        negative="vocals",
+        seeds=seeds_for(layer, mood, genre, key, bpm, take),
+        kb_sources=[mood, genre],
+    )
 
 
 def compile_prompts(
@@ -143,37 +201,120 @@ def compile_prompts(
     key: str,
     bpm: int,
     take: int = 1,
+    facets: dict[str, str] | None = None,
+    arrangement: str = "",
+    arc: Motion | None = None,
 ) -> list[LayerPrompt]:
+    if arc is not None:
+        prompts: list[LayerPrompt] = []
+        for layer in selected_layers(output):
+            prompts.append(
+                _layer_prompt(
+                    f"{layer}_a",
+                    layer,
+                    mood=arc.start_mood,
+                    energy=arc.start_energy,
+                    world=arc.start_world,
+                    key=key,
+                    bpm=bpm,
+                    take=take,
+                    facets=(facets or {}).get(layer, ""),
+                    arrangement=arrangement,
+                    section="A",
+                )
+            )
+            prompts.append(
+                _layer_prompt(
+                    f"{layer}_b",
+                    layer,
+                    mood=arc.end_mood,
+                    energy=arc.end_energy,
+                    world=arc.end_world,
+                    key=key,
+                    bpm=bpm,
+                    take=take,
+                    facets=(facets or {}).get(layer, ""),
+                    arrangement=arrangement,
+                    section="B",
+                )
+            )
+        return prompts
+    return [
+        _layer_prompt(
+            layer,
+            layer,
+            mood=mood,
+            energy=energy,
+            world=world,
+            key=key,
+            bpm=bpm,
+            take=take,
+            facets=(facets or {}).get(layer, ""),
+            arrangement=arrangement,
+            section="",
+        )
+        for layer in selected_layers(output)
+    ]
+
+
+def _layer_prompt(
+    name: str,
+    base: str,
+    *,
+    mood: str,
+    energy: str,
+    world: str,
+    key: str,
+    bpm: int,
+    take: int,
+    facets: str,
+    arrangement: str,
+    section: str,
+) -> LayerPrompt:
     mood_words = MOOD_WORDS[mood]
     energy_words = ENERGY_WORDS[energy]
-    sources = [mood, world]
-    prompts: list[LayerPrompt] = []
-    for layer in selected_layers(output):
-        descriptor = DESCRIPTORS[world][layer]
-        if layer == "full_mix":
-            prompt = (
-                f"TrackType: Music, {descriptor} instrumental in {key}, "
-                f"{mood_words}, {energy_words}, {bpm} BPM"
-            )
-            negative = "vocals"
-        else:
-            body = f"{descriptor} in {key}" if layer in TONAL else descriptor
-            prompt = f"TrackType: Instrument, {body}, {mood_words}, {energy_words}, {bpm} BPM"
-            negative = _negative(layer)
-        prompts.append(
-            LayerPrompt(
-                layer=layer,
-                prompt=prompt,
-                negative=negative,
-                seeds=seeds_for(layer, mood, world, key, bpm, take),
-                kb_sources=sources,
-            )
-        )
-    return prompts
+    descriptor = DESCRIPTORS[world][base]
+    section_bit = f", Section {section}" if section else ""
+    if base == "full_mix":
+        body = f"{descriptor} instrumental in {key}"
+        prompt = f"TrackType: Music, {_with_facets(body, facets)}{section_bit}, {mood_words}, {energy_words}, {bpm} BPM"
+        negative = "vocals"
+    else:
+        body = f"{descriptor} in {key}" if base in TONAL else descriptor
+        prompt = f"TrackType: Instrument, {_with_facets(body, facets)}{section_bit}, {mood_words}, {energy_words}, {bpm} BPM"
+        negative = _negative(base)
+    return LayerPrompt(
+        layer=name,
+        prompt=_arrange(prompt, arrangement, bpm),
+        negative=negative,
+        seeds=seeds_for(name, mood, world, key, bpm, take),
+        kb_sources=[mood, world],
+    )
 
 
 def anchor_for(world: str, layer: str) -> str:
-    return ANCHORS[world][layer]
+    return ANCHORS[world][base_layer(layer)]
+
+
+def base_layer(layer: str) -> str:
+    if len(layer) > 2 and layer[-2] == "_" and layer[-1] in {"a", "b"}:
+        return layer[:-2]
+    return layer
+
+
+def _with_facets(body: str, facets: str) -> str:
+    if not facets:
+        return body
+    return f"{body}, {facets}"
+
+
+def _arrange(prompt: str, arrangement: str, bpm: int) -> str:
+    if not arrangement:
+        return prompt
+    suffix = f"{bpm} BPM"
+    if prompt.endswith(suffix):
+        return f"{prompt[: -len(suffix)]}{arrangement}, {suffix}"
+    return f"{prompt}, {arrangement}"
 
 
 def selected_layers(output: list[str]) -> list[str]:

@@ -2,10 +2,13 @@ import { motion, useReducedMotion } from "framer-motion"
 import { useState } from "react"
 
 import { SLOT_LABEL } from "../../brief/slots.ts"
+import { postTurn } from "../../conversation/postTurn.ts"
 import { useStudio } from "../../state/studio.ts"
+import type { FacetAnswer } from "../../types/facet_answer.ts"
 import type { SlotName } from "../../types/slot_name.ts"
 import type { SlotSource } from "../../types/slot_source.ts"
 import type { SongBrief } from "../../types/song_brief.ts"
+import { layerTitle } from "../../studio/output.ts"
 import { SourceBadge } from "../SourceBadge.tsx"
 
 const ROWS: SlotName[] = ["mood", "energy", "world", "style", "palette", "structure", "must_keep", "sound", "genre", "brightness", "pattern", "production"]
@@ -17,12 +20,15 @@ type Props = {
 
 export function BriefCard({ mark, onDescribe }: Props) {
   const brief = useStudio((state) => state.turn?.brief ?? null)
+  const ready = useStudio((state) => state.turn?.status === "ready")
   const overrides = useStudio((state) => state.overrides)
   const queueOverride = useStudio((state) => state.queueOverride)
   const tempo = field("tempo", brief, overrides)
   const key = field("key", brief, overrides)
   const rows = ROWS.filter((slot) => Boolean(overrides[slot] ?? brief?.slots[slot]?.value))
-  const empty = !tempo && !key && rows.length === 0
+  const facets = brief?.facets ?? []
+  const arc = brief?.arc
+  const empty = !tempo && !key && rows.length === 0 && facets.length === 0 && !arc
   const reduce = useReducedMotion()
 
   return (
@@ -89,10 +95,92 @@ export function BriefCard({ mark, onDescribe }: Props) {
               />
             )
           })}
+          <FacetBlock facets={facets} arcLabel={arc?.label} ready={ready} />
         </div>
       )}
     </motion.section>
   )
+}
+
+function FacetBlock({ facets, arcLabel, ready }: { facets: FacetAnswer[]; arcLabel?: string; ready: boolean }) {
+  const [open, setOpen] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  if (facets.length === 0 && !arcLabel) return null
+  const groups = groupFacets(facets)
+  const layers = [...new Set(groups.map((group) => group.layer))]
+
+  async function choose(id: string, value: string) {
+    setError(null)
+    try {
+      await postTurn({ answer: { slot: "palette", action: "answer", value, facet: id } })
+      setOpen(null)
+    } catch {
+      setError("That change did not go through.")
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {arcLabel ? <p className="text-ink">{arcLabel}</p> : null}
+      {layers.map((layer) => (
+        <div key={layer} className="flex flex-col gap-1">
+          <p className="text-sm text-muted">{layerTitle(layer)}</p>
+          {groups
+            .filter((group) => group.layer === layer)
+            .map((group) => (
+              <div key={group.key}>
+                <button
+                  type="button"
+                  className="text-left text-sm text-ink disabled:cursor-default"
+                  disabled={!ready}
+                  aria-expanded={open === group.key}
+                  onClick={() => setOpen(open === group.key ? null : group.key)}
+                >
+                  {group.label}: {group.text}
+                </button>
+                {open === group.key ? (
+                  <div className="mt-2 flex flex-col gap-2">
+                    {group.items.map((item) => (
+                      <div key={item.id} className="flex flex-wrap gap-2">
+                        {item.options.map((option) => (
+                          <button
+                            key={option}
+                            type="button"
+                            className="rounded-full border border-white/15 px-3 py-1 text-sm text-ink"
+                            aria-pressed={option === item.value}
+                            onClick={() => void choose(item.id, option)}
+                          >
+                            {option}
+                          </button>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+        </div>
+      ))}
+      {error ? <p className="text-danger">{error}</p> : null}
+    </div>
+  )
+}
+
+function groupFacets(facets: FacetAnswer[]) {
+  const grouped = new Map<string, FacetAnswer[]>()
+  for (const facet of facets) {
+    const key = `${facet.layer}:${facet.label}`
+    const items = grouped.get(key) ?? []
+    items.push(facet)
+    grouped.set(key, items)
+  }
+  return [...grouped.entries()].map(([key, items]) => ({
+    key,
+    layer: items[0]?.layer ?? "",
+    label: items[0]?.label ?? "",
+    text: items.map((item) => item.value).join(", "),
+    items,
+  }))
 }
 
 function field(slot: SlotName, brief: SongBrief | null, overrides: Record<string, string>) {

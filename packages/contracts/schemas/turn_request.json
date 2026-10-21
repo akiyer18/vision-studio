@@ -15,9 +15,11 @@
       "properties": {
         "slot": { "$ref": "slot_name.json" },
         "action": { "$ref": "answer_action.json" },
-        "value": { "type": "string" }
+        "value": { "type": "string" },
+        "facet": { "type": "string" }
       }
     },
+    "deepen": { "type": "boolean" },
     "output": {
       "type": "array",
       "items": { "$ref": "output_choice.json" }

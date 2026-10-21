@@ -21,6 +21,7 @@ class Answer(BaseModel):
         ..., title="AnswerAction"
     )
     value: str | None = None
+    facet: str | None = None
 
 
 class Overrides(BaseModel):
@@ -56,6 +57,7 @@ class TurnRequest(BaseModel):
     text: str | None = None
     audio_features: AudioFeatures | None = None
     answer: Answer | None = None
+    deepen: bool | None = None
     output: list[Literal["drums", "chords", "bass", "melody", "texture", "all_layers", "full_mix"]] | None = (
         None
     )

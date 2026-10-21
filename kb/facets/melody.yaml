@@ -1,0 +1,50 @@
+layer: melody
+groups:
+  - id: instrument
+    label: Melody
+    facets:
+      - id: melody_instrument
+        question: What plays the melody?
+        intent: melody instrument
+        importance: 32
+        values:
+          - label: synth lead
+            descriptor: synth lead melody
+          - label: piano
+            descriptor: piano melody
+          - label: guitar
+            descriptor: guitar melody
+          - label: bell
+            descriptor: bell melody
+  - id: register
+    label: Register
+    facets:
+      - id: melody_register
+        question: Where does the melody sit?
+        intent: melody register
+        importance: 27
+        values:
+          - label: low
+            descriptor: low register melody
+          - label: middle
+            descriptor: middle register melody
+          - label: high
+            descriptor: high register melody
+          - label: whistling
+            descriptor: whistling high melody
+  - id: movement
+    label: Movement
+    facets:
+      - id: melody_movement
+        question: How does the melody move?
+        intent: melody movement
+        importance: 22
+        values:
+          - label: stepwise
+            descriptor: stepwise melody
+          - label: leaping
+            descriptor: leaping melody
+          - label: repeating
+            descriptor: repeating melody
+          - label: sparse
+            descriptor: sparse melody

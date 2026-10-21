@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Protocol
 
 import numpy as np
+from agent.prompts import base_layer
 from agent.theory import root_near, voice_chord
 from contracts import RenderJob, RenderResult
 
@@ -26,10 +27,11 @@ class MockRenderer:
         self.data_root = data_root
 
     def render(self, job: RenderJob, chords: list[str]) -> RenderResult:
-        if job.layer not in _LAYERS:
+        base = base_layer(job.layer)
+        if base not in _LAYERS:
             raise ValueError(f"unknown layer: {job.layer}")
         frames = bar_frames(job.bpm, job.bars)
-        audio = _synthesize(job.layer, chords, job.bpm, frames, job.seed)
+        audio = _synthesize(base, chords, job.bpm, frames, job.seed)
         audio = _trim(audio, frames)
         name = wav_name(job.layer, job.bpm, job.bars, job.variant)
         path = session_dir(self.data_root, job.session_id) / "renders" / name

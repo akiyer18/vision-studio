@@ -1,0 +1,178 @@
+# One-sound facets. A group applies only when the sound type contains its id.
+layer: sound
+groups:
+  - id: kick
+    label: Kick
+    facets:
+      - id: sound_kick_character
+        question: What kind of kick?
+        intent: kick character
+        importance: 95
+        values:
+          - label: punchy club
+            descriptor: punchy club kick
+          - label: deep boomy
+            descriptor: deep boomy kick
+          - label: distorted industrial
+            descriptor: distorted industrial kick
+          - label: clicky tight
+            descriptor: clicky tight kick
+      - id: sound_kick_distortion
+        question: How distorted should the kick be?
+        intent: distortion amount
+        importance: 90
+        when: sound_kick_character~distorted
+        values:
+          - label: gritty saturation
+            descriptor: gritty saturation
+          - label: full clipping
+            descriptor: full clipping
+      - id: sound_kick_tail
+        question: How long is the kick tail?
+        intent: kick tail
+        importance: 70
+        values:
+          - label: short tight
+            descriptor: short tight tail
+          - label: medium
+            descriptor: medium kick tail
+          - label: long boomy
+            descriptor: long boomy tail
+  - id: snare
+    label: Snare
+    facets:
+      - id: sound_snare_character
+        question: What kind of snare?
+        intent: snare character
+        importance: 95
+        values:
+          - label: tight acoustic
+            descriptor: tight acoustic snare
+          - label: fat clap snare
+            descriptor: fat clap snare
+          - label: loose rim
+            descriptor: loose rim snare
+          - label: metallic
+            descriptor: metallic snare
+  - id: clap
+    label: Clap
+    facets:
+      - id: sound_clap_character
+        question: What kind of clap?
+        intent: clap character
+        importance: 95
+        values:
+          - label: tight single
+            descriptor: tight single clap
+          - label: stacked
+            descriptor: stacked claps
+          - label: roomy
+            descriptor: roomy clap
+          - label: vinyl
+            descriptor: vinyl clap
+  - id: hat
+    label: Hat
+    facets:
+      - id: sound_hat_character
+        question: What kind of hat?
+        intent: hat character
+        importance: 95
+        values:
+          - label: closed tight
+            descriptor: closed tight hat
+          - label: open wash
+            descriptor: open hat wash
+          - label: metallic
+            descriptor: metallic hat
+          - label: soft
+            descriptor: soft hat
+  - id: "808"
+    label: "808"
+    facets:
+      - id: sound_808_character
+        question: What kind of 808?
+        intent: 808 character
+        importance: 95
+        values:
+          - label: short punch
+            descriptor: short punchy 808
+          - label: sustained
+            descriptor: sustained 808
+          - label: distorted
+            descriptor: distorted 808
+          - label: gliding
+            descriptor: gliding 808
+      - id: sound_808_distortion
+        question: How distorted is the 808?
+        intent: distortion amount
+        importance: 90
+        when: sound_808_character~distorted
+        values:
+          - label: gritty saturation
+            descriptor: gritty saturation
+          - label: full clipping
+            descriptor: full clipping
+  - id: pad
+    label: Pad
+    facets:
+      - id: sound_pad_character
+        question: What kind of pad?
+        intent: pad character
+        importance: 95
+        values:
+          - label: warm analog
+            descriptor: warm analog pad
+          - label: airy
+            descriptor: airy pad
+          - label: dark
+            descriptor: dark pad
+          - label: glassy
+            descriptor: glassy pad
+  - id: pluck
+    label: Pluck
+    facets:
+      - id: sound_pluck_character
+        question: What kind of pluck?
+        intent: pluck character
+        importance: 95
+        values:
+          - label: soft
+            descriptor: soft pluck
+          - label: bright
+            descriptor: bright pluck
+          - label: muted
+            descriptor: muted pluck
+          - label: metallic
+            descriptor: metallic pluck
+  - id: riser
+    label: Riser
+    facets:
+      - id: sound_riser_character
+        question: What kind of riser?
+        intent: riser character
+        importance: 95
+        values:
+          - label: noise sweep
+            descriptor: noise sweep riser
+          - label: tonal
+            descriptor: tonal riser
+          - label: reverse
+            descriptor: reverse riser
+          - label: impact
+            descriptor: impact riser
+  - id: impact
+    label: Impact
+    facets:
+      - id: sound_impact_character
+        question: What kind of impact?
+        intent: impact character
+        importance: 95
+        values:
+          - label: cinematic hit
+            descriptor: cinematic impact hit
+          - label: metallic
+            descriptor: metallic impact
+          - label: low boom
+            descriptor: low boom impact
+          - label: short crack
+            descriptor: short crack impact

@@ -13,7 +13,9 @@ export interface TurnRequest {
     slot: SlotName;
     action: AnswerAction;
     value?: string;
+    facet?: string;
   };
+  deepen?: boolean;
   output?: OutputChoice[];
   overrides?: {
     output?: string;

@@ -22,6 +22,7 @@ export const LANE_PAINT: Record<LaneId, LanePaint> = {
 }
 
 export function lanePaint(layer: string): LanePaint {
-  if (layer in LANE_PAINT) return LANE_PAINT[layer as LaneId]
+  const base = layer.replace(/_[ab]$/, "")
+  if (base in LANE_PAINT) return LANE_PAINT[base as LaneId]
   return { fill: "#16142C", ink: light, wave: "rgba(244, 242, 255, 0.55)", progress: "#8B6CFF" }
 }

@@ -19,3 +19,4 @@ class Question(BaseModel):
     options: list[str]
     index: int
     max: int
+    facet: str | None = None

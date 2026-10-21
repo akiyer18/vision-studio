@@ -33,6 +33,7 @@ def test_render_uses_edited_prompt_text(tmp_path: Path) -> None:
                 "text": "I feel sad in the rain",
                 "output": ["drums"],
                 "overrides": {"key": "D minor", "style": "a piano ballad"},
+                "answer": {"slot": "mood", "action": "skip_all"},
             },
         )
         assert turn.status_code == 200
@@ -61,6 +62,7 @@ def test_turn_render_and_export_match_the_bar_length(tmp_path: Path) -> None:
                 "text": "I feel sad in the rain",
                 "output": ["drums", "chords", "bass", "texture"],
                 "overrides": {"key": "D minor", "style": "a piano ballad"},
+                "answer": {"slot": "mood", "action": "skip_all"},
             },
         )
         assert turn.status_code == 200
@@ -245,6 +247,7 @@ def test_render_stream_reports_each_variation_and_keeps_other_layers(tmp_path: P
                 "text": "I feel sad in the rain",
                 "output": ["drums", "bass", "chords"],
                 "overrides": {"key": "D minor", "style": "a piano ballad"},
+                "answer": {"slot": "mood", "action": "skip_all"},
             },
         )
         assert turn.status_code == 200

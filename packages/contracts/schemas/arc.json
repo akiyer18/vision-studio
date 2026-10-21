@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Arc",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["label", "start", "end"],
+  "properties": {
+    "label": { "type": "string" },
+    "start": { "type": "string" },
+    "end": { "type": "string" }
+  }
+}

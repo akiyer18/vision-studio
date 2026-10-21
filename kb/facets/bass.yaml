@@ -1,0 +1,81 @@
+# Bass facets. The type is chosen first. The others apply only for that type.
+layer: bass
+groups:
+  - id: type
+    label: Bass
+    facets:
+      - id: bass_type
+        question: What kind of bass?
+        intent: bass type
+        importance: 34
+        values:
+          - label: sub
+            descriptor: sub bass
+          - label: 808
+            descriptor: 808 bass
+          - label: reese
+            descriptor: reese bass
+          - label: synth bass
+            descriptor: synth bass
+  - id: sub
+    label: Sub
+    facets:
+      - id: sub_weight
+        question: How heavy is the sub?
+        intent: sub weight
+        importance: 30
+        when: bass_type~sub
+        values:
+          - label: round and soft
+            descriptor: round soft sub
+          - label: deep and clean
+            descriptor: deep clean sub
+          - label: weighty
+            descriptor: weighty sub
+  - id: 808
+    label: "808"
+    facets:
+      - id: bass_808_length
+        question: How long does the 808 hold?
+        intent: 808 length
+        importance: 30
+        when: bass_type~808
+        values:
+          - label: short punch
+            descriptor: short punchy 808
+          - label: sustained
+            descriptor: sustained 808
+          - label: gliding
+            descriptor: gliding 808
+  - id: reese
+    label: Reese
+    facets:
+      - id: reese_movement
+        question: How does the reese move?
+        intent: reese movement
+        importance: 30
+        when: bass_type~reese
+        values:
+          - label: slow detune
+            descriptor: slowly detuned reese
+          - label: wide wobble
+            descriptor: wide wobbling reese
+          - label: static
+            descriptor: static reese
+  - id: synth_bass
+    label: Synth bass
+    facets:
+      - id: synth_bass_tone
+        question: What is the synth bass tone?
+        intent: synth bass tone
+        importance: 30
+        when: bass_type~synth bass
+        values:
+          - label: acid
+            descriptor: acid synth bass
+          - label: warm analog
+            descriptor: warm analog synth bass
+          - label: plucky
+            descriptor: plucky synth bass
+          - label: distorted
+            descriptor: distorted synth bass

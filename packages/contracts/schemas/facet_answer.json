@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FacetAnswer",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "layer", "label", "value", "descriptor", "options"],
+  "properties": {
+    "id": { "type": "string" },
+    "layer": { "type": "string" },
+    "label": { "type": "string" },
+    "value": { "type": "string" },
+    "descriptor": { "type": "string" },
+    "options": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

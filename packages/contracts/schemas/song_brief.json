@@ -34,6 +34,11 @@
     "skipped": {
       "type": "array",
       "items": { "$ref": "slot_name.json" }
-    }
+    },
+    "facets": {
+      "type": "array",
+      "items": { "$ref": "facet_answer.json" }
+    },
+    "arc": { "$ref": "arc.json" }
   }
 }

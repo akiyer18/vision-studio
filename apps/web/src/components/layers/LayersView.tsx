@@ -25,9 +25,12 @@ export function LayersView() {
   const reduce = useReducedMotion()
   const results = useRef<HTMLDivElement>(null)
   const seen = useRef(0)
-  const allowed = [...(features.fullMix ? LANES : LANES.filter((layer) => layer !== "full_mix")), "sound"]
-  const ordered = layerOrder.filter((layer) => (allowed as readonly string[]).includes(layer))
-  const lanes = ordered.length > 0 ? ordered : allowed.filter((layer) => renders.some((item) => item.layer === layer))
+  const allowed = new Set<string>([...(features.fullMix ? LANES : LANES.filter((layer) => layer !== "full_mix")), "sound"])
+  const ordered = layerOrder.filter((layer) => allowed.has(layer.replace(/_[ab]$/, "")))
+  const lanes =
+    ordered.length > 0
+      ? ordered
+      : [...allowed].filter((layer) => renders.some((item) => item.layer === layer || item.layer.replace(/_[ab]$/, "") === layer))
 
   useEffect(() => {
     if (runId === 0 || seen.current === runId) return

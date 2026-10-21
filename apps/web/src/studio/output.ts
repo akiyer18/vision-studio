@@ -11,6 +11,11 @@ export const OUTPUTS: { choice: OutputChoice; label: string }[] = [
 ]
 
 export function layerTitle(layer: string): string {
+  const section = layer.match(/^(.*)_(a|b)$/)
+  if (section?.[1] && section[2]) {
+    const name = section[1].replaceAll("_", " ")
+    return `${name.charAt(0).toUpperCase()}${name.slice(1)} ${section[2].toUpperCase()}`
+  }
   const words = layer.replaceAll("_", " ")
   return words.charAt(0).toUpperCase() + words.slice(1)
 }

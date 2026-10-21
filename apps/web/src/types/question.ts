@@ -8,4 +8,5 @@ export interface Question {
   options: string[];
   index: number;
   max: number;
+  facet?: string;
 }

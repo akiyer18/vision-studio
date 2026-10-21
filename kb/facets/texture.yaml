@@ -1,0 +1,66 @@
+layer: texture
+groups:
+  - id: ambience
+    label: Ambience
+    facets:
+      - id: texture_ambience
+        question: What ambience sits underneath?
+        intent: ambience
+        importance: 31
+        values:
+          - label: close room
+            descriptor: close room ambience
+          - label: wide hall
+            descriptor: wide hall ambience
+          - label: outdoor
+            descriptor: outdoor ambience
+          - label: none
+            descriptor: dry, no ambience
+  - id: foley
+    label: Foley
+    facets:
+      - id: texture_foley
+        question: Any foley in the texture?
+        intent: foley
+        importance: 26
+        values:
+          - label: rain
+            descriptor: rain foley
+          - label: cloth and room
+            descriptor: cloth and room foley
+          - label: mechanical
+            descriptor: mechanical foley
+          - label: none
+            descriptor: no foley
+  - id: risers
+    label: Risers
+    facets:
+      - id: texture_risers
+        question: Do risers lift the texture?
+        intent: risers
+        importance: 21
+        values:
+          - label: soft noise
+            descriptor: soft noise risers
+          - label: tonal sweep
+            descriptor: tonal riser sweep
+          - label: impact
+            descriptor: impact risers
+          - label: none
+            descriptor: no risers
+  - id: vinyl
+    label: Vinyl
+    facets:
+      - id: texture_vinyl
+        question: How much vinyl or dust?
+        intent: vinyl
+        importance: 18
+        values:
+          - label: clean
+            descriptor: clean texture, no vinyl
+          - label: light crackle
+            descriptor: light vinyl crackle
+          - label: heavy dust
+            descriptor: heavy vinyl dust
+          - label: tape hiss
+            descriptor: tape hiss texture

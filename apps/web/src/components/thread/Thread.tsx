@@ -50,9 +50,15 @@ export function Thread({ started, bubbles, onExchange, showLayers, showDemo }: P
       setLast({ action, value })
       setError(null)
       const asked = current?.status === "question" ? current.question?.text : ""
+      const facet = current?.status === "question" ? current.question?.facet : undefined
       try {
         await postTurn({
-          answer: value ? { slot, action, value } : { slot, action },
+          answer: {
+            slot,
+            action,
+            ...(value ? { value } : {}),
+            ...(facet ? { facet } : {}),
+          },
         })
         if (asked) onExchange(asked, answerLabel(action, value))
       } catch (err) {
@@ -64,6 +70,20 @@ export function Thread({ started, bubbles, onExchange, showLayers, showDemo }: P
     },
     [onExchange],
   )
+
+  const goDeeper = useCallback(async () => {
+    if (busy.current) return
+    busy.current = true
+    setError(null)
+    try {
+      await postTurn({ deepen: true })
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "That did not go through. Try again."
+      setError(message.trim().length < 160 ? message : "That did not go through. Try again.")
+    } finally {
+      busy.current = false
+    }
+  }, [])
 
   return (
     <div className={`studio-thread ${started ? "px-0 py-4" : ""}`}>
@@ -100,17 +120,24 @@ export function Thread({ started, bubbles, onExchange, showLayers, showDemo }: P
             {(prompts?.length ?? 0) > 0 ? (
               <article className="max-w-xl rounded-2xl border border-white/10 px-4 py-3">
                 <p className="text-ink">{summary || "Ready to build."}</p>
-                <Button className="mt-3" disabled={status === "working"} onClick={() => void renderCurrent()}>
-                  Build
-                </Button>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button tone="secondary" disabled={status === "working"} onClick={() => void goDeeper()}>
+                    Go deeper
+                  </Button>
+                  <Button disabled={status === "working"} onClick={() => void renderCurrent()}>
+                    Build now
+                  </Button>
+                </div>
               </article>
             ) : null}
-            {error && last ? (
+            {error ? (
               <div role="alert" className="text-danger">
                 <p>{error}</p>
-                <Button tone="secondary" className="mt-2" onClick={() => void send(last.action, last.value)}>
-                  Try again
-                </Button>
+                {last ? (
+                  <Button tone="secondary" className="mt-2" onClick={() => void send(last.action, last.value)}>
+                    Try again
+                  </Button>
+                ) : null}
               </div>
             ) : null}
             {showLayers ? (

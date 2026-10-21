@@ -1,0 +1,50 @@
+layer: chords
+groups:
+  - id: instrument
+    label: Chords
+    facets:
+      - id: chord_instrument
+        question: What plays the chords?
+        intent: chord instrument
+        importance: 33
+        values:
+          - label: piano
+            descriptor: piano chords
+          - label: electric piano
+            descriptor: electric piano chords
+          - label: synth pad
+            descriptor: synth pad chords
+          - label: guitar
+            descriptor: guitar chords
+  - id: voicing
+    label: Voicing
+    facets:
+      - id: chord_voicing
+        question: How are the chords voiced?
+        intent: chord voicing
+        importance: 28
+        values:
+          - label: close
+            descriptor: close chord voicing
+          - label: open
+            descriptor: open chord voicing
+          - label: spread
+            descriptor: spread chord voicing
+          - label: cluster
+            descriptor: cluster chord voicing
+  - id: rhythm
+    label: Rhythm
+    facets:
+      - id: chord_rhythm
+        question: How do the chords move?
+        intent: chord rhythm
+        importance: 24
+        values:
+          - label: sustained
+            descriptor: sustained chords
+          - label: pulsing
+            descriptor: pulsing chords
+          - label: stabs
+            descriptor: chord stabs
+          - label: broken
+            descriptor: broken chord rhythm
