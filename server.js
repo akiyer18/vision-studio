@@ -79,7 +79,7 @@ app.post('/api/synth', upload.single('audio'), async (req, res) => {
     if (mode !== 'loop') {
       const one = path.join(TMP, `${id}-oneshot.wav`);
       const norm = path.join(TMP, `${id}-oneshot-norm.wav`);
-      await sliceFirstHit(gen, one, { seconds: 1.0 });
+      await sliceFirstHit(gen, one, { seconds: clamp(Number(req.body.oneshotSeconds), 0.2, 6) || 1.0 });
       await normalize(one, norm);
       files.unshift(await publish(await fs.readFile(norm), name, '.wav', 'oneshot'));
     }
@@ -114,13 +114,36 @@ app.post('/api/reveal', (req, res) => {
   execFile('open', ['-R', p], (err) => (err ? res.status(500).json({ error: err.message }) : res.json({ ok: true })));
 });
 
+async function sendWithRetry(send, cmd, tries = 6, delayMs = 700) {
+  let reply;
+  for (let i = 0; i < tries; i++) {
+    reply = await send(cmd);
+    if (reply?.ok || !/not found/i.test(reply?.error || '')) return reply;
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return reply;
+}
+
+function patternToLiveNotes(pattern, mapping = 'gm') {
+  const stepBeats = 0.25, swing = (pattern.swing || 0) * 0.5 * stepBeats;
+  const notes = [];
+  for (const lane of pattern.lanes) {
+    const pitch = mapping === 'single' ? 60 : (GM_DRUM_NOTES[lane.instrument] ?? 60);
+    for (const s of lane.steps) notes.push({ pitch, start: s.step * stepBeats + (s.step % 2 ? swing : 0), duration: 0.125, velocity: s.velocity });
+  }
+  return notes;
+}
+
+const melodyToLiveNotes = (notes) => notes.map((n) => ({ pitch: n.pitch, start: n.startBeats, duration: n.durationBeats, velocity: n.velocity }));
+const melodyBars = (notes, bars) => bars || Math.max(1, Math.ceil(Math.max(0, ...notes.map((n) => n.startBeats + n.durationBeats)) / 4));
+
 // ---- Send straight into Ableton via the ADEHack remote script (ableton/client.js, TCP 9004) ----
 async function liveClient() {
   let sendToLive;
   try { ({ sendToLive } = await import('./ableton/client.js')); }
   catch { throw new Error('ableton/client.js missing - run ableton/install.sh'); }
   return async (cmd) => {
-    try { return await sendToLive(cmd); }
+    try { return await sendToLive(cmd, { timeoutMs: cmd.cmd === 'load_sample' ? 8000 : 4000 }); }
     catch (e) { throw new Error(`${e.message} Fix: fully quit and relaunch Live 10, then Preferences > Link/MIDI > Control Surface = "ADEHack".`); }
   };
 }
@@ -130,7 +153,7 @@ app.post('/api/live/sample', async (req, res) => {
     const p = String(req.body?.path || '');
     if (!p.startsWith(OUT_DIR)) throw new Error('path outside output dir');
     const send = await liveClient();
-    const reply = await send({ cmd: 'load_sample', path: p });
+    const reply = await sendWithRetry(send, { cmd: 'load_sample', path: p, ...(req.body?.track != null ? { track: req.body.track } : {}) });
     if (!reply?.ok) throw new Error(reply?.error || 'Live rejected load_sample');
     res.json(reply);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -140,18 +163,109 @@ app.post('/api/live/pattern', async (req, res) => {
   try {
     const { pattern, mapping = 'gm', slot = 0, fire = true } = req.body || {};
     if (!pattern?.lanes) throw new Error('pattern missing');
-    const stepBeats = 0.25, swing = (pattern.swing || 0) * 0.5 * stepBeats;
-    const notes = [];
-    for (const lane of pattern.lanes) {
-      const pitch = mapping === 'single' ? 60 : (GM_DRUM_NOTES[lane.instrument] ?? 60);
-      for (const s of lane.steps) notes.push({ pitch, start: s.step * stepBeats + (s.step % 2 ? swing : 0), duration: 0.125, velocity: s.velocity });
-    }
+    const notes = patternToLiveNotes(pattern, mapping);
     const send = await liveClient();
     const tempo = await send({ cmd: 'set_tempo', bpm: pattern.bpm });
-    const clip = await send({ cmd: 'create_clip', track: 'selected', slot: Number(slot) || 0, length: pattern.bars * 4, notes, fire: Boolean(fire) });
+    const clip = await send({ cmd: 'create_clip', track: req.body.track ?? 'selected', slot: Number(slot) || 0, length: pattern.bars * 4, notes, fire: Boolean(fire), name: 'Drums' });
     if (!clip?.ok) throw new Error(clip?.error || 'Live rejected create_clip');
     res.json({ ok: true, tempo, clip, noteCount: notes.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/plan', async (req, res) => {
+  try {
+    const { makePlan } = await import('./lib/plan.js');
+    const { text = '', hasBeatbox = false, hasHum = false } = req.body || {};
+    res.json(await makePlan({ text: String(text), hasBeatbox: Boolean(hasBeatbox), hasHum: Boolean(hasHum) }));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---- v2: melody, rhythm, multi-track build ----
+app.post('/api/melody', upload.single('audio'), async (req, res) => {
+  const id = Date.now();
+  try {
+    const { humToNotes, describeToMelody, notesToMidi } = await import('./lib/melody.js');
+    const bpm = req.body.bpm ? clamp(Number(req.body.bpm), 40, 300) : 120;
+    const bars = req.body.bars ? clamp(Number(req.body.bars), 1, 8) : undefined;
+    const name = req.body.name || 'melody';
+    let out;
+    if (req.file) {
+      const raw = path.join(TMP, `${id}-mel.wav`);
+      await toWav(req.file.path, raw);
+      const r = await humToNotes(raw, { bpm });
+      if (!r.notes.length) throw new Error('No pitched notes detected. Hum louder and closer to the mic, hold each note a little longer.');
+      out = { notes: r.notes, bars: r.bars || melodyBars(r.notes), bpm: r.bpm || bpm, source: 'hum' };
+    } else {
+      const r = await describeToMelody({ description: req.body.description || '', bpm, bars: bars || 2, key: req.body.key || undefined });
+      out = { notes: r.notes, bars: bars || 2, bpm, source: r.source, key: r.key };
+    }
+    const midi = await publish(notesToMidi(out.notes, { bpm: out.bpm }), name, '.mid', 'midi');
+    res.json({ ...out, midi });
+  } catch (e) {
+    console.error('[melody]', e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    if (req.file) fs.unlink(req.file.path).catch(() => {});
+  }
+});
+
+app.post('/api/rhythm', upload.single('audio'), async (req, res) => {
+  const id = Date.now();
+  try {
+    const { beatboxToPattern } = await import('./lib/rhythm.js');
+    if (!req.file) throw new Error('Record a beatbox first');
+    const raw = path.join(TMP, `${id}-beat.wav`);
+    await toWav(req.file.path, raw);
+    const bpm = req.body.bpm ? clamp(Number(req.body.bpm), 40, 300) : undefined;
+    const bars = req.body.bars ? clamp(Number(req.body.bars), 1, 8) : undefined;
+    const { pattern, onsets } = await beatboxToPattern(raw, { bpm, bars });
+    const mapping = req.body.mapping === 'single' ? 'single' : 'gm';
+    const midi = await publish(patternToMidi(pattern, { mapping, singleNote: 60 }), req.body.name || 'beatbox-pattern', '.mid', 'midi');
+    res.json({ pattern, onsets, midi, source: 'beatbox' });
+  } catch (e) {
+    console.error('[rhythm]', e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    if (req.file) fs.unlink(req.file.path).catch(() => {});
+  }
+});
+
+app.post('/api/live/melody', async (req, res) => {
+  try {
+    const { notes, bpm, bars, track = 'selected', slot = 0, fire = true, name = 'Melody' } = req.body || {};
+    if (!notes?.length) throw new Error('no notes');
+    const send = await liveClient();
+    if (bpm) await send({ cmd: 'set_tempo', bpm });
+    const clip = await send({ cmd: 'create_clip', track, slot: Number(slot) || 0, length: melodyBars(notes, bars) * 4, notes: melodyToLiveNotes(notes), fire: Boolean(fire), name });
+    if (!clip?.ok) throw new Error(clip?.error || 'Live rejected create_clip');
+    res.json({ ok: true, clip, noteCount: notes.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/live/build', async (req, res) => {
+  const steps = [];
+  try {
+    const { bpm, drums, synth } = req.body || {};
+    const send = await liveClient();
+    const step = async (label, cmd, retry = false) => {
+      const r = retry ? await sendWithRetry(send, cmd) : await send(cmd);
+      steps.push({ label, ok: Boolean(r?.ok), ...(r?.error ? { error: r.error } : {}) });
+      if (!r?.ok) throw new Error(`${label}: ${r?.error || 'failed'}`);
+      return r;
+    };
+    if (bpm) await step('tempo', { cmd: 'set_tempo', bpm });
+    if (drums?.pattern?.lanes) {
+      const t = await step('create Drums track', { cmd: 'create_midi_track', name: 'Drums', index: -1 });
+      if (drums.samplePath) await step('load drum sample', { cmd: 'load_sample', path: drums.samplePath, track: t.index }, true);
+      await step('drums clip', { cmd: 'create_clip', track: t.index, slot: 0, length: drums.pattern.bars * 4, notes: patternToLiveNotes(drums.pattern, drums.mapping || 'single'), fire: true, name: 'Drums' });
+    }
+    if (synth?.notes?.length) {
+      const t = await step('create Saw track', { cmd: 'create_midi_track', name: 'Saw', index: -1 });
+      if (synth.samplePath) await step('load saw sample', { cmd: 'load_sample', path: synth.samplePath, track: t.index }, true);
+      await step('saw clip', { cmd: 'create_clip', track: t.index, slot: 0, length: melodyBars(synth.notes, synth.bars) * 4, notes: melodyToLiveNotes(synth.notes), fire: true, name: 'Saw' });
+    }
+    res.json({ ok: true, steps });
+  } catch (e) { res.status(500).json({ error: e.message, steps }); }
 });
 
 app.listen(PORT, () => {

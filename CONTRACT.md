@@ -51,3 +51,34 @@ File naming: `${slug(name)}-${Date.now()}.wav|.mid`
    {"cmd":"load_sample","path":"/abs/path.wav"}   -> loads file from User Library into the selected track via Live.Application.get_application().browser.load_item
    {"cmd":"set_tempo","bpm":128}
 - Install path: /Applications/Ableton Live 10 Standard.app/Contents/App-Resources/MIDI Remote Scripts/ADEHack/  (or ~/Music/Ableton/User Library/Remote Scripts/ADEHack/)
+
+# ---- v2 additions (melody / rhythm / multi-track) ----
+
+## lib/melody.js (no deps; ffmpeg decodes audio to raw mono float32 16 kHz via `ffmpeg -i in -ac 1 -ar 16000 -f f32le -`)
+- humToNotes(wavPath, { bpm, stepsPerBar=16, minSteps=1 }) -> { notes:[{ pitch:int 36..96, startBeats, durationBeats, velocity }], bars:int, bpm }
+   frame-wise pitch detection (autocorrelation / YIN-style, frame 2048, hop 256, RMS gate), hz -> nearest MIDI semitone, median-smooth,
+   quantize onsets/offsets to the 16th grid at bpm, merge consecutive same-pitch frames into notes, drop notes shorter than minSteps, bars = ceil(total beats / 4).
+- describeToMelody({ description, bpm, bars=2, key }) -> { notes, source:'claude'|'rules', key }
+   rules: parse key (e.g. "C minor", "F# major", default C minor), style words: arp/arpeggio (8th or 16th arps over i-VI-III-VII), bassline (root notes, octave 2, 8ths), stabs/chords (3-note chords on 1 and 3.5), lead/melody (stepwise scale motion, mostly 8ths), "octave up/down". Claude path like describeToPattern when ANTHROPIC_API_KEY set.
+- notesToMidi(notes, { bpm, ppq=96, channel=0 }) -> Buffer  (reuse lib/midi.js buildMidi)
+
+## lib/rhythm.js
+- beatboxToPattern(wavPath, { bpm, bars }) -> { pattern (PatternSchema-valid), onsets:[{ time, instrument, energy }] }
+   onset detection = spectral/energy flux peaks with min 60 ms gap; per-onset features over 40 ms: RMS, spectral centroid, zero-crossing rate;
+   classify: centroid < 400 Hz -> kick, 400-3000 Hz with high ZCR -> snare, > 3000 Hz -> hat_closed; quantize to 16ths at bpm; bars = given or ceil(duration beats / 4) (1-8).
+   If bpm missing: estimate from inter-onset intervals (median IOI -> 60/IOI * {1,2,4} chosen into 70-180).
+
+## server.js additions
+- POST /api/melody  multipart: audio (optional), description, bpm, bars, key, name  -> { notes, bars, bpm, source:'hum'|'claude'|'rules', midi:{name,url,path} }
+- POST /api/rhythm  multipart: audio (required), bpm (optional), bars (optional), name -> { pattern, onsets, midi }
+- POST /api/live/melody json { notes, bpm, bars, track?, slot?, fire? } -> create_clip with pitched notes (channel 1)
+- POST /api/live/build json { bpm, drums:{ pattern, mapping, samplePath? }, synth:{ samplePath, notes, bars } } ->
+    create_midi_track "Drums" + load sample (if given) + create_clip(pattern), create_midi_track "Saw" + load sample + create_clip(notes), set_tempo; returns per-step results
+- /api/live/sample and all load_sample calls: retry up to 6x with 700 ms sleep when Live replies "not found" (index lag for freshly written files)
+
+## ableton/ protocol additions (ADEHack.py v3)
+- {"cmd":"list_tracks"} -> {ok, tracks:[{index,name,is_midi,selected}]}
+- {"cmd":"create_midi_track","name":"Saw","index":-1} -> {ok,index,name}   (song.create_midi_track(index); then set .name; select it)
+- {"cmd":"select_track","track": int|name} -> {ok,index,name}   (song.view.selected_track = track)
+- load_sample: optional "track": int|name -> select it first; internal retry: poll browser roots for up to 3 s (every 0.25 s via schedule_message, non-blocking) before replying not found
+- create_clip: "track" accepts int|name|"selected"; optional "name" sets clip.name; replaces an existing clip in that slot (delete_clip first)

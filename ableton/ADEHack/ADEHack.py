@@ -16,6 +16,9 @@ GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 4
                  'hat_open': 46, 'tom_low': 45, 'tom_high': 50, 'ride': 51,
                  'crash': 49, 'perc': 54}
 WOULD_BLOCK = (errno.EAGAIN, errno.EWOULDBLOCK, errno.EINPROGRESS)
+PENDING = object()  # returned by a command that will reply later via schedule_message
+LOAD_RETRY_TICKS = 3   # ~0.3 s between browser re-scans
+LOAD_RETRY_MAX = 8     # ~2.4 s total before replying not found
 
 
 def _to_bytes(s):
@@ -87,7 +90,9 @@ class ADEHack(ControlSurface):
                 line, client[1] = client[1].split(b'\n', 1)
                 line = line.strip()
                 if line:
-                    self._send(conn, self._handle_line(line))
+                    reply = self._handle_line(line, conn)
+                    if reply is not PENDING:
+                        self._send(conn, reply)
 
     def _drop(self, client, why):
         self.log_message('ADEHack: dropping client (%s)' % why)
@@ -105,7 +110,7 @@ class ADEHack(ControlSurface):
             self.log_message('ADEHack: send failed: %r' % (e,))
 
     # ----------------------------------------------------------------- commands
-    def _handle_line(self, line):
+    def _handle_line(self, line, conn=None):
         try:
             text = line.decode('utf-8') if isinstance(line, bytes) else line
             msg = json.loads(text)
@@ -119,7 +124,25 @@ class ADEHack(ControlSurface):
             if cmd == 'create_clip':
                 return self._cmd_create_clip(msg)
             if cmd == 'load_sample':
-                return self._cmd_load_sample(msg)
+                return self._cmd_load_sample(msg, conn)
+            if cmd == 'show_view':
+                name = msg.get('view', 'Session')
+                ok = self._show_view(name)
+                return {'ok': ok, 'view': name} if ok else {'ok': False, 'error': 'show_view(%r) failed' % (name,)}
+            if cmd == 'play':
+                self.song().start_playing()
+                return {'ok': True, 'playing': True}
+            if cmd == 'stop':
+                self.song().stop_playing()
+                return {'ok': True, 'playing': False}
+            if cmd == 'list_tracks':
+                return self._cmd_list_tracks(msg)
+            if cmd == 'create_midi_track':
+                return self._cmd_create_midi_track(msg)
+            if cmd == 'select_track':
+                track = self._track(msg.get('track', 'selected'))
+                self.song().view.selected_track = track
+                return {'ok': True, 'index': self._index_of(track), 'name': track.name}
             if cmd == 'browse':
                 return self._cmd_browse(msg)
             return {'ok': False, 'error': 'unknown cmd: %r' % (cmd,)}
@@ -129,9 +152,52 @@ class ADEHack(ControlSurface):
 
     def _track(self, spec):
         song = self.song()
-        if spec is None or spec == 'selected':
+        if spec is None or spec == 'selected' or spec == '':
             return song.view.selected_track
-        return song.tracks[int(spec)]
+        tracks = list(song.tracks)
+        if isinstance(spec, bool):
+            raise ValueError('bad track spec %r' % (spec,))
+        if isinstance(spec, (int, float)):
+            return tracks[int(spec)]
+        text = u'%s' % (spec,)
+        if text.lstrip('-').isdigit():
+            return tracks[int(text)]
+        for t in tracks:  # exact name, then case-insensitive
+            if t.name == text:
+                return t
+        for t in tracks:
+            if t.name.lower() == text.lower():
+                return t
+        raise ValueError('no track named %r; tracks: %r' % (text, [t.name for t in tracks]))
+
+    def _index_of(self, track):
+        for i, t in enumerate(self.song().tracks):
+            if t == track:
+                return i
+        return -1
+
+    def _cmd_list_tracks(self, msg):
+        song = self.song()
+        sel = song.view.selected_track
+        out = []
+        for i, t in enumerate(song.tracks):
+            out.append({'index': i, 'name': t.name, 'is_midi': bool(t.has_midi_input),
+                        'selected': t == sel})
+        return {'ok': True, 'tracks': out}
+
+    def _cmd_create_midi_track(self, msg):
+        song = self.song()
+        index = int(msg.get('index', -1))
+        before = len(list(song.tracks))
+        song.create_midi_track(index)
+        tracks = list(song.tracks)
+        if len(tracks) != before + 1:
+            return {'ok': False, 'error': 'create_midi_track did not add a track'}
+        track = tracks[index] if 0 <= index < len(tracks) else tracks[-1]
+        if msg.get('name'):
+            track.name = u'%s' % (msg['name'],)
+        song.view.selected_track = track
+        return {'ok': True, 'index': self._index_of(track), 'name': track.name}
 
     def _cmd_ping(self, msg):
         song = self.song()
@@ -194,7 +260,22 @@ class ADEHack(ControlSurface):
         clip.looping = True
         if msg.get('fire'):
             slot.fire()
+        # Make the new clip visible: Live often sits in Arrangement view.
+        try:
+            self.song().view.highlighted_clip_slot = slot
+        except Exception as e:
+            self.log_message('ADEHack: highlighted_clip_slot failed: %r' % (e,))
+        if msg.get('show', True):
+            self._show_view('Session')
         return {'ok': True, 'track': track.name, 'slot': int(slot_index), 'notes': len(tup)}
+
+    def _show_view(self, name):
+        try:
+            Live.Application.get_application().view.show_view(name)
+            return True
+        except Exception as e:
+            self.log_message('ADEHack: show_view(%r) failed: %r' % (name, e))
+            return False
 
     # Roots searched for load_sample, in order. user_folders = "Places" the
     # user added via "Add Folder..."; Live's User Library index can be stale.
@@ -229,12 +310,19 @@ class ADEHack(ControlSurface):
             result.append({'root': name, 'name': getattr(root, 'name', ''), 'uri': getattr(root, 'uri', ''), 'children': kids})
         return {'ok': True, 'roots': result}
 
-    def _cmd_load_sample(self, msg):
+    def _cmd_load_sample(self, msg, conn=None):
+        # Select the target track up front so the user sees where it lands.
+        if msg.get('track') not in (None, 'selected', ''):
+            self.song().view.selected_track = self._track(msg['track'])
+        job = {'msg': msg, 'conn': conn, 'attempt': 0}
+        return self._try_load(job)
+
+    def _try_load(self, job):
+        msg = job['msg']
         path = msg['path']
         base = os.path.basename(path)
         stem = os.path.splitext(base)[0]
-        app = Live.Application.get_application()
-        browser = app.browser
+        browser = Live.Application.get_application().browser
         searched = []
         found = None
         for name, root in self._roots(browser):
@@ -242,13 +330,29 @@ class ADEHack(ControlSurface):
             found = self._find_item(root, (base, stem))
             if found is not None:
                 break
-        if found is None:
-            return {'ok': False, 'error': 'not found in Live browser: %r; searched %r. '
-                    'Add the output folder via Places > "Add Folder..." in Live.' % (base, searched)}
-        if msg.get('track') not in (None, 'selected'):
-            self.song().view.selected_track = self._track(msg['track'])
-        browser.load_item(found)
-        return {'ok': True, 'item': found.name, 'uri': found.uri, 'root': searched[-1]}
+        if found is not None:
+            browser.load_item(found)
+            return {'ok': True, 'item': found.name, 'uri': found.uri, 'root': searched[-1],
+                    'attempts': job['attempt'] + 1,
+                    'track': self.song().view.selected_track.name}
+        job['attempt'] += 1
+        if job['attempt'] < LOAD_RETRY_MAX and job['conn'] is not None:
+            # Not indexed yet (fresh wav). Re-scan on a later tick without blocking Live.
+            self.log_message('ADEHack: %r not found yet, retry %d' % (base, job['attempt']))
+            self.schedule_message(LOAD_RETRY_TICKS, lambda: self._retry_load(job))
+            return PENDING
+        return {'ok': False, 'error': 'not found in Live browser after %d tries: %r; searched %r. '
+                'Add the output folder via Places > "Add Folder..." in Live.'
+                % (job['attempt'], base, searched)}
+
+    def _retry_load(self, job):
+        try:
+            reply = self._try_load(job)
+        except Exception as e:
+            self.log_message('ADEHack: load retry error: %r' % (e,))
+            reply = {'ok': False, 'error': '%s: %s' % (e.__class__.__name__, e)}
+        if reply is not PENDING:
+            self._send(job['conn'], reply)
 
     def _find_item(self, root, names, max_depth=6, max_items=5000):
         # Bounded iterative DFS so the UI never freezes on a huge library.
