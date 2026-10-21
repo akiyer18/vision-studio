@@ -1386,7 +1386,7 @@ function makeCtx(emit) {
         return r;
       },
       // one Drum Rack track for the whole kit (fewer tracks); falls back to per-lane tracks on older scripts
-      async buildKit({ name = 'Drums', kit = [], pattern, bars, slot = 0 }) {
+      async buildKit({ name = 'Drums', kit = [], pattern, bars, slot = 0, useGroove = false, humanize = 0 }) {
         const send = await liveClient();
         const GM = { kick: 36, snare: 38, clap: 39, rim: 37, hat_closed: 42, hat_open: 46, tom_low: 45, tom_high: 50, ride: 51, crash: 49, perc: 54 };
         const b = bars || pattern?.bars || 2;
@@ -1403,7 +1403,8 @@ function makeCtx(emit) {
           const pads = [];
           for (const k of kit) { const key = k.label || k.kind; const pref = k.note ?? GM[k.kind]; const have = pref != null ? lastBuild.samples[`${t.name.toLowerCase()}#${pref}`] : null; if (have && have.samplePath === k.samplePath) { noteFor[key] = pref; if (k.kind) noteFor[k.kind] ??= pref; pads.push({ note: pref, label: key, reused: true }); continue; } const note = freeNote(pref); noteFor[key] = note; if (k.kind) noteFor[k.kind] ??= note; try { await this.loadToPad({ track: t.name, note, samplePath: k.samplePath, label: key }); pads.push({ note, label: key }); } catch (e) { pads.push({ note, label: key, error: e.message }); } }
           const notes = [];
-          for (const lane of pattern?.lanes || []) { const padNote = noteFor[lane.instrument] ?? noteFor[LANE_LABEL[lane.instrument]] ?? GM[lane.instrument] ?? 54; for (const st of lane.steps) notes.push({ pitch: padNote, start: st.step * 0.25 + (st.step % 2 ? (pattern.swing || 0) * 0.125 : 0), duration: 0.125, velocity: st.velocity }); }
+          const kitBpm = await syncTempo(); const grooveT = useGroove ? (pattern?.groove || lastBuild.groove) : null;
+          for (const lane of pattern?.lanes || []) { const padNote = noteFor[lane.instrument] ?? noteFor[LANE_LABEL[lane.instrument]] ?? GM[lane.instrument] ?? 54; for (const n of stepsToNotes(lane.steps, pattern?.swing || 0, humanize, kitBpm, grooveT)) notes.push({ ...n, pitch: padNote }); }
           const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.name, slot: Number(slot) || 0, length: b * 4, notes, fire: true, name, show: false }), 'create_clip');
           lastBuild.tracks.drums = { index: t.index, name: t.name };
           if (!Number(slot)) rememberClip(t.name, { notes: notes.map((n) => ({ pitch: n.pitch, startBeats: n.start, durationBeats: n.duration, velocity: n.velocity })), bars: b });
@@ -1413,7 +1414,7 @@ function makeCtx(emit) {
         for (const lane of pattern?.lanes || []) { const k = kit.find((x) => (x.label || x.kind) === lane.instrument || x.kind === lane.instrument); const label = LANE_LABEL[lane.instrument] || lane.instrument; built.push(await this.buildLane({ name: label, instrument: lane.instrument, samplePath: k?.samplePath, steps: lane.steps, bars: b, swing: pattern.swing || 0, slot, useGroove: true })); }
         return { mode: 'per_lane_fallback', note: 'Drum Rack pad loading needs ADEHack 5.6; built one track per lane instead', tracks: built.map((x) => x.track?.name) };
       },
-      describeSet: async () => okOrThrow(await (await liveClient())({ cmd: 'describe_set' }), 'describe_set'),
+      describeSet: async ({ detail = 'brief' } = {}) => { const r = okOrThrow(await (await liveClient())({ cmd: 'describe_set' }), 'describe_set'); if (detail === 'full') return r; return { ...r, tracks: (r.tracks || []).map((t) => ({ index: t.index, name: t.name, is_midi: t.is_midi, devices: (t.devices || []).map((d) => d.name || d.class_name).slice(0, 6), clipCount: Array.isArray(t.clips) ? t.clips.length : t.clip_count, muted: t.mute ?? t.muted, selected: t.selected })), returns: undefined, master: undefined, note: 'brief view; detail:"full" adds mixer and clips' }; },
       async getClipNotes({ track, slot = 0 }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'get_clip_notes', track: t.name, slot: Number(slot) || 0 }), 'get_clip_notes'); },
       setTrackColor: async ({ track, colorIndex, color_index }) => { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'set_track_color', track: t.name, color_index: Number(colorIndex ?? color_index) }), 'set_track_color'); },
       captureMidi: async () => okOrThrow(await (await liveClient())({ cmd: 'capture_midi' }), 'capture_midi'),
