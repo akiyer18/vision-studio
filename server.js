@@ -736,6 +736,10 @@ function makeCtx(emit) {
         (lanes[inst] ||= new Map()).set(step, Math.max(vel, lanes[inst].get(step) || 0));
         micro[step % 16].push((stepF - step) * stepSec * 1000); velProf[step % 16].push(vel / 127);
       }
+      // align: Stability loops rarely start exactly on the downbeat; rotate so the first strong kick sits on step 0
+      const kickSteps = [...(lanes.kick || new Map()).entries()].sort((a, b) => a[0] - b[0]);
+      const offset = kickSteps.length ? kickSteps[0][0] % 16 : 0;
+      if (offset) for (const m of Object.values(lanes)) { const rot = new Map(); for (const [st, v] of m) rot.set((st - offset + total) % total, v); m.clear(); for (const [st, v] of rot) m.set(st, v); }
       const mean = (a) => (a.length ? a.reduce((p, c) => p + c, 0) / a.length : 0);
       const microtiming = micro.map((a) => Number(mean(a).toFixed(1)));
       const velocityProfile = velProf.map((a) => Number(mean(a).toFixed(2)));
@@ -743,7 +747,7 @@ function makeCtx(emit) {
       const swing = clamp(mean(offbeats) / (stepSec * 1000) * 2, 0, 1);
       const pattern = { name: `loop rhythm ${Math.round(bpm)}`, bpm: Math.round(bpm), bars: clamp(Number(bars), 1, 8), stepsPerBar: 16, swing: Number(swing.toFixed(2)), lanes: Object.entries(lanes).map(([instrument, m]) => ({ instrument, steps: [...m.entries()].sort((a, b) => a[0] - b[0]).map(([step, velocity]) => ({ step, velocity })) })) };
       const groove = { swing: pattern.swing, microtiming, velocityProfile, source: path.basename(loopPath) };
-      return { pattern, groove, onsetCount: onsets.length };
+      return { pattern, groove, onsetCount: onsets.length, alignedOffsetSteps: offset };
     },
     async generateRhythm({ prompt, genre, bpm = lastBuild.bpm || 120, bars = 2 }) {
       let body = prompt;

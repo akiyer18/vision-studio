@@ -15,6 +15,8 @@ const ctx = {
   restyleAudio: async (o) => { calls.push(["restyleAudio", o]); return { path: "/out/restyled.wav", url: "/out/restyled.wav", durationSeconds: 12.3 }; },
   explain: async (o) => { calls.push(["explain", o]); return { id: "ex1" }; },
   genreBlueprint: async (g) => { calls.push(["genreBlueprint", g]); if (!/hip hop|boom bap/i.test(g)) throw new Error(`unknown genre '${g}'; closest: 2000s hip hop, 90s boom bap, trap`); return { slug: "2000s-hip-hop", title: "2000s Hip Hop", summary: "92-100 BPM; kick: round sampled, snare + snap layered on 2 and 4...", markdown: "# 2000s Hip Hop\n## Bass\nTYPE: Moog-style synth bass..." }; },
+  generateRhythm: async (o) => { calls.push(["generateRhythm", o]); return { loop: { path: "/out/rl.wav", url: "/out/rl.wav" }, kit: [{ kind: "kick", path: "/out/rk.wav", time: 0.01 }, { kind: "snare", path: "/out/rs.wav", time: 0.64 }], pattern: { bpm: 93, bars: 2, stepsPerBar: 16, swing: 0.18, lanes: [{ instrument: "kick", steps: [{ step: 0, velocity: 120 }, { step: 10, velocity: 105 }] }, { instrument: "snare", steps: [{ step: 4, velocity: 118 }, { step: 12, velocity: 118 }] }] }, groove: { swing: 0.18, microtiming: Array(16).fill(2.5), velocityProfile: Array(16).fill(0.9) } }; },
+  designKit: async (o) => { calls.push(["designKit", o]); return { best: { path: "/out/c2.wav", url: "/out/c2.wav", verdict: "on target", score: 8, why: "swung MPC hats, snap on snare" }, candidates: [{ path: "/out/c1.wav", verdict: "close", score: 6, why: "hats too clean" }, { path: "/out/c2.wav", verdict: "on target", score: 8, why: "swung MPC hats, snap on snare" }], kit: [{ kind: "kick", samplePath: "/out/ck.wav", time: 0.02 }], pattern: { bpm: 93, bars: 2, stepsPerBar: 16, swing: 0.18, lanes: [{ instrument: "kick", steps: [{ step: 0, velocity: 120 }, { step: 10, velocity: 105 }] }, { instrument: "snare", steps: [{ step: 4, velocity: 118 }, { step: 12, velocity: 118 }] }] }, groove: { swing: 0.2 }, bpm: 93 }; },
   genreGuide: async (o) => { calls.push(["genreGuide", o]); return { text: "UK Garage: ... (from model knowledge, verify names)", source: "model" }; },
   writePattern: async (o) => { calls.push(["writePattern", o]); return { pattern: { name: "p", bpm: o.bpm, bars: o.bars, stepsPerBar: 16, swing: 0, lanes: [{ instrument: "kick", steps: [{ step: 0, velocity: 120 }] }] }, source: "rules" }; },
   writeMelody: async (o) => { calls.push(["writeMelody", o]); return { key: o.key, bars: o.bars, notes: [{ pitch: 60, startBeats: 0, durationBeats: 1, velocity: 100 }], source: "rules" }; },
@@ -71,6 +73,8 @@ const ctx = {
     mixBalance: async (i) => { calls.push(["mixBalance", i]); return { applied: [{ track: "Kick", volume: 0.85, pan: 0 }, { track: "Hats", volume: 0.62, pan: 0.18 }], overrides: i.overrides?.length || 0 }; },
     describeSet: async () => { calls.push(["describeSet"]); return { tempo: 124, is_playing: true, selected_scene: 0, scenes: [{ index: 0, name: "Main" }, { index: 1, name: "" }], tracks: [{ index: 0, name: "Drums", is_midi: true, selected: true, has_sound: true, mixer: { volume: 0.85, pan: 0, mute: false, solo: false }, devices: [{ name: "Drum Rack" }, { name: "Saturator" }], clips: [{ slot: 0, name: "Groove", length: 8, is_playing: true, note_count: 42 }] }, { index: 1, name: "Vox", is_midi: false, selected: false, has_sound: false, mixer: { volume: 0.7, pan: 0.1, mute: true, solo: false }, devices: [], clips: [{ slot: 0, name: "take", length: 16, is_audio: true }] }] }; },
     getClipNotes: async (i) => { calls.push(["getClipNotes", i]); return { track: "Drums", slot: i.slot, length: 4, notes: [{ pitch: 36, start: 0, duration: 0.25, velocity: 120 }, { pitch: 38, start: 1, duration: 0.25, velocity: 100 }] }; },
+    buildKit: async (i) => { calls.push(["buildKit", i]); return { track: { index: 1, name: i.name }, mode: "drum_rack", pads: i.kit.length, notes: 4 }; },
+    loadToPad: async (i) => { calls.push(["loadToPad", i]); return { pad: { name: i.label, has_chain: true }, device_index: 0 }; },
     setTrackColor: async (i) => { calls.push(["setTrackColor", i]); return { color: i.colorIndex }; },
     captureMidi: async () => { calls.push(["captureMidi"]); return { captured: true, track: "Keys" }; },
     show: async () => ({ view: "Session" }),
@@ -80,7 +84,7 @@ const ctx = {
 };
 
 const tools = makeTools(ctx, { beat: "/tmp/fake.wav", refs: [{ name: "loop.wav", path: "/tmp/ref1.wav" }, { name: "kick.wav", path: "/tmp/ref2.wav" }] });
-const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "transcribe_audio", "judge_sound", "slice_sample", "chop_sample", "load_device", "add_effect", "set_param", "list_devices", "set_mixer", "create_scene", "fire_scene", "record_arrangement", "analyze_audio", "compare_audio", "render_preview", "set_track_color", "capture_midi", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "separate_stems", "analyze_music", "process_audio", "master_preview", "generate_loop", "restyle_mix", "production_dna", "critique_mix", "label_pieces", "refine_sound", "undo_sound", "listen_live", "critique_capture", "describe_set", "read_clip", "import_sample", "restyle_audio", "explain_result", "genre_guide", "genre_blueprint", "show_live", "play", "stop"];
+const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "transcribe_audio", "judge_sound", "slice_sample", "chop_sample", "load_device", "add_effect", "set_param", "list_devices", "set_mixer", "create_scene", "fire_scene", "record_arrangement", "analyze_audio", "compare_audio", "render_preview", "set_track_color", "capture_midi", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "separate_stems", "analyze_music", "process_audio", "master_preview", "generate_loop", "restyle_mix", "production_dna", "critique_mix", "label_pieces", "refine_sound", "undo_sound", "listen_live", "critique_capture", "describe_set", "read_clip", "import_sample", "restyle_audio", "explain_result", "genre_guide", "genre_blueprint", "generate_rhythm", "design_kit", "build_kit", "load_to_pad", "show_live", "play", "stop"];
 assert.deepEqual(tools.map((t) => t.name), expected, "tool names");
 for (const t of tools) {
   assert.ok(t.description && t.description.length > 20, `${t.name} description`);
@@ -145,6 +149,10 @@ const sample = {
   explain_result: { path: "/out/x.wav", brief: "a punchy techno kick", choices: [{ what: "sub + click layered", why: "weight and transient separately" }], steps_ableton: ["Simpler with the sub", "Saturator Drive 8 dB", "EQ Eight highpass 30 Hz"], steps_logic: ["Quick Sampler", "Phat FX drive", "Channel EQ highpass 30 Hz"] },
   genre_guide: { genre: "UK Garage" },
   genre_blueprint: { genre: "2000s hip hop" },
+  generate_rhythm: { prompt: "Genre: Boom Bap, dusty drum loop, round kick, cracked snare", bpm: 93, bars: 2 },
+  design_kit: { genre: "2000s hip hop", bpm: 93, candidates: 2 },
+  build_kit: { name: "Drums", kit: [{ note: 36, samplePath: "/out/ck.wav", label: "Kick" }, { note: 38, samplePath: "/out/cs.wav", label: "Snare" }], pattern: { bpm: 93, bars: 2, stepsPerBar: 16, swing: 0.18, lanes: [{ instrument: "kick", steps: [{ step: 0, velocity: 120 }, { step: 10, velocity: 105 }] }, { instrument: "snare", steps: [{ step: 4, velocity: 118 }, { step: 12, velocity: 118 }] }] }, bars: 2 },
+  load_to_pad: { track: "Drums", note: 42, samplePath: "/out/h.wav", label: "Hats" },
   show_live: {}, play: {}, stop: {},
 };
 for (const t of tools) {
@@ -570,6 +578,41 @@ assert.throws(() => T("critique_mix").parse({ genreTarget: "x".repeat(1501) }), 
 for (const k of ["production-first", "bass TYPE", "snaps", "ALWAYS include a bass", "NO LUFS", "genre_blueprint", "[genre blueprint:", "styleAccuracy", "SOUND & PATTERN", "how it moves against the kick", "6 layers", "up to 8"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
 assert.ok(!PRODUCER_SYSTEM.includes('starting with "Review:"') && !PRODUCER_SYSTEM.includes("Explained: see"), "numeric Review/Explained lines removed");
 assert.ok(!PRODUCER_SYSTEM.includes("hats were 4 dB above snare"), "technical review example removed");
+
+// v12: composed rhythms, genre-true kits, Drum Rack pads, vocal pitching
+const gr = JSON.parse(await T("generate_rhythm").run(T("generate_rhythm").parse(sample.generate_rhythm)));
+assert.equal(gr.loop.path, "/out/rl.wav"); assert.equal(gr.kit[1].samplePath, "/out/rs.wav"); assert.equal(gr.pattern.lanes.length, 2); assert.equal(gr.groove.swing, 0.2); assert.equal(gr.groove.microtimingMs.length, 16);
+await T("generate_rhythm").run(T("generate_rhythm").parse({ bpm: 120, bars: 1 })); assert.equal(calls.filter((c) => c[0] === "generateRhythm").at(-1)[1].prompt, undefined, "prompt optional");
+assert.throws(() => T("generate_rhythm").parse({ bpm: 120, bars: 9 }), "bars 9 rejected");
+ctx.generateRhythm = async () => { throw new Error("Stability 500"); };
+assert.equal(JSON.parse(await T("generate_rhythm").run(sample.generate_rhythm)).ok, false);
+const dk = JSON.parse(await T("design_kit").run(T("design_kit").parse(sample.design_kit)));
+assert.equal(dk.best.verdict, "on target"); assert.equal(dk.best.score, 8); assert.equal(dk.candidates.length, 2); assert.equal(dk.kit[0].samplePath, "/out/ck.wav"); assert.equal(dk.pattern.bpm, 93); assert.equal(dk.bpm, 93);
+let dkc = calls.filter((c) => c[0] === "designKit").at(-1)[1]; assert.equal(dkc.candidates, 2); assert.equal(dkc.bars, 2);
+await T("design_kit").run(T("design_kit").parse({})); dkc = calls.filter((c) => c[0] === "designKit").at(-1)[1]; assert.equal(dkc.genre, undefined); assert.equal(dkc.candidates, 2, "defaults");
+assert.throws(() => T("design_kit").parse({ candidates: 4 }), "candidates 4 rejected");
+ctx.designKit = async () => { throw new Error("no blueprint for 'polka'"); };
+assert.equal(JSON.parse(await T("design_kit").run(sample.design_kit)).ok, false);
+const bk = JSON.parse(await T("build_kit").run(T("build_kit").parse(sample.build_kit)));
+assert.equal(bk.track.name, "Drums"); assert.equal(bk.mode, "drum_rack"); assert.equal(bk.pads, 2); assert.equal(bk.notes, 4);
+await T("build_kit").run(T("build_kit").parse({ ...sample.build_kit, name: undefined, slot: 1 })); const bkc = calls.filter((c) => c[0] === "buildKit").at(-1)[1]; assert.equal(bkc.name, "Drums", "default name"); assert.equal(bkc.slot, 1);
+assert.throws(() => T("build_kit").parse({ ...sample.build_kit, kit: [{ note: 35, samplePath: "/out/x.wav", label: "x" }] }), "note 35 rejected");
+assert.throws(() => T("build_kit").parse({ ...sample.build_kit, kit: [] }), "empty kit rejected");
+ctx.live.buildKit = async () => { throw new Error("unknown cmd: u'load_to_pad'"); };
+assert.equal(JSON.parse(await T("build_kit").run(sample.build_kit)).ok, false);
+const lp = JSON.parse(await T("load_to_pad").run(sample.load_to_pad)); assert.equal(lp.pad.has_chain, true); assert.equal(lp.note, 42);
+assert.throws(() => T("load_to_pad").parse({ ...sample.load_to_pad, note: 100 }), "note 100 rejected");
+ctx.live.loadToPad = async () => { throw new Error("Live refused pad-targeted load: sample went to a new Simpler on the track"); };
+const lpf = JSON.parse(await T("load_to_pad").run(sample.load_to_pad)); assert.equal(lpf.ok, false); assert.match(lpf.error, /pad-targeted/);
+// tune_sample formants
+ctx.tuneSample = async (o) => { calls.push(["tuneSample", o]); return { path: `/out/${o.name}.wav`, url: `/out/${o.name}.wav`, detectedMidi: 60, appliedSemitones: o.semitones ?? 0 }; };
+const tv = JSON.parse(await T("tune_sample").run(T("tune_sample").parse({ path: "/out/vox-chop-1.wav", semitones: 2, name: "vox-up" })));
+assert.equal(tv.preserveFormants, true, "vocal path -> formants kept by default"); assert.equal(calls.filter((c) => c[0] === "tuneSample").at(-1)[1].preserveFormants, true);
+const tk = JSON.parse(await T("tune_sample").run(T("tune_sample").parse({ path: "/out/sub.wav", semitones: -2, name: "sub-dn" })));
+assert.equal(tk.preserveFormants, false, "non-vocal default false");
+const tr3 = JSON.parse(await T("tune_sample").run(T("tune_sample").parse({ path: "/out/sub.wav", semitones: 1, name: "s", role: "vocal" }))); assert.equal(tr3.preserveFormants, true, "role vocal -> true");
+const tf = JSON.parse(await T("tune_sample").run(T("tune_sample").parse({ path: "/out/vox.wav", semitones: 1, name: "v", preserveFormants: false }))); assert.equal(tf.preserveFormants, false, "explicit override");
+for (const k of ["TRACK HYGIENE", "design_kit first", "±3 st", "GENRE-TRUE DRUMS", "VOCAL", "build_kit", "load_to_pad", "generate_rhythm", "Never create a second track for the same role", "new SCENE", "Cap: 8 tracks", "at most 2 short lines", "no Hz, tuning numbers or capture statistics", "not sung chops"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
 
 // persistent attachments: note lists all, marks new vs earlier
 const fc = { beta: { messages: { toolRunner(params) { return { params, pushMessages() {}, async *[Symbol.asyncIterator]() { yield { role: "assistant", stop_reason: "end_turn", content: [] }; } }; } } } };
