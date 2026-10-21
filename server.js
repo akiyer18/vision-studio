@@ -792,6 +792,116 @@ function makeCtx(emit) {
       this.setGroove(r.groove);
       return { genre: bp?.title || genre, best: { path: best.path, url: best.url, prompt: best.prompt, verdict: best.verdict, score: best.score, why: best.why }, candidates: cands.map((c) => ({ url: c.url, verdict: c.verdict, score: c.score, why: c.why, error: c.error })), kit: best.kit, pattern: r.pattern, groove: r.groove };
     },
+    // slice the best hit per drum class out of any drum audio (loop or Demucs drum stem)
+    async sliceKitFromAudio(srcPath, { name = 'kit' } = {}) {
+      if (!audioPathOk(srcPath)) throw new Error('slice kit: path outside project audio');
+      const { decodeMono16k } = await import('./lib/melody.js');
+      const { detectOnsets, onsetFeatures, classifyOnset } = await import('./lib/rhythm.js');
+      const x = await decodeMono16k(srcPath);
+      const onsets = detectOnsets(x);
+      const byKind = {};
+      for (const o of onsets) { const f = onsetFeatures(x, o.sample); let k = classifyOnset(f); if (k === 'hat_closed' && f.rms > 0.12 && (f.centroid || 0) > 5000) k = 'hat_open'; (byKind[k] ||= []).push({ ...o, rms: f.rms }); }
+      const kit = [];
+      for (const [k, list] of Object.entries(byKind)) {
+        const picks = list.sort((a, b) => b.rms - a.rms).slice(0, 2);
+        for (const [i, best] of picks.entries()) {
+          const len = k === 'kick' ? 0.6 : k === 'snare' ? 0.4 : k === 'hat_open' ? 0.5 : 0.15;
+          const piece = await this.slice(srcPath, { startSeconds: Math.max(0, best.time - 0.005), lengthSeconds: len, name: `${name}-${k}${i ? '-alt' : ''}` });
+          kit.push({ kind: k, alt: i > 0, samplePath: piece.path, path: piece.path, url: piece.url, time: Number(best.time.toFixed(3)) });
+        }
+      }
+      return { kit, classesFound: Object.keys(byKind), onsetCount: onsets.length };
+    },
+    // Compose a full genre-true track with Stable Audio 3, then deconstruct it into an editable Live session
+    async composeTrack({ genre, bpm, bars = 16, prompt, candidates = 1 }) {
+      const t0 = Date.now(); const timings = {};
+      const stage = (label, extra) => emit({ type: 'tool_done', name: 'compose_track', ok: true, summary: `compose: ${label}`, ...(extra ? { data: extra } : {}) });
+      const ears = await import('./lib/ears.js');
+      const py = await import('./lib/pytools.js');
+      if (!py.pyAvailable()) throw new Error('compose_track needs the open-source toolbelt (Demucs/basic-pitch): run bash tools/py/setup.sh');
+      let bp = null; try { bp = await this.genreBlueprint(genre || lastBuild.genreTarget || ''); } catch {}
+      bpm = clamp(Number(bpm) || (bp?.tempo ? Number(String(bp.tempo).match(/\d+/)?.[0]) : 0) || lastBuild.bpm || 92, 60, 180);
+      bars = clamp(Number(bars) || 16, 8, 32);
+      const seconds = clamp(Math.ceil(bars * 4 * 60 / bpm), 20, 180);
+      let body = prompt;
+      if (!body) {
+        try { const k = await import('./lib/knowledge.js'); const lp = bp && k.getLoopPrompts ? k.getLoopPrompts(bp.slug) : null; body = lp?.loops?.[0]?.replace('{bpm}', String(Math.round(bpm))); } catch {}
+        body = body || `${bp?.title || genre || 'hip hop'} beat, authentic drums and bass`;
+      }
+      const target = bp ? `${bp.title}: ${bp.summary}` : (genre || '');
+      // 1) compose candidates, judge
+      const cands = [];
+      for (let i = 0; i < clamp(Number(candidates) || 1, 1, 2); i++) {
+        stage(`composing ${bars} bars at ${Math.round(bpm)} BPM with Stable Audio 3${i ? ' (second candidate)' : ''}`);
+        const full = `TrackType: Music, ${bp ? `Genre: ${bp.title}, ` : ''}${body.replace(/^(TrackType|Genre|Format):[^,]+,\s*/i, '')}, full arrangement with intro, verse and hook, ${Math.round(bpm)} BPM`;
+        const res = await textToAudio({ prompt: full, duration: seconds, model: LOOP_MODEL });
+        const f = await publish(res.buffer, `${(bp?.slug || genre || 'track').replace(/[^a-z0-9]+/gi, '-')}-track`, '.wav', 'loop');
+        let judged = { verdict: null, score: null, why: 'ears unavailable' };
+        if (target) { stage('Gemini judging authenticity'); try { const c = await ears.critiqueMix(f.path, undefined, { genreTarget: target }); judged = { verdict: c.styleAccuracy?.verdict || null, score: c.styleAccuracy?.verdict === 'on target' ? 9 : c.styleAccuracy?.verdict === 'close' ? 6 : c.styleAccuracy?.verdict === 'off' ? 3 : null, why: c.styleAccuracy?.why || c.styleRead || '', styleRead: c.styleRead }; } catch (e) { judged.why = `ears: ${e.message.slice(0, 100)}`; } }
+        cands.push({ path: f.path, url: f.url, prompt: full, ...judged });
+        if (judged.verdict !== 'off') break;
+      }
+      const best = cands.sort((a, b) => (b.score ?? 5) - (a.score ?? 5))[0];
+      timings.compose = Date.now() - t0;
+      // 2) stems
+      stage('separating stems with Demucs (1-2 minutes)');
+      const t1 = Date.now();
+      const st = await py.stems(best.path, { outDir: path.join(TMP, `stems-${Date.now()}`) });
+      const stems = st.stems || st;
+      timings.stems = Date.now() - t1;
+      const stemRefs = {};
+      for (const [k, p] of Object.entries(stems)) if (p) stemRefs[k] = this.addRef(`${k} of ${path.basename(best.path)}`, p).name;
+      // 3) drums -> kit + pattern
+      stage('extracting the drum kit and MIDI groove from the drum stem');
+      const kitR = await this.sliceKitFromAudio(stems.drums, { name: `${bp?.slug || 'track'}` });
+      const rhythm = await this.loopToPattern(stems.drums, { bpm, bars });
+      this.setGroove(rhythm.groove);
+      // 4) bass -> notes
+      stage('transcribing the bass line (basic-pitch)');
+      let bassNotes = [];
+      try {
+        const tr = await this.transcribeLocal(stems.bass, { onset: 0.6, frame: 0.4, minNoteMs: 80 });
+        const byOnset = new Map();
+        for (const n of tr.notes) { if (n.pitch < 28 || n.pitch > 55) continue; const k = Math.round(n.startBeats * 4); const prev = byOnset.get(k); if (!prev || n.pitch < prev.pitch) byOnset.set(k, n); }
+        bassNotes = [...byOnset.values()].map((n) => ({ pitch: n.pitch, startBeats: Math.round(n.startBeats * 4) / 4, durationBeats: Math.max(0.25, Math.round(n.durationBeats * 4) / 4), velocity: n.velocity })).sort((a, b) => a.startBeats - b.startBeats);
+      } catch (e) { stage(`bass transcription failed: ${e.message.slice(0, 80)}`); }
+      // 5) other -> keys
+      stage('transcribing chords and keys (basic-pitch)');
+      let keysNotes = [];
+      try {
+        const tr = await this.transcribeLocal(stems.other, { onset: 0.5, frame: 0.3, minNoteMs: 120 });
+        const perStep = new Map();
+        for (const n of tr.notes) { if (n.pitch < 48 || n.pitch > 84) continue; const k = Math.round(n.startBeats * 2) / 2; const arr = perStep.get(k) || []; if (arr.length < 6) arr.push({ pitch: n.pitch, startBeats: k, durationBeats: Math.max(0.5, Math.round(n.durationBeats * 2) / 2), velocity: n.velocity }); perStep.set(k, arr); }
+        keysNotes = [...perStep.values()].flat().sort((a, b) => a.startBeats - b.startBeats);
+      } catch (e) { stage(`keys transcription failed: ${e.message.slice(0, 80)}`); }
+      // 6) sections -> A/B bar ranges
+      stage('reading the arrangement sections');
+      let sections = [];
+      try { const an = await py.analyzeMusic(best.path); sections = (an.sections || []).map((sc) => ({ startBar: Math.max(1, Math.floor(sc.start / (240 / bpm)) + 1), endBar: Math.min(bars, Math.ceil(sc.end / (240 / bpm))) })).filter((sc) => sc.endBar > sc.startBar); } catch {}
+      const A = { startBar: 1, endBar: Math.min(bars, 8) };
+      const later = sections.filter((sc) => sc.startBar > A.endBar).sort((a, b) => (b.endBar - b.startBar) - (a.endBar - a.startBar))[0];
+      const B = later ? { startBar: later.startBar, endBar: Math.min(bars, later.startBar + 7) } : { startBar: Math.min(bars, 9), endBar: Math.min(bars, 16) };
+      const sliceSteps = (lanes, range) => lanes.map((l) => ({ instrument: l.instrument, steps: l.steps.filter((x) => x.step >= (range.startBar - 1) * 16 && x.step < range.endBar * 16).map((x) => ({ step: x.step - (range.startBar - 1) * 16, velocity: x.velocity })) })).filter((l) => l.steps.length);
+      const sliceNotes = (notes, range) => notes.filter((n) => n.startBeats >= (range.startBar - 1) * 4 && n.startBeats < range.endBar * 4).map((n) => ({ ...n, startBeats: n.startBeats - (range.startBar - 1) * 4 }));
+      const barsA = A.endBar - A.startBar + 1, barsB = Math.max(1, B.endBar - B.startBar + 1);
+      // 7) build in Live
+      stage('building the session in Live');
+      const send = await liveClient();
+      await send({ cmd: 'set_tempo', bpm: Math.round(bpm) }); lastBuild.bpm = Math.round(bpm);
+      const built = {};
+      const kitMain = kitR.kit.filter((k) => !k.alt);
+      const patA = { ...rhythm.pattern, bars: barsA, lanes: sliceSteps(rhythm.pattern.lanes, A) };
+      const patB = { ...rhythm.pattern, bars: barsB, lanes: sliceSteps(rhythm.pattern.lanes, B) };
+      try { built.drums = await this.live.buildKit({ name: 'Drums', kit: kitMain, pattern: patA, bars: barsA, slot: 0 }); if (patB.lanes.length) built.drumsB = await this.live.buildKit({ name: 'Drums', kit: [], pattern: patB, bars: barsB, slot: 1 }); } catch (e) { built.drums = { error: e.message }; }
+      const presetFor = async (role, fallbackQuery) => { try { const k = await import('./lib/knowledge.js'); const pr = bp && k.getPresets ? k.getPresets(bp.slug) : null; const list = pr?.[role] || pr?.[`${role}Presets`]; if (Array.isArray(list) && list.length) return list[0]; if (typeof list === 'string' && list) return list.split(/[,|/]/)[0].trim(); } catch {} return fallbackQuery; };
+      if (bassNotes.length) { try { const nA = sliceNotes(bassNotes, A), nB = sliceNotes(bassNotes, B); built.bass = await this.live.buildMelody({ name: 'Bass', notes: nA.length ? nA : bassNotes.slice(0, 16), bars: barsA, slot: 0 }); if (nB.length) await this.live.buildMelody({ name: 'Bass', notes: nB, bars: barsB, slot: 1 }); const preset = await presetFor('bass', 'Hip-Hop Sub Bass'); try { built.bass.preset = (await this.live.loadDevice({ track: 'Bass', name: preset })).device?.name || preset; } catch (e) { built.bass.presetError = e.message; } } catch (e) { built.bass = { error: e.message }; } }
+      if (keysNotes.length) { try { const nA = sliceNotes(keysNotes, A), nB = sliceNotes(keysNotes, B); built.keys = await this.live.buildMelody({ name: 'Keys', notes: nA.length ? nA : keysNotes.slice(0, 24), bars: barsA, slot: 0 }); if (nB.length) await this.live.buildMelody({ name: 'Keys', notes: nB, bars: barsB, slot: 1 }); const preset = await presetFor('keys', 'Grand Piano'); try { built.keys.preset = (await this.live.loadDevice({ track: 'Keys', name: preset })).device?.name || preset; } catch (e) { built.keys.presetError = e.message; } } catch (e) { built.keys = { error: e.message }; } }
+      try { const sc = await send({ cmd: 'list_scenes' }); const names = [`${bp?.title || genre || 'Track'} A`, `${bp?.title || genre || 'Track'} B`]; for (const [i, nm] of names.entries()) if (sc?.scenes?.[i]) await send({ cmd: 'rename_scene', index: i, name: nm.slice(0, 40) }); } catch {}
+      try { await this.live.mixBalance({}); } catch {}
+      try { await send({ cmd: 'fire_scene', index: 0 }); await send({ cmd: 'show_view', view: 'Session' }); } catch {}
+      timings.total = Date.now() - t0;
+      return { track: { path: best.path, url: best.url, prompt: best.prompt }, verdict: best.verdict, score: best.score, why: best.why, styleRead: best.styleRead, candidates: cands.length, stems: stemRefs, kit: kitMain.map((k) => ({ kind: k.kind, samplePath: k.samplePath })), pattern: { bars, lanes: rhythm.pattern.lanes.map((l) => `${l.instrument}:${l.steps.length}`), swing: rhythm.pattern.swing }, bassNotes: bassNotes.length, keysNotes: keysNotes.length, sections, scenes: { A, B }, built, timings };
+    },
     async restyleMix({ prompt, strength = 0.45, bars }) {
       const r = await this.render({ bars });
       const input = path.join(TMP, `restyle-in-${Date.now()}.wav`);

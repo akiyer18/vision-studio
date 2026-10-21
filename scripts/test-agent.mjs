@@ -17,6 +17,7 @@ const ctx = {
   genreBlueprint: async (g) => { calls.push(["genreBlueprint", g]); if (!/hip hop|boom bap/i.test(g)) throw new Error(`unknown genre '${g}'; closest: 2000s hip hop, 90s boom bap, trap`); return { slug: "2000s-hip-hop", title: "2000s Hip Hop", summary: "92-100 BPM; kick: round sampled, snare + snap layered on 2 and 4...", markdown: "# 2000s Hip Hop\n## Bass\nTYPE: Moog-style synth bass..." }; },
   generateRhythm: async (o) => { calls.push(["generateRhythm", o]); return { loop: { path: "/out/rl.wav", url: "/out/rl.wav" }, kit: [{ kind: "kick", path: "/out/rk.wav", time: 0.01 }, { kind: "snare", path: "/out/rs.wav", time: 0.64 }], pattern: { bpm: 93, bars: 2, stepsPerBar: 16, swing: 0.18, lanes: [{ instrument: "kick", steps: [{ step: 0, velocity: 120 }, { step: 10, velocity: 105 }] }, { instrument: "snare", steps: [{ step: 4, velocity: 118 }, { step: 12, velocity: 118 }] }] }, groove: { swing: 0.18, microtiming: Array(16).fill(2.5), velocityProfile: Array(16).fill(0.9) } }; },
   designKit: async (o) => { calls.push(["designKit", o]); return { best: { path: "/out/c2.wav", url: "/out/c2.wav", verdict: "on target", score: 8, why: "swung MPC hats, snap on snare" }, candidates: [{ path: "/out/c1.wav", verdict: "close", score: 6, why: "hats too clean" }, { path: "/out/c2.wav", verdict: "on target", score: 8, why: "swung MPC hats, snap on snare" }], kit: [{ kind: "kick", samplePath: "/out/ck.wav", time: 0.02 }], pattern: { bpm: 93, bars: 2, stepsPerBar: 16, swing: 0.18, lanes: [{ instrument: "kick", steps: [{ step: 0, velocity: 120 }, { step: 10, velocity: 105 }] }, { instrument: "snare", steps: [{ step: 4, velocity: 118 }, { step: 12, velocity: 118 }] }] }, groove: { swing: 0.2 }, bpm: 93 }; },
+  composeTrack: async (o) => { calls.push(["composeTrack", o]); return { track: { path: "/out/track.wav", url: "/out/track.wav" }, verdict: "on target", score: 8, bpm: 93, bars: o.bars, stems: { drums: "ref#7", bass: "ref#8", other: "ref#9", vocals: "ref#10" }, kit: [{ kind: "kick", samplePath: "/out/tk.wav" }, { kind: "snare", path: "/out/ts.wav" }], pattern: { bpm: 93, bars: o.bars, lanes: [{ instrument: "kick", steps: Array(30).fill({ step: 0, velocity: 100 }) }, { instrument: "snare", steps: Array(32).fill({ step: 4, velocity: 110 }) }] }, bassNotes: Array(48).fill({}), keysNotes: 120, sections: [{ startBar: 1, endBar: 8 }, { startBar: 9, endBar: 16 }], built: { drums: { track: { index: 1, name: "Drums" }, mode: "drum_rack" }, bass: { track: { index: 2, name: "Bass" }, preset: "Bass-Sub Operator" }, keys: { track: "Keys", preset: "Rhodes Classic" }, texture: { track: "Texture", muted: true } }, timings: { composeS: 48, stemsS: 110, buildS: 20 } }; },
   genreGuide: async (o) => { calls.push(["genreGuide", o]); return { text: "UK Garage: ... (from model knowledge, verify names)", source: "model" }; },
   writePattern: async (o) => { calls.push(["writePattern", o]); return { pattern: { name: "p", bpm: o.bpm, bars: o.bars, stepsPerBar: 16, swing: 0, lanes: [{ instrument: "kick", steps: [{ step: 0, velocity: 120 }] }] }, source: "rules" }; },
   writeMelody: async (o) => { calls.push(["writeMelody", o]); return { key: o.key, bars: o.bars, notes: [{ pitch: 60, startBeats: 0, durationBeats: 1, velocity: 100 }], source: "rules" }; },
@@ -84,7 +85,7 @@ const ctx = {
 };
 
 const tools = makeTools(ctx, { beat: "/tmp/fake.wav", refs: [{ name: "loop.wav", path: "/tmp/ref1.wav" }, { name: "kick.wav", path: "/tmp/ref2.wav" }] });
-const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "transcribe_audio", "judge_sound", "slice_sample", "chop_sample", "load_device", "add_effect", "set_param", "list_devices", "set_mixer", "create_scene", "fire_scene", "record_arrangement", "analyze_audio", "compare_audio", "render_preview", "set_track_color", "capture_midi", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "separate_stems", "analyze_music", "process_audio", "master_preview", "generate_loop", "restyle_mix", "production_dna", "critique_mix", "label_pieces", "refine_sound", "undo_sound", "listen_live", "critique_capture", "describe_set", "read_clip", "import_sample", "restyle_audio", "explain_result", "genre_guide", "genre_blueprint", "generate_rhythm", "design_kit", "build_kit", "load_to_pad", "show_live", "play", "stop"];
+const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "transcribe_audio", "judge_sound", "slice_sample", "chop_sample", "load_device", "add_effect", "set_param", "list_devices", "set_mixer", "create_scene", "fire_scene", "record_arrangement", "analyze_audio", "compare_audio", "render_preview", "set_track_color", "capture_midi", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "separate_stems", "analyze_music", "process_audio", "master_preview", "generate_loop", "restyle_mix", "production_dna", "critique_mix", "label_pieces", "refine_sound", "undo_sound", "listen_live", "critique_capture", "describe_set", "read_clip", "import_sample", "restyle_audio", "explain_result", "genre_guide", "genre_blueprint", "generate_rhythm", "design_kit", "build_kit", "load_to_pad", "compose_track", "show_live", "play", "stop"];
 assert.deepEqual(tools.map((t) => t.name), expected, "tool names");
 for (const t of tools) {
   assert.ok(t.description && t.description.length > 20, `${t.name} description`);
@@ -153,6 +154,7 @@ const sample = {
   design_kit: { genre: "2000s hip hop", bpm: 93, candidates: 2 },
   build_kit: { name: "Drums", kit: [{ note: 36, samplePath: "/out/ck.wav", label: "Kick" }, { note: 38, samplePath: "/out/cs.wav", label: "Snare" }], pattern: { bpm: 93, bars: 2, stepsPerBar: 16, swing: 0.18, lanes: [{ instrument: "kick", steps: [{ step: 0, velocity: 120 }, { step: 10, velocity: 105 }] }, { instrument: "snare", steps: [{ step: 4, velocity: 118 }, { step: 12, velocity: 118 }] }] }, bars: 2 },
   load_to_pad: { track: "Drums", note: 42, samplePath: "/out/h.wav", label: "Hats" },
+  compose_track: { genre: "2000s hip hop", bpm: 93, bars: 16 },
   show_live: {}, play: {}, stop: {},
 };
 for (const t of tools) {
@@ -613,6 +615,24 @@ assert.equal(tk.preserveFormants, false, "non-vocal default false");
 const tr3 = JSON.parse(await T("tune_sample").run(T("tune_sample").parse({ path: "/out/sub.wav", semitones: 1, name: "s", role: "vocal" }))); assert.equal(tr3.preserveFormants, true, "role vocal -> true");
 const tf = JSON.parse(await T("tune_sample").run(T("tune_sample").parse({ path: "/out/vox.wav", semitones: 1, name: "v", preserveFormants: false }))); assert.equal(tf.preserveFormants, false, "explicit override");
 for (const k of ["TRACK HYGIENE", "design_kit first", "±3 st", "GENRE-TRUE DRUMS", "VOCAL", "build_kit", "load_to_pad", "generate_rhythm", "Never create a second track for the same role", "new SCENE", "Cap: 8 tracks", "at most 2 short lines", "no Hz, tuning numbers or capture statistics", "not sung chops"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
+
+// v13: compose_track
+const ct = JSON.parse(await T("compose_track").run(T("compose_track").parse(sample.compose_track)));
+assert.equal(ct.track.path, "/out/track.wav"); assert.equal(ct.verdict, "on target"); assert.equal(ct.score, 8); assert.equal(ct.bars, 16); assert.equal(ct.bpm, 93);
+assert.deepEqual(ct.stems, { drums: "ref#7", bass: "ref#8", other: "ref#9", vocals: "ref#10" });
+assert.deepEqual(ct.kit.map((k) => k.samplePath), ["/out/tk.wav", "/out/ts.wav"]);
+assert.equal(ct.patternBars, 16); assert.deepEqual(ct.patternLanes, ["kick:30", "snare:32"], "lanes as counts, not arrays");
+assert.equal(ct.bassNotes, 48); assert.equal(ct.keysNotes, 120); assert.deepEqual(ct.sections, ["1-8", "9-16"]);
+assert.deepEqual(ct.built.drums, { track: "Drums", mode: "drum_rack" }); assert.deepEqual(ct.built.bass, { track: "Bass", preset: "Bass-Sub Operator" }); assert.deepEqual(ct.built.keys, { track: "Keys", preset: "Rhodes Classic" }); assert.deepEqual(ct.built.texture, { track: "Texture", muted: true });
+assert.equal(ct.timings.stemsS, 110);
+let ctc = calls.filter((c) => c[0] === "composeTrack").at(-1)[1]; assert.equal(ctc.bars, 16); assert.equal(ctc.candidates, 1);
+await T("compose_track").run(T("compose_track").parse({})); ctc = calls.filter((c) => c[0] === "composeTrack").at(-1)[1]; assert.equal(ctc.bars, 16, "default bars"); assert.equal(ctc.genre, undefined);
+assert.throws(() => T("compose_track").parse({ bars: 7 }), "bars 7 rejected");
+assert.throws(() => T("compose_track").parse({ bars: 33 }), "bars 33 rejected");
+assert.throws(() => T("compose_track").parse({ candidates: 3 }), "candidates 3 rejected");
+ctx.composeTrack = async () => { throw new Error("pytools not installed / run tools/py/setup.sh (Demucs needed for stems)"); };
+const ctf = JSON.parse(await T("compose_track").run(sample.compose_track)); assert.equal(ctf.ok, false); assert.match(ctf.error, /pytools not installed/);
+for (const k of ["COMPOSE A TRACK", "compose_track is the PRIMARY path", "pytools not installed", "fall back to design_kit + build_kit", "DERIVED from the generated track", "regenerate with a different vibe", "use the generated track's vocals as chops", "listen_live once"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
 
 // persistent attachments: note lists all, marks new vs earlier
 const fc = { beta: { messages: { toolRunner(params) { return { params, pushMessages() {}, async *[Symbol.asyncIterator]() { yield { role: "assistant", stop_reason: "end_turn", content: [] }; } }; } } } };
