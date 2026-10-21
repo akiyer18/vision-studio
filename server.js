@@ -89,7 +89,7 @@ async function synthesize({ prompt = '', mode = 'oneshot', kind, name = 'sound',
   if (!kind) kind = TONAL.has(String(name).toLowerCase()) ? 'tone' : undefined;
   const files = [];
   let result;
-  const wantSec = clamp(Number(oneshotSeconds), 0.2, 20) || (kind === 'tone' ? 2.5 : 1.0);
+  const wantSec = Number.isFinite(Number(oneshotSeconds)) && Number(oneshotSeconds) > 0 ? clamp(Number(oneshotSeconds), 0.2, 20) : (kind === 'tone' ? 2.5 : 1.0);
   const genSec = Math.max(6, Math.ceil(wantSec + 1));
   if (mode === 'text') {
     result = await textToAudio({ prompt: buildPrompt(prompt, 'oneshot', kind), duration: genSec, model });
@@ -106,7 +106,7 @@ async function synthesize({ prompt = '', mode = 'oneshot', kind, name = 'sound',
     if (mode === 'loop') await makeLoopInput(raw, input);
     else await makeOneShotLoop(raw, input);
     files.push(await publish(await fs.readFile(raw), `${name}-hum`, '.wav', 'raw'));
-    result = await audioToAudio({ wavPath: input, prompt: buildPrompt(prompt, mode, kind), strength: clamp(Number(strength), 0.01, 1) || 0.7, duration: genSec, model });
+    result = await audioToAudio({ wavPath: input, prompt: buildPrompt(prompt, mode, kind), strength: Number.isFinite(Number(strength)) && Number(strength) > 0 ? clamp(Number(strength), 0.01, 1) : 0.7, duration: genSec, model });
   }
   const gen = path.join(TMP, `${id}-gen.wav`);
   await fs.writeFile(gen, result.buffer);
@@ -182,6 +182,13 @@ function roleFor(hint = '', fallback = 'Snare') {
   const key = Object.keys(ROLE_OF).find((k) => h.includes(k));
   return key ? ROLE_OF[key] : fallback;
 }
+// the set's tempo is the truth: refresh lastBuild.bpm from Live (cached 2 s) before anything converts beats <-> seconds
+let tempoCache = { at: 0 };
+async function syncTempo() {
+  if (Date.now() - tempoCache.at < 2000) return lastBuild.bpm || 120;
+  try { const r = await (await liveClient())({ cmd: 'ping' }); if (r?.tempo) { lastBuild.bpm = Math.round(Number(r.tempo)); tempoCache.at = Date.now(); } } catch {}
+  return lastBuild.bpm || 120;
+}
 let slotLock = Promise.resolve();
 const reservedSlots = new Map();   // slot file -> reserved at (ms); released by rememberSound or after 2 min
 async function nextSlot(role) {
@@ -196,14 +203,15 @@ async function nextSlotUnlocked(role) {
   const n = POOL_SIZE[role] || 6;
   // never hand out a slot that a track in the current set is still playing (Live caches by filename)
   for (const [k, at] of reservedSlots) if (Date.now() - at > 120000) reservedSlots.delete(k);
-  const inUse = new Set([...Object.values(lastBuild.samples || {}).map((s) => path.basename(s.slotPath || '')), ...reservedSlots.keys()]);
+  for (const [k, at] of Object.entries(lastBuild.retiredSlots || {})) if (Date.now() - at > 24 * 3600e3) delete lastBuild.retiredSlots[k];
+  const inUse = new Set([...Object.values(lastBuild.samples || {}).map((s) => path.basename(s.slotPath || '')), ...reservedSlots.keys(), ...Object.keys(lastBuild.retiredSlots || {})]);
   let pick = null;
   for (let i = 0; i < n; i++) {
     const k = ((counters[role] || 0) + i) % n + 1;
     const name = `ADE ${role} ${k}.wav`;
     if ((!indexed || indexed.has(name)) && !inUse.has(name)) { pick = { name, k }; break; }
   }
-  if (!pick) for (let i = 0; i < n; i++) { const k = ((counters[role] || 0) + i) % n + 1; const name = `ADE ${role} ${k}.wav`; if (!indexed || indexed.has(name)) { pick = { name, k }; console.warn(`[slot] all ${role} slots in use, reusing ${name}`); break; } }
+  if (!pick && (!indexed || [...Array(n)].some((_, i) => indexed.has(`ADE ${role} ${i + 1}.wav`)))) throw new Error(`all ${n} ${role} sound slots are in use by tracks in this set; remove an unused AI ${role} track (remove_layer) or reuse its sound instead of generating a new one`);
   if (!pick) {   // pool not indexed yet (user must re-add the Place once); fall back to the old single role slot
     const legacy = `ADE ${role === 'OpenHat' ? 'Hat Open' : role}.wav`;
     console.warn(`[slot] pool for ${role} not indexed by Live, falling back to ${legacy}`);
@@ -214,18 +222,29 @@ async function nextSlotUnlocked(role) {
   await fs.writeFile(COUNTER_FILE, JSON.stringify(counters));
   return pick.name;
 }
-async function toSlot(srcPath, hint = '', fallback = 'Snare') {
+async function toSlot(srcPath, hint = '', fallback = 'Snare', opts = {}) {
   if (!insideOut(srcPath)) throw new Error('path outside output dir');
-  const name = await nextSlot(roleFor(hint, fallback));
+  const role = roleFor(hint, fallback);
+  const name = await nextSlot(role);
   const dest = path.join(OUT_DIR, name);
-  if (dest !== srcPath) await fs.copyFile(srcPath, dest);
+  let src = srcPath;
+  const WIDEN = { Hat: 0.4, OpenHat: 0.5, Perc: 0.45, Clap: 0.35, Rim: 0.3 };   // dual-mono one-shots get stereo width by default; Kick/Snare/Synth stay centred
+  if (WIDEN[role] && !opts.noWiden) {
+    try {
+      const { analyzeAudio } = await import('./lib/analyze.js'); const py = await import('./lib/pytools.js');
+      const w = (await analyzeAudio(srcPath))?.stereo?.width ?? 1;
+      if (w < 0.08 && py.pyAvailable()) { const out = path.join(TMP, `wide-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.wav`); await py.processAudio(srcPath, [{ type: 'widen', amount: WIDEN[role] }], out); src = out; }
+    } catch (e) { console.warn('[slot] default widen skipped:', e.message.slice(0, 100)); }
+  }
+  if (dest !== src) await fs.copyFile(src, dest);
+  await fs.rm(dest + '.asd', { force: true }).catch(() => {});   // a stale analysis file from the previous occupant would mislead Live's warping
   return dest;
 }
 export const slotNameFor = (srcPath, hint, fallback) => roleFor(hint, fallback);
 
 // what the last build put where, so tweaks can replace clips/samples in place
 const lastBuild = { bpm: null, tracks: {} };   // tracks: { kick: {index,name}, ..., synth: {...}, drums: {...} }
-const LANE_LABEL = { kick: 'Kick', snare: 'Snare', clap: 'Clap', hat_closed: 'Hats', hat_open: 'Open Hats', rim: 'Rim', perc: 'Perc', tom_low: 'Tom', tom_high: 'Tom Hi', ride: 'Ride', crash: 'Crash' };
+const LANE_LABEL = { kick: 'Kick', snare: 'Snare', clap: 'Clap', hat_closed: 'Hats', hat_open: 'Open Hats', rim: 'Rim', perc: 'Perc', tom_low: 'Tom', tom_high: 'Tom Hi', ride: 'Ride', crash: 'Crash', shaker: 'Shaker', snap: 'Snap', cowbell: 'Cowbell', conga: 'Conga', vox: 'Vox', fx: 'FX', texture: 'Texture' };
 
 async function sendWithRetry(send, cmd, tries = 2, delayMs = 700) {
   let reply;
@@ -242,7 +261,7 @@ function patternToLiveNotes(pattern, mapping = 'gm') {
   const notes = [];
   for (const lane of pattern.lanes) {
     const pitch = mapping === 'single' ? 60 : (GM_DRUM_NOTES[lane.instrument] ?? 60);
-    for (const s of lane.steps) notes.push({ pitch, start: s.step * stepBeats + (s.step % 2 ? swing : 0), duration: 0.125, velocity: s.velocity });
+    for (const s of lane.steps) notes.push({ pitch, start: s.step * stepBeats + (s.step % 2 ? swing : 0), duration: 0.125, velocity: clamp(Number(s.velocity) || 100, 1, 127) });
   }
   return notes;
 }
@@ -314,7 +333,7 @@ app.post('/api/melody', upload.single('audio'), async (req, res) => {
     let out;
     if (req.file) {
       const raw = path.join(TMP, `${id}-mel.wav`);
-      await toWav(req.file.path, raw);
+      await toWav(req.file.path, raw, { channels: 2 });   // user material stays stereo; analysis decodes mono itself
       const r = await humToNotes(raw, { bpm });
       if (!r.notes.length) throw new Error('No pitched notes detected. Hum louder and closer to the mic, hold each note a little longer.');
       out = { notes: r.notes, bars: r.bars || melodyBars(r.notes), bpm: r.bpm || bpm, source: 'hum' };
@@ -416,6 +435,7 @@ app.post('/api/live/build', async (req, res) => {
 app.get('/api/live/state', (_req, res) => res.json(lastBuild));
 // ---- existing project: read the open set, listen to what is playing, propose production moves ----
 app.post('/api/project/scan', async (req, res) => {
+  const scanBody = async () => {
   try {
     const bars = clamp(Number(req.body?.bars) || 8, 2, 16);
     const send = await liveClient();
@@ -424,9 +444,9 @@ app.post('/api/project/scan', async (req, res) => {
     const tracks = (set.tracks || []).map((t) => ({ index: t.index, name: t.name, kind: t.is_midi ? 'midi' : 'audio', devices: (t.devices || []).map((d) => d.name || d.class_name).filter(Boolean).slice(0, 4), clips: Array.isArray(t.clips) ? t.clips.filter((c) => c && (c.name != null || c.has_clip)).length : (t.clip_count ?? undefined), muted: t.mute ?? t.muted ?? undefined, arrangementClips: t.arrangement_clips ?? undefined }));
     const setNames = new Set((set.tracks || []).map((t) => t.name));
     const ours = Object.values(lastBuild.tracks || {}).map((t) => t.name);
-    if (ours.length && !ours.every((n) => setNames.has(n))) {   // a different set is open: everything we remembered belongs to the old one
+    if (ours.length && !ours.some((n) => setNames.has(n))) {   // none of our tracks exist: a different set is open, forget the old build (the conversation stays)
       lastBuild.tracks = {}; lastBuild.samples = {}; lastBuild.groove = null; lastBuild.melody = null; lastBuild.lastCapture = null; lastBuild.genreTarget = null;
-      chat.history = []; await saveChat().catch(() => {});
+      await saveChat().catch(() => {});
     }
     lastBuild.bpm = Math.round(Number(set.tempo) || 0) || lastBuild.bpm;
     let genreTarget = null;   // never judge a new project against a style left over from another one; the user picks it per scan
@@ -440,6 +460,8 @@ app.post('/api/project/scan', async (req, res) => {
     lastBuild.project = project;
     res.json({ ok: true, project });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  };
+  const run = chatQueue.then(scanBody); chatQueue = run.catch(() => {}); await run;   // never scan (and stop the transport) while a producer turn is building
 });
 
 app.post('/api/live/show', async (_req, res) => {
@@ -601,7 +623,12 @@ async function trackByName(send, name) {
 }
 async function ensureTrack(send, name) {
   const existing = await trackByName(send, name);
-  if (existing) return { index: existing.index, name: existing.name, created: false };
+  if (existing) {
+    const ours = Object.values(lastBuild.tracks).some((t) => String(t.name).toLowerCase() === String(existing.name).toLowerCase());
+    if (existing.is_midi === false) return ensureTrack(send, /\bMIDI$/.test(name) ? `${name} 2` : `${name} MIDI`);   // an audio track cannot take our instrument or clips
+    if (lastBuild.project && !ours && !/^AI /.test(name)) return ensureTrack(send, `AI ${name}`);   // the user's own track in a scanned set: build next to it, never on it
+    return { index: existing.index, name: existing.name, created: false };
+  }
   const c = await send({ cmd: 'create_midi_track', name, index: -1 });
   if (!c?.ok) throw new Error(c?.error || 'create_midi_track failed');
   return { index: c.index, name: c.name || name, created: true };
@@ -615,7 +642,7 @@ function stepsToNotes(steps, swing = 0, humanize = 0, bpm = lastBuild.bpm || 120
     const grooveBeats = g ? (clamp(Number(g.microtiming[pos]) || 0, -40, 40)) / beatMs : 0;          // extracted microtiming (ms) per 16th position
     const grooveVel = g && Array.isArray(g.velocityProfile) && Number.isFinite(g.velocityProfile[pos]) ? 0.75 + 0.5 * clamp(g.velocityProfile[pos], 0, 1) : 1;   // 0.75..1.25
     const jitterBeats = h ? ((Math.random() * 2 - 1) * 12 * h) / beatMs : 0;     // up to ±12 ms at humanize 1
-    let vel = Math.round(s.velocity * grooveVel);
+    let vel = Math.round((Number(s.velocity) || 100) * grooveVel);
     if (h) vel += Math.round((Math.random() * 2 - 1) * 15 * h);
     return { pitch: 60, start: Math.max(0, s.step * 0.25 + (s.step % 2 ? swing * 0.125 : 0) + grooveBeats + jitterBeats), duration: 0.125, velocity: clamp(vel, 1, 127) };
   });
@@ -657,12 +684,19 @@ function makeCtx(emit) {
     async generateLoop({ prompt, bpm = lastBuild.bpm || 120, bars = 2, kind = 'drums' }) {
       const seconds = Math.max(6, Math.ceil(clamp(Number(bars), 1, 8) * 4 * 60 / clamp(Number(bpm), 40, 300)) + (kind === 'drums' ? 1 : 0));
       const body = String(prompt).trim().replace(/^(TrackType|Genre|Format):[^,]+,\s*/i, '');
-      const full = kind === 'drums' ? `TrackType: Instrument, ${body}, drum loop at ${Math.round(bpm)} BPM, tight and dry, no vocals, no melody`
-        : kind === 'fx' ? `TrackType: SFX, ${body}, transition sound, no drums`
-        : `TrackType: Instrument, ${body}, evolving texture layer at ${Math.round(bpm)} BPM, no drums`;
+      const hasBpm = /\bBPM\b/i.test(body), hasProd = /dry|wet|room|tape|vinyl|saturat|reverb|lo-fi|clean|gritty|crunch/i.test(body);
+      const full = kind === 'drums' ? `TrackType: Instrument, ${body}${hasBpm ? '' : `, drum loop at ${Math.round(bpm)} BPM`}${hasProd ? '' : ', tight and dry'}${/no vocals/i.test(body) ? '' : ', no vocals'}${/no melody/i.test(body) ? '' : ', no melody'}`
+        : kind === 'fx' ? `TrackType: SFX, ${body}, transition sound, wide stereo, no drums`
+        : `TrackType: Instrument, ${body}${hasBpm ? '' : `, evolving texture layer at ${Math.round(bpm)} BPM`}, wide stereo, no drums`;
       const result = await textToAudio({ prompt: full, duration: Math.min(seconds, 60), model: LOOP_MODEL });
-      const loop = await publish(result.buffer, `${kind}-loop`, '.wav', 'loop');
-      const out = { loop: { path: loop.path, url: loop.url, name: loop.name, seconds }, kit: [] };
+      // bar-exact: Stability renders whole seconds, Live warps the clip to bars*4 beats, so trim to the exact loop length
+      const exact = clamp(Number(bars), 1, 8) * 4 * 60 / clamp(Number(bpm), 40, 300);
+      const rawLoop = path.join(TMP, `loop-raw-${Date.now()}.wav`), trimmed = path.join(TMP, `loop-${Date.now()}.wav`);
+      await fs.writeFile(rawLoop, result.buffer);
+      let loopBuf = result.buffer;
+      try { await ffmpeg(['-i', rawLoop, '-af', `atrim=0:${exact.toFixed(4)},afade=t=out:st=${Math.max(0, exact - 0.012).toFixed(3)}:d=0.012`, '-ac', '2', '-ar', '44100', trimmed]); loopBuf = await fs.readFile(trimmed); } catch (e) { console.warn('[loop] trim failed:', e.message); }
+      const loop = await publish(loopBuf, `${kind}-loop`, '.wav', 'loop');
+      const out = { loop: { path: loop.path, url: loop.url, name: loop.name, seconds: Number(exact.toFixed(3)), bars: clamp(Number(bars), 1, 8), bpm: Math.round(bpm), prompt: full }, kit: [] };
       if (kind === 'drums') {
         const { decodeMono16k } = await import('./lib/melody.js');
         const { detectOnsets, onsetFeatures, classifyOnset } = await import('./lib/rhythm.js');
@@ -670,11 +704,15 @@ function makeCtx(emit) {
         const onsets = detectOnsets(x);
         const byKind = {};
         for (const o of onsets) { const f = onsetFeatures(x, o.sample); const k = classifyOnset(f); (byKind[k] ||= []).push({ ...o, rms: f.rms }); }
+        const allTimes = onsets.map((o) => o.time).sort((a, b) => a - b);
+        const gapAfter = (t) => { const nx = allTimes.find((x) => x > t + 0.03); return nx ? nx - t : 1; };
         for (const [k, list] of Object.entries(byKind)) {
-          const picks = list.sort((a, b) => b.rms - a.rms).slice(0, 2);
+          // prefer the hit with room after it (no neighbour bleeding into the tail), then the loudest
+          const picks = list.sort((a, b) => (Math.min(gapAfter(b.time), 0.4) + b.rms) - (Math.min(gapAfter(a.time), 0.4) + a.rms)).slice(0, 2);
           for (const [i, best] of picks.entries()) {
-            const len = k === 'kick' ? 0.6 : k === 'snare' ? 0.4 : 0.15;
-            const piece = await this.slice(loop.path, { startSeconds: Math.max(0, best.time - 0.005), lengthSeconds: len, name: `${kind}loop-${k}${i ? '-alt' : ''}` });
+            const want = k === 'kick' ? 0.6 : k === 'snare' ? 0.4 : 0.15;
+            const len = Math.max(0.05, Math.min(want, gapAfter(best.time) - 0.006));
+            const piece = await this.slice(loop.path, { startSeconds: Math.max(0, best.time - 0.005), lengthSeconds: len, fadeMs: Math.max(5, len * 150), name: `${kind}loop-${k}${i ? '-alt' : ''}` });
             out.kit.push({ kind: k, alt: i > 0, samplePath: piece.path, path: piece.path, url: piece.url, time: Number(best.time.toFixed(3)) });
           }
         }
@@ -721,19 +759,19 @@ function makeCtx(emit) {
     async critiqueCapture(p, refPath, opts = {}) {
       if (!audioPathOk(p)) throw new Error('critique: path outside project audio');
       if (refPath && !audioPathOk(refPath)) throw new Error('critique: reference path outside project audio');
-      return (await import('./lib/ears.js')).critiqueMix(p, refPath, { genreTarget: opts.genreTarget || lastBuild.genreTarget, mixDetail: Boolean(opts.mixDetail) || chat.room === 'analyse', hints: opts.hints });
+      return (await import('./lib/ears.js')).critiqueMix(p, refPath, { genreTarget: 'genreTarget' in opts ? (opts.genreTarget || undefined) : lastBuild.genreTarget, mixDetail: Boolean(opts.mixDetail) || chat.room === 'analyse', hints: opts.hints });
     },
     async importSample({ path: src, track, name, toneFix = {}, mode = 'oneshot' }) {
       if (!audioPathOk(src)) throw new Error('import: path outside project audio');
       let cur = src; const chain = [];
-      const hasFix = toneFix && Object.values(toneFix).some((v) => v != null && v !== false);
+      if (toneFix?.highpassHz) chain.push({ type: 'highpass', hz: Number(toneFix.highpassHz) });
+      if (toneFix?.lowpassHz) chain.push({ type: 'lowpass', hz: Number(toneFix.lowpassHz) });
+      if (toneFix?.compress) chain.push({ type: 'compressor', threshold_db: -18, ratio: 3, attack_ms: 8, release_ms: 120 });
+      if (Number(toneFix?.gainDb)) chain.push({ type: 'gain', db: Number(toneFix.gainDb) });
+      const hasFix = chain.length > 0;
       if (hasFix) {
         const py = await import('./lib/pytools.js');
         if (py.pyAvailable()) {
-          if (toneFix.highpassHz) chain.push({ type: 'highpass', hz: Number(toneFix.highpassHz) });
-          if (toneFix.lowpassHz) chain.push({ type: 'lowpass', hz: Number(toneFix.lowpassHz) });
-          if (toneFix.compress) chain.push({ type: 'compressor', threshold_db: -18, ratio: 3, attack_ms: 8, release_ms: 120 });
-          if (toneFix.gainDb) chain.push({ type: 'gain', db: Number(toneFix.gainDb) });
           const r = await this.processAudio(cur, chain, name || 'imported');
           cur = r.path;
         } else {
@@ -832,6 +870,7 @@ function makeCtx(emit) {
       let offset = 0, bestScore = -Infinity;
       for (let off = 0; off < 16; off++) { const sc = scoreFor(off); if (sc > bestScore + 1e-9) { bestScore = sc; offset = off; } }
       if (offset) for (const m of Object.values(lanes)) { const rot = new Map(); for (const [st, v] of m) rot.set((st - offset + total) % total, v); m.clear(); for (const [st, v] of rot) m.set(st, v); }
+      if (offset) { const rotA = (a) => a.map((_, i) => a[(i + offset) % 16]); micro.splice(0, 16, ...rotA(micro)); velProf.splice(0, 16, ...rotA(velProf)); }   // the groove template follows the rotation
       const mean = (a) => (a.length ? a.reduce((p, c) => p + c, 0) / a.length : 0);
       const microtiming = micro.map((a) => Number(mean(a).toFixed(1)));
       const velocityProfile = velProf.map((a) => Number(mean(a).toFixed(2)));
@@ -856,31 +895,30 @@ function makeCtx(emit) {
       if (!prompts.length) prompts = [`Genre: ${genre || 'hip hop'}, genre-true drum loop`, `Genre: ${genre || 'hip hop'}, classic era drum loop, authentic drum machine and sample character`];
       const n = clamp(Number(candidates) || 2, 1, 3);
       const target = bp ? `${bp.title}: ${bp.summary}` : (genre || '');
-      const cands = [];
-      for (let i = 0; i < n; i++) {
+      // candidates generate and get judged in parallel (halves the wall time); different prompt bodies, not reseeds of one
+      const cands = await Promise.all([...Array(n)].map(async (_, i) => {
         const body = prompts[i % prompts.length];
         try {
           const loop = await this.generateLoop({ prompt: body, bpm, bars, kind: 'drums' });
           let judged = { verdict: null, score: null, why: 'ears unavailable' };
           try {
             const sc = await ears.scoreGenre(loop.loop.path, { genreTarget: target, scope: 'drums' });
-            judged = { verdict: sc.verdict, score: sc.overall, why: sc.why, dimensions: sc.dimensions, markersMissing: sc.markersMissing, fixPrompt: sc.fixPrompt };
+            judged = { verdict: sc.verdict, score: sc.overall, why: sc.why, dimensions: sc.dimensions, markersMissing: sc.markersMissing, fixPrompt: sc.fixPrompt, lite: sc.lite, judge: sc.judge };
           } catch (e) { judged.why = `ears: ${e.message.slice(0, 120)}`; }
-          cands.push({ path: loop.loop.path, url: loop.loop.url, prompt: body, kit: loop.kit, ...judged });
-          if (judged.score >= 9) break;
-        } catch (e) { cands.push({ prompt: body, error: e.message }); }
-      }
+          return { path: loop.loop.path, url: loop.loop.url, prompt: body, kit: loop.kit, ...judged };
+        } catch (e) { return { prompt: body, error: e.message }; }
+      }));
       const ok = cands.filter((c) => c.path);
       if (!ok.length) throw new Error(`design_kit: no loop generated (${cands.map((c) => c.error).join('; ')})`);
       // pairwise comparison is far more stable than absolute scores on the lite judge: let A/B decide when there are two
       let best = ok[0], comparison = null;
       if (ok.length >= 2) {
-        try { const cmp = await ears.compareAuthenticity(ok[0].path, ok[1].path, { genreTarget: target, scope: 'drums' }); best = cmp.winner === 'B' ? ok[1] : ok[0]; comparison = { winner: cmp.winner, confidence: cmp.confidence, why: cmp.why, provider: cmp.provider }; }
+        try { const cmp = await ears.compareAuthenticity(ok[0].path, ok[1].path, { genreTarget: target, scope: 'drums' }); best = cmp.winner == null ? ok.sort((a, b) => (b.score ?? -1) - (a.score ?? -1))[0] : cmp.winner === 'B' ? ok[1] : ok[0]; comparison = { winner: cmp.winner, confidence: cmp.confidence, why: cmp.why, provider: cmp.provider, lite: cmp.lite }; }
         catch (e) { best = ok.sort((a, b) => (b.score ?? -1) - (a.score ?? -1))[0]; comparison = { error: e.message.slice(0, 120) }; }
       }
       const r = await this.loopToPattern(best.path, { bpm, bars });
       this.setGroove(r.groove);
-      return { genre: bp?.title || genre, best: { path: best.path, url: best.url, prompt: best.prompt, verdict: best.verdict, score: best.score, why: best.why }, comparison, scoreNote: 'absolute scores from the lite judge vary ±2 between runs; the A/B comparison decided the pick', candidates: cands.map((c) => ({ url: c.url, verdict: c.verdict, score: c.score, why: c.why, error: c.error })), kit: best.kit, pattern: r.pattern, groove: r.groove };
+      return { genre: bp?.title || genre, best: { path: best.path, url: best.url, prompt: best.prompt, verdict: best.verdict, score: best.score, why: best.why }, comparison, scoreNote: (best.lite || comparison?.lite) ? 'LITE JUDGE: treat scores as hints; the order-swapped A/B comparison decided the pick' : 'the order-swapped A/B comparison decided the pick', candidates: cands.map((c) => ({ url: c.url, verdict: c.verdict, score: c.score, why: c.why, error: c.error })), kit: best.kit, pattern: r.pattern, groove: r.groove };
     },
     // slice the best hit per drum class out of any drum audio (loop or Demucs drum stem)
     async sliceKitFromAudio(srcPath, { name = 'kit' } = {}) {
@@ -892,11 +930,14 @@ function makeCtx(emit) {
       const byKind = {};
       for (const o of onsets) { const f = onsetFeatures(x, o.sample); let k = classifyOnset(f); if (k === 'hat_closed' && f.rms > 0.12 && (f.centroid || 0) > 5000) k = 'hat_open'; (byKind[k] ||= []).push({ ...o, rms: f.rms }); }
       const kit = [];
+      const allTimes = onsets.map((o) => o.time).sort((a, b) => a - b);
+      const gapAfter = (t) => { const nx = allTimes.find((x) => x > t + 0.03); return nx ? nx - t : 1; };
       for (const [k, list] of Object.entries(byKind)) {
-        const picks = list.sort((a, b) => b.rms - a.rms).slice(0, 2);
+        const picks = list.sort((a, b) => (Math.min(gapAfter(b.time), 0.4) + b.rms) - (Math.min(gapAfter(a.time), 0.4) + a.rms)).slice(0, 2);
         for (const [i, best] of picks.entries()) {
-          const len = k === 'kick' ? 0.6 : k === 'snare' ? 0.4 : k === 'hat_open' ? 0.5 : 0.15;
-          const piece = await this.slice(srcPath, { startSeconds: Math.max(0, best.time - 0.005), lengthSeconds: len, name: `${name}-${k}${i ? '-alt' : ''}` });
+          const want = k === 'kick' ? 0.6 : k === 'snare' ? 0.4 : k === 'hat_open' ? 0.5 : 0.15;
+          const len = Math.max(0.05, Math.min(want, gapAfter(best.time) - 0.006));
+          const piece = await this.slice(srcPath, { startSeconds: Math.max(0, best.time - 0.005), lengthSeconds: len, fadeMs: Math.max(5, len * 150), name: `${name}-${k}${i ? '-alt' : ''}` });
           kit.push({ kind: k, alt: i > 0, samplePath: piece.path, path: piece.path, url: piece.url, time: Number(best.time.toFixed(3)) });
         }
       }
@@ -912,10 +953,11 @@ function makeCtx(emit) {
       let bp = null; try { bp = await this.genreBlueprint(genre || lastBuild.genreTarget || ''); } catch {}
       bpm = clamp(Number(bpm) || (bp?.tempo ? Number(String(bp.tempo).match(/\d+/)?.[0]) : 0) || lastBuild.bpm || 92, 60, 180);
       bars = clamp(Number(bars) || 16, 8, 32);
+      lastBuild.bpm = Math.round(bpm);   // transcription converts seconds -> beats with lastBuild.bpm: set it BEFORE the stems are read
       const seconds = clamp(Math.ceil(bars * 4 * 60 / bpm), 20, 180);
       let body = prompt;
       if (!body) {
-        try { const k = await import('./lib/knowledge.js'); const lp = bp && k.getLoopPrompts ? k.getLoopPrompts(bp.slug) : null; body = lp?.loops?.[0]?.replace('{bpm}', String(Math.round(bpm))); } catch {}
+        try { const k = await import('./lib/knowledge.js'); const lp = bp && k.getLoopPrompts ? k.getLoopPrompts(bp.slug) : null; body = (lp?.track || lp?.loops?.[0])?.replace(/\{bpm\}/g, String(Math.round(bpm))); } catch {}
         body = body || `${bp?.title || genre || 'hip hop'} beat, authentic drums and bass`;
       }
       const target = bp ? `${bp.title}: ${bp.summary}` : (genre || '');
@@ -923,13 +965,13 @@ function makeCtx(emit) {
       const cands = [];
       for (let i = 0; i < clamp(Number(candidates) || 1, 1, 2); i++) {
         stage(`composing ${bars} bars at ${Math.round(bpm)} BPM with Stable Audio 3${i ? ' (second candidate)' : ''}`);
-        const full = `TrackType: Music, ${bp ? `Genre: ${bp.title}, ` : ''}${body.replace(/^(TrackType|Genre|Format):[^,]+,\s*/i, '')}, full arrangement with intro, verse and hook, ${Math.round(bpm)} BPM`;
+        const full = `TrackType: Music, ${bp ? `Genre: ${bp.title}, ` : ''}${body.replace(/^(TrackType|Genre|Format):[^,]+,\s*/i, '').replace(/,\s*no (melody|vocals|bass|drums)/gi, '')}, full arrangement with intro, verse and hook${/\bBPM\b/i.test(body) ? '' : `, ${Math.round(bpm)} BPM`}`;
         const res = await textToAudio({ prompt: full, duration: seconds, model: LOOP_MODEL });
         const f = await publish(res.buffer, `${(bp?.slug || genre || 'track').replace(/[^a-z0-9]+/gi, '-')}-track`, '.wav', 'loop');
         let judged = { verdict: null, score: null, why: 'ears unavailable' };
         if (target) { stage('Gemini judging authenticity (strict rubric)'); try { const sc = await ears.scoreGenre(f.path, { genreTarget: target, scope: 'full' }); judged = { verdict: sc.verdict, score: sc.overall, why: sc.why, dimensions: sc.dimensions, markersMissing: sc.markersMissing, fixPrompt: sc.fixPrompt }; } catch (e) { judged.why = `ears: ${e.message.slice(0, 100)}`; } }
         cands.push({ path: f.path, url: f.url, prompt: full, ...judged });
-        if (judged.verdict !== 'off') break;
+        if ((judged.score ?? 0) >= 7 || judged.verdict === 'uncertain') break;   // only a clearly 'off' candidate buys a second (5-min) render
       }
       const best = cands.sort((a, b) => (b.score ?? 5) - (a.score ?? 5))[0];
       timings.compose = Date.now() - t0;
@@ -1041,8 +1083,9 @@ function makeCtx(emit) {
       const key = String(track).toLowerCase();
       const hist = lastBuild.soundHistory[key] || [];
       if (!hist.length) throw new Error(`no previous sound recorded for ${track}`);
-      const prev = hist.pop();
-      const r = await this.live.loadSample({ name: track, samplePath: prev.samplePath, role: prev.role });
+      const prev = hist[hist.length - 1];
+      const r = await this.live.loadSample({ name: track, samplePath: prev.samplePath, role: prev.role });   // throws -> stack untouched
+      hist.pop();
       lastBuild.soundHistory[key] = hist;   // loadSample pushed the current one; keep the stack sane
       lastBuild.soundHistory[key].pop();
       return { restored: path.basename(prev.samplePath), remainingUndos: hist.length, live: r };
@@ -1051,7 +1094,6 @@ function makeCtx(emit) {
       const k = await import('./lib/knowledge.js').catch(() => null);
       if (!k) throw new Error('knowledge base not built yet (lib/knowledge.js)');
       const slug = k.matchGenre(String(genre || ''));
-      if (!slug) throw new Error(`unknown genre "${genre}"; known: ${k.listGenres().join(', ')}`);
       if (!slug) { try { const g = await k.ensureBlueprint(genre); if (g.slug) { const bp = k.getBlueprint(g.slug); return { ...bp, generated: g.generated }; } } catch (e) { throw new Error(`no blueprint for "${genre}" and generating one failed: ${e.message}`); } }
       return k.getBlueprint(slug);
     },
@@ -1071,7 +1113,7 @@ function makeCtx(emit) {
     // open-source toolbelt (tools/py via lib/pytools.js); each degrades to a clear error when not installed
     async stems(p) { if (!audioPathOk(p)) throw new Error('stems: path outside project audio'); const m = await import('./lib/pytools.js'); const r = await m.stems(p, { outDir: path.join(TMP, `stems-${Date.now()}`) }); return r; },
     async analyzeMusic(p) { if (!audioPathOk(p)) throw new Error('analyze_music: path outside project audio'); const m = await import('./lib/pytools.js'); const r = await m.analyzeMusic(p); if (r?.groove) this.setGroove({ ...r.groove, source: path.basename(p) }); return r; },
-    async transcribeLocal(p, opts) { if (!audioPathOk(p)) throw new Error('transcribe: path outside project audio'); const m = await import('./lib/pytools.js'); const r = await m.transcribeLocal(p, opts); const bpm = lastBuild.bpm || 120; const notes = (r.notes || []).map((n) => ({ pitch: n.pitch, startBeats: Number((n.startSeconds * bpm / 60).toFixed(3)), durationBeats: Math.max(0.125, Number((n.durationSeconds * bpm / 60).toFixed(3))), velocity: clamp(Math.round(n.velocity || 100), 1, 127) })); return { notes, bars: Math.max(1, Math.ceil(Math.max(0, ...notes.map((n) => n.startBeats + n.durationBeats)) / 4)), bpm, midiPath: r.midiPath, engine: 'basic-pitch' }; },
+    async transcribeLocal(p, opts) { if (!audioPathOk(p)) throw new Error('transcribe: path outside project audio'); const m = await import('./lib/pytools.js'); const r = await m.transcribeLocal(p, opts); const bpm = opts?.bpm || await syncTempo(); const notes = (r.notes || []).map((n) => ({ pitch: n.pitch, startBeats: Number((n.startSeconds * bpm / 60).toFixed(3)), durationBeats: Math.max(0.125, Number((n.durationSeconds * bpm / 60).toFixed(3))), velocity: clamp(Math.round(n.velocity || 100), 1, 127) })); return { notes, bars: Math.max(1, Math.ceil(Math.max(0, ...notes.map((n) => n.startBeats + n.durationBeats)) / 4)), bpm, midiPath: r.midiPath, engine: 'basic-pitch' }; },
     async processAudio(p, chain, name = 'processed') { if (!audioPathOk(p)) throw new Error('process: path outside project audio'); const m = await import('./lib/pytools.js'); const out = path.join(TMP, `proc-${Date.now()}.wav`); const r = await m.processAudio(p, chain, out); const f = await publish(await fs.readFile(r.out || out), name, '.wav', 'oneshot'); return { path: f.path, url: f.url, name: f.name, peakDbfs: r.peakDbfs }; },
     async masterAudio(lufs = -12) { const src = lastBuild.lastRender; if (!src) throw new Error('master: render a preview first'); const m = await import('./lib/pytools.js'); const out = path.join(TMP, `master-${Date.now()}.wav`); const r = await m.masterAudio(src, out, lufs); const f = await publish(await fs.readFile(r.out || out), 'master', '.wav', 'loop'); return { path: f.path, url: f.url, lufs: r.lufs, peakDbfs: r.peakDbfs }; },
     async shapeSample(a) {
@@ -1089,13 +1131,13 @@ function makeCtx(emit) {
       else af.push('areverse', `afade=t=in:st=0:d=${fade}`, 'areverse');
       args.push('-af', af.join(','), '-ac', '2', '-ar', '44100', out);
       await ffmpeg(args);
-      let shaped = out;
-      if (widen && Number(widen) > 0) { try { const r = await this.processAudio(out, [{ type: 'widen', amount: clamp(Number(widen), 0, 1) }], name); shaped = r.path; } catch (e) { console.warn('[shape] widen skipped:', e.message); } }
-      const f = await publish(await fs.readFile(shaped), name, '.wav', 'oneshot');
+      let widened = false, f = null;
+      if (widen && Number(widen) > 0) { try { const r = await this.processAudio(out, [{ type: 'widen', amount: clamp(Number(widen), 0, 1) }], name); f = { path: r.path, url: r.url, name: r.name }; widened = true; } catch (e) { console.warn('[shape] widen skipped:', e.message); } }
+      if (!f) f = await publish(await fs.readFile(out), name, '.wav', 'oneshot');
       const audio = await import('./lib/audio.js');
       const { analyzeAudio } = await import('./lib/analyze.js');
       let width = null; try { width = (await analyzeAudio(f.path))?.stereo?.width ?? null; } catch {}
-      return { path: f.path, url: f.url, name: f.name, durationSeconds: await audio.durationSeconds(f.path), stereoWidth: width != null ? Number(width.toFixed(2)) : null, widened: Boolean(widen) };
+      return { path: f.path, url: f.url, name: f.name, durationSeconds: await audio.durationSeconds(f.path), stereoWidth: width != null ? Number(width.toFixed(2)) : null, widened };
     },
     async tuneSample({ path: src, semitones, targetMidi, targetNote, name = 'tuned', preserveFormants, allowLarge = false, role = '' }) {
       const vocal = /vox|vocal|chop|voice|adlib|ad-lib|hook/i.test(`${role} ${name} ${path.basename(String(src || ''))}`);
@@ -1110,7 +1152,8 @@ function makeCtx(emit) {
         if (!Number.isFinite(target) && targetNote) { const m = String(targetNote).trim().match(/^([A-Ga-g])([#b]?)(-?\d)$/); if (m) { const base = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11 }[m[1].toLowerCase()] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0); target = (Number(m[3]) + 1) * 12 + base; } }
         if (detected == null || !Number.isFinite(target)) throw new Error(`tune: could not detect pitch or parse target (${detected}, ${targetNote ?? targetMidi})`);
         applied = target - detected;
-        while (applied > 6) applied -= 12; while (applied < -6) applied += 12;   // nearest octave
+        const exactOctave = Boolean(targetNote && /-?\d$/.test(String(targetNote).trim())) || Number.isFinite(Number(targetMidi));
+        if (!exactOctave || allowLarge) { while (applied > 6) applied -= 12; while (applied < -6) applied += 12; }   // nearest octave only when no octave was asked for
       }
       applied = clamp(applied, -24, 24);
       let note;
@@ -1170,6 +1213,8 @@ function makeCtx(emit) {
       if (kickKey && snareKey && Number.isFinite(L(kickKey)) && Number.isFinite(L(snareKey)) && L(kickKey) < L(snareKey) - 2) issues.push({ severity: 'medium', text: `kick at ${L(kickKey).toFixed(1)} LUFS is below snare ${L(snareKey).toFixed(1)}`, fix: 'raise kick level or lower snare' });
       for (const [k, v] of Object.entries(perLayer)) if (/hat|perc|rim/.test(k) && lvl(v.lowEnd) === 'high') issues.push({ severity: 'medium', text: `${k} is 'high' in 60-250 Hz for a top-end role`, fix: `shape_sample ${k} highpassHz 200-300 or EQ highpass` });
       if (whole.profile?.ratings?.punch?.level === 'low') issues.push({ severity: 'medium', text: `whole mix crest factor ${whole.profile.ratings.punch.value} dB: low transient contrast`, fix: 'shorter tails on hats/perc (shape_sample), lower sustained layers, less limiting/saturation' });
+      if (whole.profile?.ratings?.width?.level === 'low') issues.push({ severity: 'high', text: `whole mix stereo width ${whole.profile.ratings.width.value}: effectively mono`, fix: 'shape_sample widen 0.5-0.7 on hats/perc/texture/pads layers (never kick/bass), pan hats and perc apart, add_effect Chorus or Auto Pan on textures/pads, send textures to the ping-pong Delay return' });
+      for (const [k, v] of Object.entries(perLayer)) if (!/kick|bass|sub|808/.test(k) && lvl(v.width) === 'low' && /hat|perc|shaker|tex|pad|fx|chop|vox|clap|snap|key|lead|pluck/.test(k)) issues.push({ severity: 'medium', text: `${k} is mono (width ${v.width?.value ?? 0})`, fix: `shape_sample ${k} widen ${/pad|tex|fx|vox|chop|key/.test(k) ? '0.7' : '0.5'} and re-load, or add_effect Chorus/Auto Pan on the track` });
       if (whole.profile?.ratings?.brightness?.level === 'low' && whole.profile?.ratings?.air?.level === 'low') issues.push({ severity: 'medium', text: 'whole mix brightness and air both low', fix: 'brighter hat sound or open hat layer, or a top-end layer' });
       if (!issues.length) issues.push({ severity: 'low', text: 'no rule triggered; levels and band distribution within template ranges', fix: null });
       return { whole: { url: whole.url, ratings: whole.profile?.ratings, summary: whole.profile?.summary, durationSeconds: whole.durationSeconds }, perLayer, issues, note: 'offline render without Live devices/mixer; relative comparisons only' };
@@ -1200,6 +1245,11 @@ function makeCtx(emit) {
       for (const [key, clip] of Object.entries(lastBuild.clips || {})) {
         const sound = lastBuild.samples[key];
         if (!(clip.steps?.length || clip.notes?.length)) continue;
+        const padKeys = Object.keys(lastBuild.samples).filter((k) => k.startsWith(`${key}#`));
+        if (!sound?.samplePath && clip.notes?.length && padKeys.length) {   // Drum Rack kit: one layer per pad, so the review hears the real drums
+          for (const pk of padKeys) { const pitch = Number(pk.split('#')[1]); const ns = clip.notes.filter((n) => n.pitch === pitch); if (ns.length) layers.push({ name: pk, samplePath: lastBuild.samples[pk].samplePath, steps: ns.map((n) => ({ step: Math.round(n.startBeats * 4), velocity: n.velocity })), swing: 0 }); }
+          continue;
+        }
         if (!sound?.samplePath && clip.notes?.length) {   // preset-based layer (Live instrument): stand in with a generic synth voice so the review hears it
           layers.push({ name: key, samplePath: await genericVoice(/bass|sub|808/.test(key) ? 'bass' : 'synth'), notes: clip.notes, swing: 0, gainDb: -6, standIn: true });
           continue;
@@ -1208,7 +1258,7 @@ function makeCtx(emit) {
         layers.push({ name: key, samplePath: sound.samplePath, steps: clip.steps, notes: clip.notes, swing: clip.swing || 0 });
       }
       if (!layers.length) throw new Error('nothing to render: no tracks with both a sound and a clip in the registry');
-      const bpm = lastBuild.bpm || 120;
+      const bpm = await syncTempo();
       const maxBars = Math.max(1, ...Object.values(lastBuild.clips).map((c) => c.bars || 1));
       const outPath = path.join(OUT_DIR, `preview-${Date.now()}.wav`);
       const r = await renderPreview({ bpm, bars: clamp(Number(bars) || maxBars, 1, 16), layers, outPath });
@@ -1226,7 +1276,7 @@ function makeCtx(emit) {
       listTracks: async () => {
         const r = okOrThrow(await (await liveClient())({ cmd: 'list_tracks' }), 'list_tracks');
         const present = new Set(r.tracks.map((t) => t.name.toLowerCase()));
-        for (const k of Object.keys(lastBuild.samples)) if (!present.has(k)) delete lastBuild.samples[k];   // prune tracks the user removed in Live
+        for (const k of Object.keys(lastBuild.samples)) if (!present.has(k.split('#')[0])) delete lastBuild.samples[k];   // prune tracks the user removed in Live (pad entries are 'track#note')
         for (const k of Object.keys(lastBuild.tracks)) if (!present.has(String(lastBuild.tracks[k]?.name || '').toLowerCase())) delete lastBuild.tracks[k];
         r.tracks = r.tracks.map((t) => { const s = lastBuild.samples[t.name.toLowerCase()]; return s ? { ...t, soundPath: s.samplePath, soundRole: s.role } : t; });
         r.note = 'soundPath = the wav a track plays; pass it to listen / judge_sound';
@@ -1235,7 +1285,7 @@ function makeCtx(emit) {
       show: async () => { const send = await liveClient(); const r = await send({ cmd: 'show_view', view: 'Session' }); await send({ cmd: 'show_view', view: 'Detail/Clip' }); return r; },
       play: async () => (await liveClient())({ cmd: 'play' }),
       stop: async () => (await liveClient())({ cmd: 'stop' }),
-      deleteTrack: async (name) => { const send = await liveClient(); const t = await trackByName(send, name); if (!t) throw new Error(`no track named ${name}`); const r = okOrThrow(await send({ cmd: 'delete_track', track: t.name }), 'delete_track'); forgetTrack(t.name); await saveChat(); return r; },
+      deleteTrack: async (name) => { const send = await liveClient(); const t = await trackByName(send, name); if (!t) throw new Error(`no track named ${name}`); const ours = Object.values(lastBuild.tracks).some((x) => String(x.name).toLowerCase() === t.name.toLowerCase()) || /^AI /.test(t.name); if (!ours) throw new Error(`refusing to delete "${t.name}": this session did not create it (mute it with set_mixer instead)`); const r = okOrThrow(await send({ cmd: 'delete_track', track: t.name }), 'delete_track'); forgetTrack(t.name); await saveChat(); return r; },
       async buildLane({ name, instrument, samplePath, steps, bars = 1, swing = 0, slot = 0, humanize = 0, useGroove = false }) {
         const send = await liveClient();
         const t = await ensureTrack(send, name);
@@ -1281,7 +1331,8 @@ function makeCtx(emit) {
         const send = await liveClient();
         const tracks = okOrThrow(await send({ cmd: 'list_tracks' }), 'list_tracks').tracks;
         const applied = [];
-        const onlySet = Array.isArray(only) && only.length ? new Set(only.map((n) => String(n).toLowerCase())) : null;
+        const ownNames = new Set([...Object.values(lastBuild.tracks).map((t) => String(t.name).toLowerCase()), ...Object.keys(lastBuild.samples).map((k) => k.split('#')[0])]);
+        const onlySet = Array.isArray(only) && only.length ? new Set(only.map((n) => String(n).toLowerCase())) : ownNames;   // never reset the user's own faders
         for (const t of tracks) {
           const key = t.name.toLowerCase();
           if (onlySet && !onlySet.has(key)) continue;
@@ -1350,7 +1401,7 @@ function makeCtx(emit) {
           let cursor = 36;
           const freeNote = (preferred) => { if (preferred != null && !occupied.has(preferred)) { occupied.add(preferred); return preferred; } while (occupied.has(cursor) && cursor < 100) cursor++; const n = cursor; occupied.add(n); cursor++; return n; };
           const pads = [];
-          for (const k of kit) { const key = k.label || k.kind; const note = freeNote(k.note ?? GM[k.kind]); noteFor[key] = note; if (k.kind) noteFor[k.kind] ??= note; try { await this.loadToPad({ track: t.name, note, samplePath: k.samplePath, label: key }); pads.push({ note, label: key }); } catch (e) { pads.push({ note, label: key, error: e.message }); } }
+          for (const k of kit) { const key = k.label || k.kind; const pref = k.note ?? GM[k.kind]; const have = pref != null ? lastBuild.samples[`${t.name.toLowerCase()}#${pref}`] : null; if (have && have.samplePath === k.samplePath) { noteFor[key] = pref; if (k.kind) noteFor[k.kind] ??= pref; pads.push({ note: pref, label: key, reused: true }); continue; } const note = freeNote(pref); noteFor[key] = note; if (k.kind) noteFor[k.kind] ??= note; try { await this.loadToPad({ track: t.name, note, samplePath: k.samplePath, label: key }); pads.push({ note, label: key }); } catch (e) { pads.push({ note, label: key, error: e.message }); } }
           const notes = [];
           for (const lane of pattern?.lanes || []) { const padNote = noteFor[lane.instrument] ?? noteFor[LANE_LABEL[lane.instrument]] ?? GM[lane.instrument] ?? 54; for (const st of lane.steps) notes.push({ pitch: padNote, start: st.step * 0.25 + (st.step % 2 ? (pattern.swing || 0) * 0.125 : 0), duration: 0.125, velocity: st.velocity }); }
           const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.name, slot: Number(slot) || 0, length: b * 4, notes, fire: true, name, show: false }), 'create_clip');
@@ -1386,8 +1437,8 @@ function makeCtx(emit) {
       recordArrangement: async ({ bars, scenes, stop } = {}) => {
         const send = await liveClient();
         if (stop) return okOrThrow(await send({ cmd: 'arrangement_record', stop: true }), 'arrangement_record');
-        if (Array.isArray(scenes) && scenes.length) return okOrThrow(await send({ cmd: 'arrangement_record', scenes: scenes.map((sc) => ({ index: Number(sc.index) || 0, bars: clamp(Number(sc.bars) || 8, 1, 64) })) }), 'arrangement_record');
-        return okOrThrow(await send({ cmd: 'arrangement_record', bars: clamp(Number(bars) || 8, 1, 64) }), 'arrangement_record');
+        if (Array.isArray(scenes) && scenes.length) return okOrThrow(await send({ cmd: 'arrangement_record', at: 'end', scenes: scenes.map((sc) => ({ index: Number(sc.index) || 0, bars: clamp(Number(sc.bars) || 8, 1, 64) })) }), 'arrangement_record');
+        return okOrThrow(await send({ cmd: 'arrangement_record', at: 'end', bars: clamp(Number(bars) || 8, 1, 64) }), 'arrangement_record');
       },
       async loadSample({ name, samplePath, role }) {
         const send = await liveClient();
@@ -1515,11 +1566,13 @@ async function runChatTurn(req, res, emit0) {
     try {
       const k = await import('./lib/knowledge.js');
       const explicit = userText.match(/\[genre:\s*([^\]]+)\]/i);
-      let slug = k.matchGenre(explicit ? explicit[1] : userText);
+      const startsBuild = chat.history.length === 0 || /\b(make|build|turn|compose|start|create|produce|give me|let's|lets)\b/i.test(userText.replace(/\[[^\]]*\]/g, ''));
+      let slug = explicit ? k.matchGenre(explicit[1]) : (startsBuild ? k.matchGenre(userText) : null);
       if (!slug && explicit) { try { emit({ type: 'tool', name: 'style', summary: `writing a blueprint for ${explicit[1].trim()}` }); slug = (await k.ensureBlueprint(explicit[1])).slug; } catch (e) { emit({ type: 'tool_done', name: 'style', ok: false, summary: `blueprint generation failed: ${e.message.slice(0, 80)}` }); } }
       if (slug) { const bp = k.getBlueprint(slug); if (bp?.summary) { userText += `\n\n[genre blueprint: ${bp.title}] ${bp.summary}`; lastBuild.genreTarget = `${bp.title}: ${bp.summary}`; emit({ type: 'tool_done', name: 'style', ok: true, summary: `style guide loaded: ${bp.title}` }); } }
     } catch {}
     chat.room = (userText.match(/\[room:\s*(create|analyse|tweak)\]/i) || [])[1]?.toLowerCase() || 'create';
+    await syncTempo();   // defaults inside this turn follow the set's tempo, not the last build's
     if (lastBuild.project && !lastBuild.project.toldAgent) {
       const pj = lastBuild.project; const cr = pj.critique && !pj.critique.error ? pj.critique : null;
       userText += `\n\n[existing project scan] The user has THEIR OWN set open in Live (${Math.round(pj.tempo)} BPM, ${pj.tracks.length} tracks: ${pj.tracks.map((t) => `${t.name}${t.devices?.length ? ' [' + t.devices.join(', ') + ']' : ''}`).join('; ').slice(0, 900)}). Work INSIDE this project: add to it, never delete or replace their material, match their tempo and key.${cr ? ` You already listened to ${pj.capture?.seconds || ''} s of it. Style read: ${cr.styleRead}. Drums: ${cr.drums}. Bass: ${cr.bass?.type} (${cr.bass?.suggestion}). Sound design: ${cr.soundDesign}. Suggested moves: ${(cr.moves || []).join(' | ')}.` : pj.capture?.silent ? ' The capture was silent (nothing was playing at the playhead); ask them to place the playhead on the section before you listen again.' : ''}${pj.capture?.path ? ` Capture file: ${pj.capture.path}` : ''}`;
@@ -1532,18 +1585,21 @@ async function runChatTurn(req, res, emit0) {
       if (/thinking/i.test(e?.message || '') && /signature|bound/i.test(e?.message || '')) { console.warn('[chat] thinking block rejected, stripping and retrying'); chat.history = stripThinking(chat.history); out = await runProducer({ history: chat.history, userText, recordings, ctx: makeCtx(emit) }); }
       else throw e;
     }
-    chat.history = repairHistory(out.history);
+    chat.history = safeHistory(repairHistory(out.history), 120);
+    if (out.error) emit({ type: 'tool_done', name: 'turn', ok: false, summary: `the producer stopped early: ${String(out.error).slice(0, 140)}` });
     await saveChat();
     emit({ type: 'text', text: out.text });
     // Arrangement mode: Live 10 can't create arrangement clips via API, so record the playing scene onto the timeline after changes
-    const BUILD_TOOLS = /^(build_drum_layer|build_melody_layer|update_layer|import_sample|generate_loop|replace_sound|refine_sound|create_scene|fire_scene)$/;
-    const changed = turn.events.some((e) => e.type === 'tool' && BUILD_TOOLS.test(e.name));
-    if (chat.settings.arrangementMode && changed) {
+    const BUILD_TOOLS = /^(build_drum_layer|build_melody_layer|update_layer|import_sample|generate_loop|replace_sound|refine_sound|build_kit|load_to_pad|design_kit|compose_track)$/;
+    const changedEv = turn.events.filter((e) => e.type === 'tool' && BUILD_TOOLS.test(e.name));
+    const changed = changedEv.length > 0;
+    const sceneIdx = Math.max(0, ...changedEv.map((e) => Number(e.input?.slot) || 0));
+    if (chat.settings.arrangementMode && changed && !lastBuild.project) {   // never record over a user's own arrangement
       try {
         const send = await liveClient();
         const bars = clamp(Number(chat.settings.arrangementBars) || 8, 1, 64);
         emit({ type: 'tool', name: 'arrangement_mode', summary: `arrangement mode: recording ${bars} bars onto the timeline` });
-        const r = await send({ cmd: 'arrangement_record', scenes: [{ index: 0, bars }], at: 'end' });
+        const r = await send({ cmd: 'arrangement_record', scenes: [{ index: sceneIdx, bars }], at: 'end' });
         emit({ type: 'tool_done', name: 'arrangement_mode', ok: Boolean(r?.ok), summary: r?.ok ? `laid out ${bars} bars in Arrangement (press Tab in Live)` : `arrangement recording failed: ${r?.error}` });
       } catch (e) { emit({ type: 'tool_done', name: 'arrangement_mode', ok: false, summary: `arrangement mode: ${e.message}` }); }
     }
@@ -1558,6 +1614,8 @@ async function runChatTurn(req, res, emit0) {
 }
 app.get('/api/chat/last', (_req, res) => res.json(turns.last ? { ...turns.last, events: turns.last.events.slice(-200) } : { status: 'none' }));
 function resetSession() {   // a true fresh start: nothing remembered about the previous set, sounds, style or project
+  // slot files the old set still references stay off-limits for a day (Live caches samples by filename)
+  lastBuild.retiredSlots = { ...(lastBuild.retiredSlots || {}), ...Object.fromEntries(Object.values(lastBuild.samples || {}).map((s) => [path.basename(s.slotPath || ''), Date.now()]).filter(([k]) => k)) };
   chat.history = []; chat.recordings = { refs: [] };
   for (const k of ['samples', 'tracks', 'clips', 'soundHistory', 'explanations']) lastBuild[k] = {};
   for (const k of ['groove', 'melody', 'project', 'reference', 'genreTarget', 'lastCapture', 'lastRender', 'bpm']) lastBuild[k] = null;
