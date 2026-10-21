@@ -35,9 +35,11 @@ cmake --build build -j2
 ```
 
 Output:
-- `build/ADEHack_artefacts/Release/VST3/ADE Hack.vst3`
-- `build/ADEHack_artefacts/Release/AU/ADE Hack.component` (macOS only)
-- `build/ADEHack_artefacts/Release/Standalone/ADE Hack`
+- Windows: `build/ADEHack_artefacts/Release/VST3/ADE Hack.vst3`
+- macOS: `build/ADEHack_artefacts/Release/VST3/ADE Hack.vst3` + `build/ADEHack_artefacts/Release/AU/ADE Hack.component`
+- Linux: `build/ADEHack_artefacts/Release/VST3/ADE Hack.vst3`
+
+CI builds run on GitHub Actions for Windows (VST3) and macOS (VST3 + AU) on every push/PR.
 
 ### Linux dependency notes (this environment)
 

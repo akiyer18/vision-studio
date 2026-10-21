@@ -33,6 +33,14 @@ FetchContent_Declare(JUCE
   GIT_SHALLOW    TRUE)
 FetchContent_MakeAvailable(JUCE)
 
+if(APPLE)
+  set(ADEHACK_FORMATS VST3 AU Standalone)
+elseif(WIN32)
+  set(ADEHACK_FORMATS VST3 Standalone)
+else()
+  set(ADEHACK_FORMATS VST3 Standalone)
+endif()
+
 # ---------------------------------------------------------------------------
 # Plugin target
 # ---------------------------------------------------------------------------
@@ -41,7 +49,7 @@ juce_add_plugin(ADEHack
   COMPANY_COPYRIGHT        "(c) 2026 ADE Hack"
   PLUGIN_MANUFACTURER_CODE Adeh
   PLUGIN_CODE              Adh1
-  FORMATS                  VST3 AU Standalone
+  FORMATS                  ${ADEHACK_FORMATS}
   PRODUCT_NAME             "ADE Hack"
   DESCRIPTION              "AI producing assistant: Stability audio + Gemini/Flamingo analysis"
   NEEDS_CURL               TRUE
