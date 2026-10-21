@@ -1,0 +1,73 @@
+name: Build VST3 + AU Plugin
+
+on:
+  push:
+    branches: [ release ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  # ---------------------------------------------------------------
+  # Windows — VST3 (Ableton Live, FL Studio)
+  # ---------------------------------------------------------------
+  windows-vst3:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.22.x'
+
+      - name: Configure CMake (Windows VST3)
+        shell: pwsh
+        run: |
+          cmake -S vst_plugin -B vst_plugin/build `
+            -DCMAKE_BUILD_TYPE=Release `
+            -A x64
+
+      - name: Build (Windows VST3)
+        shell: pwsh
+        run: |
+          cmake --build vst_plugin/build --config Release -- -maxcpucount
+
+      - name: Upload Windows VST3 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ADE-Hack-Windows-VST3
+          path: vst_plugin/build/ADEHack_artefacts/Release/VST3/ADE Hack.vst3/**
+          retention-days: 7
+
+  # ---------------------------------------------------------------
+  # macOS — VST3 + AU (Ableton Live, FL Studio, Logic Pro)
+  # ---------------------------------------------------------------
+  macos-au-vst3:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.22.x'
+
+      - name: Configure CMake (macOS VST3 + AU)
+        run: |
+          cmake -S vst_plugin -B vst_plugin/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Build (macOS VST3 + AU)
+        run: |
+          cmake --build vst_plugin/build --config Release -j$(sysctl -n hw.ncpu)
+
+      - name: Upload macOS AU + VST3 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ADE-Hack-macOS-AU-VST3
+          path: |
+            vst_plugin/build/ADEHack_artefacts/Release/AU/ADE Hack.component/**
+            vst_plugin/build/ADEHack_artefacts/Release/VST3/ADE Hack.vst3/**
+          retention-days: 7
