@@ -57,7 +57,7 @@ const ctx = {
 };
 
 const tools = makeTools(ctx, { beat: "/tmp/fake.wav", refs: [{ name: "loop.wav", path: "/tmp/ref1.wav" }, { name: "kick.wav", path: "/tmp/ref2.wav" }] });
-const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "transcribe_audio", "judge_sound", "slice_sample", "chop_sample", "add_effect", "set_param", "list_devices", "set_mixer", "create_scene", "fire_scene", "record_arrangement", "analyze_audio", "compare_audio", "render_preview", "set_track_color", "capture_midi", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "show_live", "play", "stop"];
+const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "transcribe_audio", "judge_sound", "slice_sample", "chop_sample", "load_device", "add_effect", "set_param", "list_devices", "set_mixer", "create_scene", "fire_scene", "record_arrangement", "analyze_audio", "compare_audio", "render_preview", "set_track_color", "capture_midi", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "show_live", "play", "stop"];
 assert.deepEqual(tools.map((t) => t.name), expected, "tool names");
 for (const t of tools) {
   assert.ok(t.description && t.description.length > 20, `${t.name} description`);
@@ -82,6 +82,7 @@ const sample = {
   judge_sound: { path: "/out/x.wav", intent: "tight clicky techno kick with a short sub tail" },
   slice_sample: { which: "ref#1", startSeconds: 1.2, lengthSeconds: 0.4, name: "vox-ah" },
   chop_sample: { which: "ref#1", maxPieces: 8 },
+  load_device: { track: "Drums", device: "909 Core Kit.adg" },
   add_effect: { track: "Kick", device: "Saturator", params: [{ name: "Drive", value: 18 }, { name: "Dry/Wet", value: 100 }] },
   set_param: { track: "Kick", device: "Saturator", param: "Drive", value: 12 },
   list_devices: { track: "Kick" },
@@ -317,6 +318,25 @@ const tr2 = JSON.parse(await T("transcribe_audio").run({ which: "ref#1" }));
 assert.equal(tr2.noteCount, 10); assert.equal(tr2.notes.split(" ").length, 10); assert.ok(!("truncated" in tr2));
 for (const k of ["PRODUCTION PLAYBOOK", "never copy bar 1", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "humanize", "QUALITY GATE", "reused:true", "Review:", "[density: minimal]", "i-VI-III-VII"]) assert.ok(PRODUCER_SYSTEM.includes(k), `system prompt has ${k}`);
 assert.ok(!PRODUCER_SYSTEM.includes("EFFECTS AND MIX (add_effect") && !PRODUCER_SYSTEM.includes("VOCAL CHOPS AND SAMPLE PIECES"), "old sections replaced");
+
+// load_device: match/requested/actual name surfaced; failure passthrough
+ctx.live.loadDevice = async (i) => ({ requested: i.device, match: i.device === "ping pong" ? "alias" : "exact", device: { index: 0, name: i.device === "ping pong" ? "Delay" : i.device, class_name: "X" }, params: [{ index: 0, name: "Device On", value: 1, min: 0, max: 1, display: "On" }] });
+const ldv = JSON.parse(await T("load_device").run(sample.load_device));
+assert.equal(ldv.device, "909 Core Kit.adg"); assert.equal(ldv.match, "exact"); assert.equal(ldv.requested, "909 Core Kit.adg"); assert.equal(ldv.params[0].name, "Device On");
+const ldp = JSON.parse(await T("load_device").run({ track: "Perc", device: "ping pong" }));
+assert.equal(ldp.device, "Delay"); assert.equal(ldp.match, "alias"); assert.equal(ldp.requested, "ping pong");
+assert.throws(() => T("load_device").parse({ track: "Perc", device: "x" }), "1-char device rejected");
+ctx.live.loadDevice = async () => { throw new Error("device 'Echo' not found; audio effects available: Auto Filter, Delay, Reverb, Saturator ..."); };
+const ldf = JSON.parse(await T("load_device").run({ track: "Perc", device: "Echo" }));
+assert.equal(ldf.ok, false); assert.match(ldf.error, /available: Auto Filter, Delay/);
+const fxf = JSON.parse(await T("add_effect").run({ track: "Perc", device: "Echo", params: [{ name: "Dry/Wet", value: 0.2 }] }));
+assert.equal(fxf.ok, false, "add_effect with a missing device -> ok:false");
+ctx.live.loadDevice = async (i) => ({ requested: i.device, match: "ci", device: { index: 2, name: "Reverb", class_name: "Reverb" }, params: [{ index: 1, name: "Dry/Wet", value: 0.3, min: 0, max: 1, display: "30 %" }] });
+ctx.live.setParam = async (i) => ({ param: { name: i.param, value: i.value, min: 0, max: 1, display: `${i.value}` } });
+const fxm = JSON.parse(await T("add_effect").run({ track: "Snare", device: "reverb", params: [{ name: "Dry/Wet", value: 0.2 }] }));
+assert.equal(fxm.match, "ci"); assert.equal(fxm.device, "Reverb"); assert.equal(fxm.requested, "reverb");
+for (const k of ["LIVE 10 STANDARD ON THIS MACHINE", "NO Ping Pong Delay", "KIT PATH", "909 Core Kit.adg", "kick 36, snare 38, clap 39", "Arpeggiator", "Dynamic Tube", "bitcrusher", '"exact"|"alias"|"ci"|"fuzzy"', "return tracks"]) assert.ok(PRODUCER_SYSTEM.includes(k), `system prompt has ${k}`);
+assert.ok(!PRODUCER_SYSTEM.includes("Ping Pong Delay / Echo at"), "no nonexistent device recipe left");
 
 // persistent attachments: note lists all, marks new vs earlier
 const fc = { beta: { messages: { toolRunner(params) { return { params, pushMessages() {}, async *[Symbol.asyncIterator]() { yield { role: "assistant", stop_reason: "end_turn", content: [] }; } }; } } } };
