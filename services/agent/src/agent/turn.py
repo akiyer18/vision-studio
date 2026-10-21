@@ -19,6 +19,7 @@ from contracts import (
 )
 
 from agent.arc import Motion, detect_arc
+from agent.complete import complete_brief
 from agent.asking import AskContext, almost_empty, next_one_sound, next_question
 from agent.defaults import PRESETS, default_slot, derive_bpm, parse_bpm, preset_for, skipped
 from agent.extract import extract_audio, extract_numbers, extract_text, stated_tempo
@@ -523,6 +524,7 @@ def _ready(session: Session, hooks: TurnHooks) -> TurnResponse:
             SlotValue(value="one sound", source="you", reason="One sound mode", confidence=1.0),
         )
     _fill_gaps(session, skipped_fill=False)
+    complete_brief(session)
     mood = session.mood_name()
     energy = session.slots["energy"].value
     world = session.slots["world"].value
@@ -531,7 +533,18 @@ def _ready(session: Session, hooks: TurnHooks) -> TurnResponse:
     session.note("tempo", tempo_reason)
     arrangement = _style_descriptors(session, hooks)
     romans = list(PRESETS.get(mood, PRESETS["peaceful"]).roman)
-    chords = chords_for(key, romans)
+    try:
+        chords = chords_for(key, romans)
+    except ValueError:
+        key = preset_for(mood).key
+        session.slots["key"] = SlotValue(
+            value=key,
+            source="guessed",
+            reason=f"{key} because that is the {mood} preset",
+            confidence=0.4,
+        )
+        session.note("complete_brief", f"Kept {key}: the key could not be read")
+        chords = chords_for(key, romans)
     session.note("theory", f"{' '.join(romans)} in {key} is {', '.join(chords)}")
     if session.mode == "one_sound":
         prompts = compile_one_sound(
@@ -547,6 +560,19 @@ def _ready(session: Session, hooks: TurnHooks) -> TurnResponse:
             arc=session.arc,
         )
     else:
+        prompts = compile_prompts(
+            session.output,
+            mood=mood,
+            energy=energy,
+            world=world,
+            key=key,
+            bpm=bpm,
+            facets=_facet_texts(session),
+            arrangement=arrangement,
+            arc=session.arc,
+        )
+    if not prompts and session.mode != "one_sound":
+        session.output = ["all_layers"]
         prompts = compile_prompts(
             session.output,
             mood=mood,
@@ -603,7 +629,12 @@ def _brief(session: Session) -> SongBrief:
     if rows:
         payload["facets"] = rows
     if session.arc is not None:
-        payload["arc"] = {"label": session.arc.label, "start": session.arc.start, "end": session.arc.end}
+        payload["arc"] = {
+            "label": session.arc.label,
+            "start": session.arc.start,
+            "end": session.arc.end,
+            "description": session.arc.description,
+        }
     return SongBrief.model_validate(payload)
 
 

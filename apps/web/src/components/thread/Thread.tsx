@@ -2,11 +2,13 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import { Suspense, lazy, useCallback, useRef, useState } from "react"
 
 import { ApiError } from "../../api/client.ts"
+import { inFlight } from "../../conversation/flight.ts"
 import { postTurn } from "../../conversation/postTurn.ts"
 import { inputBridge } from "../../input/bridge.ts"
 import type { ReadingPatch } from "../../input/bridge.ts"
 import type { RecentMessage } from "../../recentIdeas.ts"
 import { renderCurrent } from "../../studio/renderSession.ts"
+import { traceSentence } from "../../studio/traceMark.ts"
 import { useStudio } from "../../state/studio.ts"
 import type { AnswerAction } from "../../types/answer_action.ts"
 import type { SlotName } from "../../types/slot_name.ts"
@@ -32,6 +34,7 @@ export function Thread({ started, bubbles, onExchange, showLayers, showDemo }: P
   const summary = useStudio((state) => (state.turn?.status === "ready" ? state.turn.summary : undefined))
   const prompts = useStudio((state) => (state.turn?.status === "ready" ? state.turn.prompts : undefined))
   const status = useStudio((state) => state.status)
+  const trace = useStudio((state) => state.turn?.trace)
   const reading = useStudio((state) => state.reading)
   const reduce = useReducedMotion()
   const [error, setError] = useState<string | null>(null)
@@ -43,7 +46,7 @@ export function Thread({ started, bubbles, onExchange, showLayers, showDemo }: P
 
   const send = useCallback(
     async (action: AnswerAction, value?: string) => {
-      if (busy.current) return
+      if (busy.current || inFlight() || useStudio.getState().status === "working") return
       const current = useStudio.getState().turn
       const slot: SlotName = current?.status === "question" && current.question ? current.question.slot : "mood"
       busy.current = true
@@ -52,7 +55,7 @@ export function Thread({ started, bubbles, onExchange, showLayers, showDemo }: P
       const asked = current?.status === "question" ? current.question?.text : ""
       const facet = current?.status === "question" ? current.question?.facet : undefined
       try {
-        await postTurn({
+        const posted = await postTurn({
           answer: {
             slot,
             action,
@@ -60,7 +63,7 @@ export function Thread({ started, bubbles, onExchange, showLayers, showDemo }: P
             ...(facet ? { facet } : {}),
           },
         })
-        if (asked) onExchange(asked, answerLabel(action, value))
+        if (posted && asked) onExchange(asked, answerLabel(action, value))
       } catch (err) {
         const message = err instanceof ApiError ? err.message : "That did not go through. Try again."
         setError(message.trim().length < 160 ? message : "That did not go through. Try again.")
@@ -72,7 +75,7 @@ export function Thread({ started, bubbles, onExchange, showLayers, showDemo }: P
   )
 
   const goDeeper = useCallback(async () => {
-    if (busy.current) return
+    if (busy.current || inFlight() || useStudio.getState().status === "working") return
     busy.current = true
     setError(null)
     try {
@@ -107,16 +110,21 @@ export function Thread({ started, bubbles, onExchange, showLayers, showDemo }: P
               <Line key={bubble.id} bubble={bubble} reduce={reduce === true} />
             ))}
             {question ? (
-              <QuestionMessage question={question} onAnswer={(action, value) => void send(action, value)} />
+              <QuestionMessage
+                question={question}
+                locked={status === "working"}
+                onAnswer={(action, value) => void send(action, value)}
+              />
             ) : turnStatus === "question" ? (
               <div className="rounded-2xl border border-white/10 px-4 py-3">
                 <p>Nothing to ask.</p>
                 <p className="mt-1 text-secondary">Skip all and build from what is already known.</p>
-                <Button tone="ghost" className="mt-3" onClick={() => void send("skip_all")}>
+                <Button tone="ghost" className="mt-3" disabled={status === "working"} onClick={() => void send("skip_all")}>
                   Skip all and build
                 </Button>
               </div>
             ) : null}
+            {status === "working" ? <Thinking latest={trace?.length ? traceSentence(trace[trace.length - 1]) : "Thinking"} /> : null}
             {(prompts?.length ?? 0) > 0 ? (
               <article className="max-w-xl rounded-2xl border border-white/10 px-4 py-3">
                 <p className="text-ink">{summary || "Ready to build."}</p>
@@ -162,6 +170,15 @@ export function Thread({ started, bubbles, onExchange, showLayers, showDemo }: P
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  )
+}
+
+function Thinking({ latest }: { latest: string }) {
+  return (
+    <div className="flex max-w-xl items-center gap-3 rounded-2xl border border-white/10 px-4 py-3 text-secondary" role="status">
+      <span className="thinking-mark" aria-hidden="true" />
+      <p>{latest}</p>
     </div>
   )
 }

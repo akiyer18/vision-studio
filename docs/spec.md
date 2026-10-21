@@ -25,12 +25,12 @@ SongBrief       { slots: Partial<Record<SlotName, SlotValue>>, output: OutputCho
 
 FacetAnswer     { id: string, layer: string, label: string, value: string,
                   descriptor: string, options: string[] }
-Arc             { label: string, start: string, end: string }
+Arc             { label: string, start: string, end: string, description?: string }
 
 Question        { slot: SlotName, text: string, options: string[], index: integer, max: integer,
                   facet?: string }
 
-TurnRequest     { session_id: string, text?: string, audio_features?: AudioFeatures,
+TurnRequest     { session_id: string, request_id?: string, text?: string, audio_features?: AudioFeatures,
                   answer?: { slot: SlotName, action: AnswerAction, value?: string, facet?: string },
                   output?: OutputChoice[], overrides?: Record<SlotName, string>,
                   mode?: "full" | "one_sound", reference?: Record<SlotName, string>,
@@ -58,7 +58,8 @@ Semantics:
 - "skip_all" fills every remaining slot with defaults and returns status "ready".
 - deepen asks up to three more facet questions after a ready brief. It can be sent again.
 - A facet answer is stored on the brief, not in the slot named by the question. The question's slot is only the carrier.
-- An arc is a from-to change in the idea. Section prompts use its start and end. The brief shows the label, for example "Dark to bright".
+- An arc is a musical journey: a start state, an end state, and a short description. Section prompts use the start and the end. The brief shows the label, for example "Dark to bright". Structure never stores the journey. It only stores a bar count.
+- request_id is a client id for one turn. The same id for the same session returns the response already produced and does not run the turn again.
 - Edited prompts in the UI are sent back as overrides of the LayerPrompt text at render time.
 
 ## 2. Slots (services/agent/slots.yaml)
@@ -97,8 +98,10 @@ When those two BPMs already agree and the mood is longing, the reason is
 "76 BPM because slow tempos read as sad". Every default carries a one line reason.
 Mood with no signal defaults to peaceful. Energy, world, and key then follow that preset.
 Output defaults to all_layers ("all layers separately"). full_mix is used only when chosen.
-Other empty slots: style "no reference", palette "no preference", structure "8 bars",
+Other empty slots: style "no reference", palette "no preference", structure "8 bars"
+(or "16 bars" when the idea has an arc, unless the producer stated a count),
 must_keep "everything" when audio was uploaded and "nothing" otherwise.
+Before a brief is ready, complete_brief fills any gap: tempo (stated, then detected, then derived), an integer bar count, a key with a mode, and an output. Each fill carries a reason. Text in a numeric slot is dropped and the trace says so.
 
 Mock text extraction keywords (MockProvider, and the offline fallback when Bedrock is unavailable):
 - longing: miss, lonely, sad, rain, lost, heart, night drive
@@ -121,6 +124,7 @@ One sound:    section 11. One layer, TrackType SFX or Instrument, not the table 
 Mood words: longing "melancholic, late night, intimate"; joyful "bright, uplifting, euphoric";
 peaceful "calm, tender, soft"; tense "tense, brooding, urgent".
 Energy words: slow "gentle dynamics, slow build"; steady "steady groove"; high "driving and energetic".
+A missing or unrecognised mood, energy, or world uses the peaceful, steady, and warm and intimate words. The compiler does not raise.
 
 | world | drums | chords | bass | melody | texture | full mix |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -222,6 +226,8 @@ The layer cards and the player load lazily, so wavesurfer loads with them. One s
 
 Keyboard. Enter sends. S skips a question, or solos a focused lane when solo and mute are on. Shift+S skips all and builds. M mutes the focused lane when that flag is on. Space plays or stops, and does nothing while typing. ? opens the shortcuts.
 
+The composer has one focus ring, on the whole field when focus is inside it. The text area has no outline of its own. While a turn or a render is in flight, Send, Enter, the answer chips, and You decide, Skip this, and Skip all and build wait. The thread shows a thinking line with a small pulse and the latest trace step, or "Thinking" when there is no trace yet. A failure brings the controls back and offers Try again. Every turn sends a new request id. A repeat of that id returns the same response.
+
 Copy the demos click stays plain: "Send the idea", "Confirm this reading", "Skip this", "Skip all and build", "You decide", "Build", "Another take", "Pick", "Play together", "Export to Logic", "Try again", and "Start a new idea".
 
 ## 8. Definition of done per phase
@@ -278,6 +284,8 @@ Guardrails in code, always: never ask a slot filled with source you or detected;
 
 Both providers read numbers from the text before Claude or the keyword extractor: "94 bpm" is tempo 94, source you, "Heard 94 BPM in your words"; "F minor" is the key; "8 bars" is the structure. A stated tempo still beats a measured one.
 
+Before status ready, complete_brief checks the brief the compiler is about to read. Tempo stays the stated number, then the detected number, then the derived number. Bars stay a positive integer the producer stated, otherwise 16 when there is an arc, otherwise 8. Key always includes a mode. Output is set. Structure holds only that bar count. A journey found in the structure slot is moved to the arc and the bar count is kept. If bars are not an integer, or a numeric slot holds text, the default stays and a complete_brief trace line says so. The same completion runs before every render, so a missing bar count or tempo cannot fail the render.
+
 Facet questions. The catalog is `kb/facets`, one YAML file per layer and one for one-sound types. A facet has an id, a question, an intent, allowed values with the short descriptor used in prompts, a condition, and an importance. A condition `kick_character~distorted` applies only when that answer contains the fragment. The interviewer may return a facet on the same tool call. A separate forced call, used once the section 2 slots that still score above 0.35 are filled or when the producer goes deeper, asks Claude to choose the applicable facet that most changes the sound, phrase the question, and pick 2 to 4 of its values. Code refuses a facet that does not apply, an option that is not one of its values, and a facet already asked. A refusal falls back to importance order and the facet's own question. Free text that matches no value is mapped by Claude to the closest label, or stored as a descriptor. If that call fails, the words are stored as the descriptor. The trace for a failed facet call is "Bedrock unavailable, used the facet order".
 
 An artist or song name is kept as a reference and is not passed to the compiler. Claude may turn it into musical descriptors. The trace says "Used musical descriptors instead of {name}". If that call fails, the name still stays out of the prompt.
@@ -317,7 +325,7 @@ Facet questions start once the selected layers, or the one-sound type, are known
 
 The brief shows filled facets under each selected layer as a compact row, for example "Kick: distorted industrial, full clipping, short tight". Clicking a row edits a value.
 
-An idea that says "from dark to bright" stores an arc and is written as Section A and Section B. The brief shows "Dark to bright". Names that look like an artist or a song, including "like Billie Eilish", stay a reference. Descriptors may be written instead. The name is never sent to the compiler.
+An idea that says "from dark to bright" stores an arc and is written as Section A and Section B. The brief shows "Dark to bright". A release such as "agony and tension, release into a positive breath at the end" is an arc too: the start state, the end state, and a short description. The structure slot stays a bar count, 16 bars when the journey was not given a length. A stated bar count still wins. The end state "a positive breath" reads as peaceful, because it is a breath rather than a dance. Names that look like an artist or a song, including "like Billie Eilish", stay a reference. Descriptors may be written instead. The name is never sent to the compiler.
 
 One sound is a sample-library request, such as "a snappy EDM snare" or "a warm 808". It asks only what is missing among sound type, genre, duration, mood, and brightness, still one at a time and still at most 5. MockProvider asks them in that order. Bedrock may ask any of those five that are still empty. Duration uses the structure slot and its existing question. Sound type, genre, and brightness use the questions in section 2. The other slots are not asked. The same answer, You decide, Skip this, and Skip all and build rules apply. You decide and Skip use these defaults: sound "pad", genre "no genre", brightness "balanced", plus the section 3 defaults for duration and mood. Skip all fills whatever of those five is still empty, then the remaining section 3 defaults, and returns one prompt.
 

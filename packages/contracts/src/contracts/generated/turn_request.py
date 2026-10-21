@@ -54,6 +54,7 @@ class TurnRequest(BaseModel):
         extra="forbid",
     )
     session_id: str
+    request_id: str | None = None
     text: str | None = None
     audio_features: AudioFeatures | None = None
     answer: Answer | None = None

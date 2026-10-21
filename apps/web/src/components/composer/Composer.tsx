@@ -2,6 +2,7 @@ import { ArrowUp, Headphones, ListChecks, Mic, Paperclip, Sparkles, Square } fro
 import { useEffect, useRef, useState } from "react"
 
 import { ApiError, upload } from "../../api/client.ts"
+import { inFlight } from "../../conversation/flight.ts"
 import { postTurn } from "../../conversation/postTurn.ts"
 import { runScenario } from "../../demo/runScenario.ts"
 import { features as flags } from "../../features.ts"
@@ -63,6 +64,8 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
   const featuresRef = useRef<AudioFeatures | null>(null)
   const recordingRef = useRef(false)
   const waitingRef = useRef(false)
+  const sendingRef = useRef(false)
+  const echoedRef = useRef("")
   const fixingRef = useRef(false)
   const keyTextRef = useRef("")
   const tempoTextRef = useRef("")
@@ -72,6 +75,7 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
   const onBubbleRef = useRef(onBubble)
   const onExchangeRef = useRef(onExchange)
   const turned = useStudio((state) => state.turn !== null)
+  const working = useStudio((state) => state.status === "working")
 
   function markRecording(value: boolean) {
     recordingRef.current = value
@@ -216,23 +220,33 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
   }
 
   async function sendTurn(audio?: AudioFeatures) {
-    await postTurn({
+    const posted = await postTurn({
       text: textRef.current.trim() || undefined,
       audio_features: audio,
     })
+    if (!posted) return false
     markWaiting(false)
     rememberFeatures(audio ?? null)
+    return true
   }
 
   async function answerQuestion(value: string) {
     const current = useStudio.getState().turn
     if (current?.status !== "question" || !current.question) return false
-    await postTurn({ answer: { slot: current.question.slot, action: "answer", value } })
-    return true
+    const posted = await postTurn({ answer: { slot: current.question.slot, action: "answer", value } })
+    return posted
+  }
+
+  function showIdea(label: string) {
+    const trimmed = label.trim()
+    if (!trimmed || echoedRef.current === trimmed) return
+    echoedRef.current = trimmed
+    onBubbleRef.current(trimmed)
   }
 
   async function submit(): Promise<"sent" | "confirm" | "blocked"> {
-    if (recordingRef.current || waitingRef.current) return "blocked"
+    if (sendingRef.current || inFlight() || recordingRef.current || waitingRef.current) return "blocked"
+    if (useStudio.getState().status === "working") return "blocked"
     const currentText = textRef.current
     const currentHeld = heldRef.current
     const openQuestion = useStudio.getState().turn?.status === "question"
@@ -240,20 +254,25 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
       if (!openQuestion) setHint("Write a line, or add a sound, before sending.")
       return "blocked"
     }
+    sendingRef.current = true
     setHint(null)
     setError(null)
     setBusy(true)
     useStudio.getState().setStatus("working")
+    onBeginRef.current()
+    const answering = openQuestion && currentText.trim().length > 0 && !currentHeld
+    if (!answering) showIdea(currentText.trim() || currentHeld?.file.name || "A sound")
     try {
       if (openQuestion && currentText.trim() && !currentHeld) {
         const asked = useStudio.getState().turn
         const questionText = asked?.status === "question" ? (asked.question?.text ?? "") : ""
         const value = currentText.trim()
         const answered = await answerQuestion(value)
-        if (answered && questionText) onExchangeRef.current(questionText, value)
+        if (!answered) return "blocked"
+        if (questionText) onExchangeRef.current(questionText, value)
+        echoedRef.current = ""
         textRef.current = ""
         setText("")
-        onBeginRef.current()
         return "sent"
       }
       let audio = featuresRef.current ?? undefined
@@ -272,16 +291,14 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
           setKeyText(keyTextRef.current)
           setTempoText(tempoTextRef.current)
           useStudio.getState().setStatus("idle")
-          onBubbleRef.current(currentText.trim() || currentHeld.file.name)
-          onBeginRef.current()
           return "confirm"
         }
       }
       const said = currentText.trim()
       noteIdea(said, said.length === 0)
-      await sendTurn(audio)
-      onBubbleRef.current(said || currentHeld?.file.name || "A sound")
-      onBeginRef.current()
+      const posted = await sendTurn(audio)
+      if (!posted) return "blocked"
+      echoedRef.current = ""
       textRef.current = ""
       setText("")
       return "sent"
@@ -290,13 +307,15 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
       setError(err instanceof ApiError ? plainFailure(err.message) : "That did not go through. Try sending it again.")
       return "blocked"
     } finally {
+      sendingRef.current = false
       setBusy(false)
     }
   }
 
   async function confirm() {
     const audio = featuresRef.current
-    if (!audio) return
+    if (!audio || sendingRef.current || inFlight() || useStudio.getState().status === "working") return
+    sendingRef.current = true
     setBusy(true)
     useStudio.getState().setStatus("working")
     setError(null)
@@ -305,14 +324,17 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
       rememberFeatures(next)
       const said = textRef.current.trim()
       noteIdea(said, said.length === 0)
-      await sendTurn(next)
+      const posted = await sendTurn(next)
+      if (!posted) return
       markFixing(false)
+      echoedRef.current = ""
       textRef.current = ""
       setText("")
     } catch (err) {
       useStudio.getState().setStatus("error")
       setError(err instanceof ApiError ? plainFailure(err.message) : "That did not go through. Try sending it again.")
     } finally {
+      sendingRef.current = false
       setBusy(false)
     }
   }
@@ -414,7 +436,7 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
     <div className={`canvas-column flex flex-col gap-4 ${started ? "pb-4" : ""}`}>
       <form
         data-tour="composer"
-        className={`glass flex flex-col gap-2 p-2 ${dragging ? "outline outline-2 outline-accent" : ""}`}
+        className={`composer-shell glass flex flex-col gap-2 p-2 ${dragging ? "outline outline-2 outline-accent" : ""}`}
         onSubmit={(event) => {
           event.preventDefault()
           void submit()
@@ -483,6 +505,10 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
             }}
             onKeyDown={(event) => {
               if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return
+              if (sendingRef.current || inFlight() || busy || recording || useStudio.getState().status === "working") {
+                event.preventDefault()
+                return
+              }
               event.preventDefault()
               event.currentTarget.form?.requestSubmit()
             }}
@@ -490,12 +516,14 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
           />
           <div className="shrink-0">
             {waiting ? null : error ? (
-              <Button onClick={() => void submit()}>Try again</Button>
+              <Button onClick={() => void submit()} disabled={working}>
+                Try again
+              </Button>
             ) : (
               <button
                 type="submit"
                 aria-label="Send the idea"
-                disabled={busy || recording}
+                disabled={busy || recording || working}
                 className="btn-primary inline-flex size-8 items-center justify-center rounded-full bg-accent text-canvas disabled:opacity-40"
               >
                 <ArrowUp size={16} aria-hidden />

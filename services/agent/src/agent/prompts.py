@@ -21,6 +21,23 @@ ENERGY_WORDS = {
     "steady": "steady groove",
     "make people move": "driving and energetic",
 }
+
+
+def mood_words(mood: str) -> str:
+    return MOOD_WORDS.get(mood) or MOOD_WORDS["peaceful"]
+
+
+def energy_words(energy: str) -> str:
+    return ENERGY_WORDS.get(energy) or ENERGY_WORDS["steady"]
+
+
+def world_descriptor(world: str, base: str) -> str:
+    table = DESCRIPTORS.get(world) or DESCRIPTORS["warm and intimate"]
+    found = table.get(base)
+    if found:
+        return found
+    fallback = DESCRIPTORS["warm and intimate"]
+    return fallback.get(base) or fallback["texture"]
 DESCRIPTORS = {
     "warm and intimate": {
         "drums": "soft brushed drum kit, sparse lazy groove",
@@ -181,7 +198,7 @@ def _one_layer(
     section_bit = f", Section {section}" if section else ""
     prompt = (
         f"TrackType: {kind}, {body}{section_bit}, {genre}, {bright}, "
-        f"{MOOD_WORDS[mood]}, {ENERGY_WORDS[energy]}, {bpm} BPM"
+        f"{mood_words(mood)}, {energy_words(energy)}, {bpm} BPM"
     )
     return LayerPrompt(
         layer=layer,
@@ -271,17 +288,17 @@ def _layer_prompt(
     arrangement: str,
     section: str,
 ) -> LayerPrompt:
-    mood_words = MOOD_WORDS[mood]
-    energy_words = ENERGY_WORDS[energy]
-    descriptor = DESCRIPTORS[world][base]
+    mood_line = mood_words(mood)
+    energy_line = energy_words(energy)
+    descriptor = world_descriptor(world, base)
     section_bit = f", Section {section}" if section else ""
     if base == "full_mix":
         body = f"{descriptor} instrumental in {key}"
-        prompt = f"TrackType: Music, {_with_facets(body, facets)}{section_bit}, {mood_words}, {energy_words}, {bpm} BPM"
+        prompt = f"TrackType: Music, {_with_facets(body, facets)}{section_bit}, {mood_line}, {energy_line}, {bpm} BPM"
         negative = "vocals"
     else:
         body = f"{descriptor} in {key}" if base in TONAL else descriptor
-        prompt = f"TrackType: Instrument, {_with_facets(body, facets)}{section_bit}, {mood_words}, {energy_words}, {bpm} BPM"
+        prompt = f"TrackType: Instrument, {_with_facets(body, facets)}{section_bit}, {mood_line}, {energy_line}, {bpm} BPM"
         negative = _negative(base)
     return LayerPrompt(
         layer=name,

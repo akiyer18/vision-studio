@@ -7,6 +7,7 @@ import type { SlotName } from "./slot_name.ts";
 
 export interface TurnRequest {
   session_id: string;
+  request_id?: string;
   text?: string;
   audio_features?: AudioFeatures;
   answer?: {

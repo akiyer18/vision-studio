@@ -8,10 +8,11 @@ import { Chip } from "../Chip.tsx"
 
 type Props = {
   question: Question
+  locked?: boolean
   onAnswer: (action: AnswerAction, value?: string) => void
 }
 
-export function QuestionMessage({ question, onAnswer }: Props) {
+export function QuestionMessage({ question, locked = false, onAnswer }: Props) {
   const [draft, setDraft] = useState("")
   const [key, setKey] = useState(questionKey(question))
   const reduce = useReducedMotion()
@@ -23,6 +24,7 @@ export function QuestionMessage({ question, onAnswer }: Props) {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
+      if (locked) return
       if (event.metaKey || event.ctrlKey || event.altKey) return
       const target = event.target
       if (target instanceof Node && document.getElementById("shortcut-help")?.contains(target)) return
@@ -41,9 +43,10 @@ export function QuestionMessage({ question, onAnswer }: Props) {
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [onAnswer])
+  }, [locked, onAnswer])
 
   function submitText() {
+    if (locked) return
     const value = draft.trim()
     if (!value) return
     onAnswer("answer", value)
@@ -64,7 +67,7 @@ export function QuestionMessage({ question, onAnswer }: Props) {
       {question.options.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-2">
           {question.options.map((option) => (
-            <Chip key={option} selected={draft === option} onClick={() => onAnswer("answer", option)}>
+            <Chip key={option} selected={draft === option} disabled={locked} onClick={() => onAnswer("answer", option)}>
               {option}
             </Chip>
           ))}
@@ -85,17 +88,18 @@ export function QuestionMessage({ question, onAnswer }: Props) {
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           placeholder="Or write your own"
-          className="w-full rounded-xl border border-white/15 bg-transparent px-3 py-2 text-sm text-ink outline-none placeholder:text-muted"
+          disabled={locked}
+          className="w-full rounded-xl border border-white/15 bg-transparent px-3 py-2 text-sm text-ink outline-none placeholder:text-muted disabled:opacity-40"
         />
       </form>
       <div className="mt-3 flex flex-wrap gap-2">
-        <Button tone="ghost" onClick={() => onAnswer("you_decide")}>
+        <Button tone="ghost" disabled={locked} onClick={() => onAnswer("you_decide")}>
           You decide
         </Button>
-        <Button tone="ghost" onClick={() => onAnswer("skip")}>
+        <Button tone="ghost" disabled={locked} onClick={() => onAnswer("skip")}>
           Skip this
         </Button>
-        <Button tone="ghost" onClick={() => onAnswer("skip_all")}>
+        <Button tone="ghost" disabled={locked} onClick={() => onAnswer("skip_all")}>
           Skip all and build
         </Button>
       </div>

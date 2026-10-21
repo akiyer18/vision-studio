@@ -5,14 +5,15 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import shutil
 import sys
+import threading
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent.bedrock import explain_payload, history_payload
+from agent.complete import timing_from_brief
 from agent.explain import explain_result
 from agent.genres import load_genres, present_history, reference_values
 from agent.prompts import seeds_for
@@ -40,8 +41,8 @@ from api.renderer import MockRenderer, Renderer
 
 _WEB = ["http://localhost:5173", "http://127.0.0.1:5173"]
 _INPUTS = {"text_only", "hum", "vocal", "instrument_loop", "drum_loop", "full_track", "midi"}
-_BARS = re.compile(r"(\d+)")
-_BPM = re.compile(r"(\d+)\s+BPM")
+_session_locks: dict[str, threading.Lock] = {}
+_locks_guard = threading.Lock()
 _LAYER_ERROR = "That layer did not render. Try again."
 
 
@@ -129,6 +130,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     )
     app.state.data_root = data_root or default_data_root()
     app.state.sessions = {}
+    app.state.turns = {}
     app.state.renderer = MockRenderer(app.state.data_root)
 
     @app.post("/upload")
@@ -162,10 +164,16 @@ def create_app(data_root: Path | None = None) -> FastAPI:
 
     @app.post("/turn", response_model=TurnResponse)
     def turn(body: TurnRequest, request: Request) -> TurnResponse:
-        response = run_turn(body)
-        if response.status == "ready":
-            request.app.state.sessions[body.session_id] = _record(response)
-        return response
+        with _lock_for(body.session_id):
+            seen: dict[str, TurnResponse] = request.app.state.turns.setdefault(body.session_id, {})
+            if body.request_id and body.request_id in seen:
+                return seen[body.request_id]
+            response = run_turn(body)
+            if body.request_id:
+                seen[body.request_id] = response
+            if response.status == "ready":
+                request.app.state.sessions[body.session_id] = _record(response)
+            return response
 
     @app.post("/render", response_model=None)
     def render(body: RenderBody, request: Request) -> list[RenderResult] | StreamingResponse:
@@ -275,26 +283,44 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     return app
 
 
+def _lock_for(session_id: str) -> threading.Lock:
+    with _locks_guard:
+        lock = _session_locks.get(session_id)
+        if lock is None:
+            lock = threading.Lock()
+            _session_locks[session_id] = lock
+        return lock
+
+
 def _record(response: TurnResponse) -> SessionRecord:
     if not response.prompts or response.progression is None:
         raise HTTPException(409, "The brief is not ready to render")
     slots = response.brief.slots
-    if slots.mood is None or slots.world is None or slots.key is None:
-        raise HTTPException(409, "The brief is missing mood, world, or key")
-    structure = slots.structure.value if slots.structure is not None else "8 bars"
-    bars_match = _BARS.search(structure)
-    bpm_match = _BPM.search(response.prompts[0].prompt)
-    if bars_match is None or bpm_match is None:
-        raise HTTPException(409, "The brief has no bar count or tempo")
-    return SessionRecord(
+    bpm, bars = timing_from_brief(response.brief, response.prompts[0].prompt)
+    record = SessionRecord(
         prompts=list(response.prompts),
         chords=list(response.progression.chords),
-        bpm=int(bpm_match.group(1)),
-        bars=int(bars_match.group(1)),
-        mood=slots.mood.value,
-        world=slots.world.value,
-        key=slots.key.value,
+        bpm=bpm,
+        bars=bars,
+        mood=slots.mood.value if slots.mood is not None else "peaceful",
+        world=slots.world.value if slots.world is not None else "warm and intimate",
+        key=slots.key.value if slots.key is not None else "C major",
     )
+    _complete_record(record)
+    return record
+
+
+def _complete_record(record: SessionRecord) -> None:
+    if record.bpm <= 0:
+        record.bpm = 96
+    if record.bars <= 0:
+        record.bars = 8
+    if not record.mood:
+        record.mood = "peaceful"
+    if not record.world:
+        record.world = "warm and intimate"
+    if not record.key:
+        record.key = "C major"
 
 
 def _apply_prompt_text(prompts: list[LayerPrompt], edits: list[PromptText]) -> list[LayerPrompt]:
@@ -350,6 +376,7 @@ def _render_jobs(renderer: Renderer, jobs: list[RenderJob], chords: list[str]) -
 
 def _prepare_render(request: Request, body: RenderBody) -> tuple[SessionRecord, list[LayerPrompt]]:
     record = _ready(request, body.session_id)
+    _complete_record(record)
     if body.prompts:
         record.prompts = _apply_prompt_text(record.prompts, body.prompts)
     prompts = _prompts_for(record, body.layer)

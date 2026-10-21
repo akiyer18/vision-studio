@@ -7,6 +7,7 @@
   "properties": {
     "label": { "type": "string" },
     "start": { "type": "string" },
-    "end": { "type": "string" }
+    "end": { "type": "string" },
+    "description": { "type": "string" }
   }
 }

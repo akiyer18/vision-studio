@@ -2,6 +2,7 @@ import { motion, useReducedMotion } from "framer-motion"
 import { useState } from "react"
 
 import { SLOT_LABEL } from "../../brief/slots.ts"
+import { inFlight } from "../../conversation/flight.ts"
 import { postTurn } from "../../conversation/postTurn.ts"
 import { useStudio } from "../../state/studio.ts"
 import type { FacetAnswer } from "../../types/facet_answer.ts"
@@ -110,10 +111,11 @@ function FacetBlock({ facets, arcLabel, ready }: { facets: FacetAnswer[]; arcLab
   const layers = [...new Set(groups.map((group) => group.layer))]
 
   async function choose(id: string, value: string) {
+    if (inFlight() || useStudio.getState().status === "working") return
     setError(null)
     try {
-      await postTurn({ answer: { slot: "palette", action: "answer", value, facet: id } })
-      setOpen(null)
+      const posted = await postTurn({ answer: { slot: "palette", action: "answer", value, facet: id } })
+      if (posted) setOpen(null)
     } catch {
       setError("That change did not go through.")
     }

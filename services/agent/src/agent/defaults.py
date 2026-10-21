@@ -58,7 +58,7 @@ def preset_for(mood: str) -> Preset:
 
 def derive_bpm(energy: str, mood: str) -> tuple[int, str]:
     """Start at the energy tempo, then nudge halfway toward the mood preset BPM."""
-    energy_bpm = ENERGY_BPM[energy]
+    energy_bpm = ENERGY_BPM.get(energy, ENERGY_BPM["steady"])
     preset_bpm = preset_for(mood).bpm
     bpm = round((energy_bpm + preset_bpm) / 2)
     if energy_bpm == preset_bpm and mood == "longing" and energy == "slow and breathing":

@@ -4,4 +4,5 @@ export interface Arc {
   label: string;
   start: string;
   end: string;
+  description?: string;
 }

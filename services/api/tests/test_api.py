@@ -308,6 +308,90 @@ def _assert_wav(path: Path, frames: int) -> None:
     assert peak > 1000
 
 
+MESSAGE = (
+    "A synth pattern at 105bpm with the chord progression C, am, F, G, wavy, "
+    "agony and tension, release into a positive breath at the end"
+)
+
+
+def test_duplicate_request_id_returns_the_previous_response(tmp_path: Path) -> None:
+    payload = {"session_id": "duplicate", "text": "I feel sad", "request_id": "same-id"}
+    with TestClient(create_app(tmp_path / "data")) as client:
+        first = client.post("/turn", json=payload)
+        second = client.post("/turn", json=payload)
+        assert first.status_code == 200
+        assert second.json() == first.json()
+        third = client.post(
+            "/turn",
+            json={**payload, "request_id": "next-id", "answer": {"slot": "mood", "action": "skip"}},
+        )
+    assert third.status_code == 200
+    assert third.json()["brief"]["questions_asked"] == first.json()["brief"]["questions_asked"] + 1
+
+
+def test_the_synth_pattern_message_renders(tmp_path: Path) -> None:
+    with TestClient(create_app(tmp_path / "data")) as client:
+        turn = client.post(
+            "/turn",
+            json={
+                "session_id": "synth-pattern",
+                "text": MESSAGE,
+                "answer": {"slot": "mood", "action": "skip_all"},
+            },
+        )
+        assert turn.status_code == 200
+        body = turn.json()
+        assert body["status"] == "ready"
+        assert body["brief"]["slots"]["tempo"]["value"] == "105"
+        assert body["brief"]["slots"]["structure"]["value"] == "16 bars"
+        assert body["brief"]["arc"]["start"] == "agony and tension"
+        assert body["brief"]["arc"]["description"] == "Agony and tension releases into a positive breath"
+        rendered = client.post("/render", json={"session_id": "synth-pattern"})
+    assert rendered.status_code == 200
+    assert rendered.json()
+    assert {item["bpm"] for item in rendered.json()} == {105}
+
+
+def test_a_brief_without_bars_or_tempo_still_records() -> None:
+    from contracts import LayerPrompt, SongBrief, SlotValue, TurnResponse
+
+    from api.main import _record
+
+    response = TurnResponse(
+        status="ready",
+        brief=SongBrief(
+            slots={
+                "structure": SlotValue(
+                    value="release into a positive breath",
+                    source="you",
+                    reason="from the model",
+                    confidence=0.9,
+                ),
+                "tempo": SlotValue(value="wavy", source="you", reason="from the model", confidence=0.9),
+            },
+            output=["drums"],
+            questions_asked=0,
+            skipped=[],
+        ),
+        prompts=[
+            LayerPrompt(
+                layer="drums",
+                prompt="TrackType: Instrument, tight kit",
+                negative="vocals",
+                seeds=[0.1, 0.2, 0.3],
+                kb_sources=["peaceful"],
+            )
+        ],
+        progression={"roman": ["I"], "chords": ["C"]},
+        trace=[],
+    )
+    record = _record(response)
+    assert record.bars == 8
+    assert record.bpm > 0
+    assert record.mood == "peaceful"
+    assert record.key == "C major"
+
+
 def test_demo_loop_reports_a_key_and_a_tempo() -> None:
     fixture = Path(__file__).resolve().parents[3] / "apps" / "web" / "public" / "fixtures" / "detected-loop.wav"
     features = analyse(fixture, "full_track")

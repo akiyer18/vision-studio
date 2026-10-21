@@ -2,6 +2,7 @@ import { useRef, useState } from "react"
 
 import { ApiError } from "../../api/client.ts"
 import { features } from "../../features.ts"
+import { inFlight } from "../../conversation/flight.ts"
 import { postTurn } from "../../conversation/postTurn.ts"
 import { LANE_PAINT } from "../../studio/lanes.ts"
 import { OUTPUTS, layerTitle } from "../../studio/output.ts"
@@ -41,6 +42,7 @@ export function LayersCard() {
   const canBuild = cards.length > 0 && status !== "working" && !problem
 
   function choose(next: OutputChoice) {
+    if (inFlight() || useStudio.getState().status === "working") return
     choice.current = next
     setError(null)
     void postTurn({ output: [next] }).catch((err: unknown) => {

@@ -6,6 +6,7 @@
   "required": ["session_id"],
   "properties": {
     "session_id": { "type": "string" },
+    "request_id": { "type": "string" },
     "text": { "type": "string" },
     "audio_features": { "$ref": "audio_features.json" },
     "answer": {

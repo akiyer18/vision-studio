@@ -1,4 +1,5 @@
 import { ApiError, exportSession, folderPath, regenerateEvents, renderEvents } from "../api/client.ts"
+import { claimFlight, inFlight, releaseFlight } from "../conversation/flight.ts"
 import type { RenderEvent } from "../api/client.ts"
 import { useStudio } from "../state/studio.ts"
 import type { RenderAction } from "../state/studio.ts"
@@ -11,9 +12,10 @@ export function renderBusy(): boolean {
 }
 
 export async function renderCurrent(layer?: string): Promise<void> {
-  if (busy) return
+  if (busy || inFlight() || useStudio.getState().status === "working") return
   const prompts = currentPrompts(layer)
   if (prompts.length === 0) return
+  if (!claimFlight()) return
   busy = true
   const sessionId = useStudio.getState().sessionId
   if (layer) useStudio.getState().beginLayer(layer, "render")
@@ -27,12 +29,14 @@ export async function renderCurrent(layer?: string): Promise<void> {
     if (useStudio.getState().streamToken === token) failOpen(calm(error), "render")
   } finally {
     busy = false
+    releaseFlight()
     if (useStudio.getState().streamToken === token) useStudio.getState().finishRun()
   }
 }
 
 export async function regenerateLayer(layer: string): Promise<void> {
-  if (busy) return
+  if (busy || inFlight() || useStudio.getState().status === "working") return
+  if (!claimFlight()) return
   busy = true
   const sessionId = useStudio.getState().sessionId
   useStudio.getState().beginLayer(layer, "regenerate")
@@ -45,6 +49,7 @@ export async function regenerateLayer(layer: string): Promise<void> {
     if (useStudio.getState().streamToken === token) failOpen(calm(error), "regenerate")
   } finally {
     busy = false
+    releaseFlight()
     if (useStudio.getState().streamToken === token) useStudio.getState().finishRun()
   }
 }
