@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/src/stableprod/vst_plugin/_deps/juce-subbuild/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

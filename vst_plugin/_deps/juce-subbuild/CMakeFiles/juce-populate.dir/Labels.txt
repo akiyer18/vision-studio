@@ -1,0 +1,14 @@
+# Target labels
+ juce-populate
+# Source files and their labels
+C:/src/stableprod/vst_plugin/_deps/juce-subbuild/CMakeFiles/juce-populate
+C:/src/stableprod/vst_plugin/_deps/juce-subbuild/CMakeFiles/juce-populate.rule
+C:/src/stableprod/vst_plugin/_deps/juce-subbuild/CMakeFiles/juce-populate-complete.rule
+C:/src/stableprod/vst_plugin/_deps/juce-subbuild/juce-populate-prefix/src/juce-populate-stamp/juce-populate-build.rule
+C:/src/stableprod/vst_plugin/_deps/juce-subbuild/juce-populate-prefix/src/juce-populate-stamp/juce-populate-configure.rule
+C:/src/stableprod/vst_plugin/_deps/juce-subbuild/juce-populate-prefix/src/juce-populate-stamp/juce-populate-download.rule
+C:/src/stableprod/vst_plugin/_deps/juce-subbuild/juce-populate-prefix/src/juce-populate-stamp/juce-populate-install.rule
+C:/src/stableprod/vst_plugin/_deps/juce-subbuild/juce-populate-prefix/src/juce-populate-stamp/juce-populate-mkdir.rule
+C:/src/stableprod/vst_plugin/_deps/juce-subbuild/juce-populate-prefix/src/juce-populate-stamp/juce-populate-patch.rule
+C:/src/stableprod/vst_plugin/_deps/juce-subbuild/juce-populate-prefix/src/juce-populate-stamp/juce-populate-test.rule
+C:/src/stableprod/vst_plugin/_deps/juce-subbuild/juce-populate-prefix/src/juce-populate-stamp/juce-populate-update.rule
