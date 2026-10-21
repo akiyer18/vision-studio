@@ -24,6 +24,15 @@ export const GM_DRUM_NOTES = {
   perc: 54,
 };
 
+/** Default reply timeout per command: browser loads re-scan for up to ~2.4 s, recordings run for bars. */
+export function defaultTimeoutMs(cmd) {
+  const name = cmd && cmd.cmd;
+  if (name === 'load_sample' || name === 'load_device' || name === 'load_to_pad' || name === 'load_audio_clip') return 8000;
+  if (name === 'meters') return 3000 + 100 * Math.max(1, Math.min(100, Number(cmd.ticks) || 10));
+  if (name === 'session_record') return 60000;
+  return 3000;
+}
+
 export function notReachableMessage(host = DEFAULT_HOST, port = DEFAULT_PORT) {
   return `Ableton remote script not reachable on ${host}:${port} — is Live running with the ADEHack control surface selected?`;
 }
@@ -33,7 +42,10 @@ export function notReachableMessage(host = DEFAULT_HOST, port = DEFAULT_PORT) {
  * Opens a fresh socket per call. Resolves even when reply.ok === false (caller decides).
  * Rejects on: connection refused / unreachable, timeout, invalid JSON reply, socket closed before a reply.
  */
-export function sendToLive(cmd, { host = DEFAULT_HOST, port = DEFAULT_PORT, timeoutMs = 3000 } = {}) {
+export function sendToLive(cmd, { host = DEFAULT_HOST, port = DEFAULT_PORT, timeoutMs } = {}) {
+  if (timeoutMs === undefined || timeoutMs === null) timeoutMs = defaultTimeoutMs(cmd);
+  // ts lets the remote script drop commands that sat in a socket buffer for > 15 s while Live was busy.
+  const payload = cmd && typeof cmd === 'object' && cmd.ts === undefined ? { ...cmd, ts: Date.now() } : cmd;
   return new Promise((resolve, reject) => {
     let settled = false;
     let buffer = '';
@@ -87,7 +99,7 @@ export function sendToLive(cmd, { host = DEFAULT_HOST, port = DEFAULT_PORT, time
     });
 
     socket.connect(port, host, () => {
-      socket.write(JSON.stringify(cmd) + '\n');
+      socket.write(JSON.stringify(payload) + '\n');
     });
   });
 }
@@ -151,9 +163,13 @@ function usage() {
     '  node ableton/client.js set_tempo <bpm>',
     '  node ableton/client.js load_sample </abs/file.wav>',
     "  node ableton/client.js create_clip '<json notes array | pattern json>' [--track selected|N] [--slot N] [--length beats] [--mapping gm|single] [--no-fire]",
+    '  node ableton/client.js load_audio_clip <file.wav | name> [--track name|N] [--slot N] [--warp-mode complex_pro] [--overwrite]',
+    '  node ableton/client.js clip_info [--track name|N] [--slot N]',
+    '  node ableton/client.js undo [steps] | redo [steps]',
+    '  node ableton/client.js meters [ticks]',
     "  node ableton/client.js raw '<full json cmd>'",
     '',
-    'Env: ADE_LIVE_HOST, ADE_LIVE_PORT, ADE_LIVE_TIMEOUT_MS',
+    'Env: ADE_LIVE_HOST, ADE_LIVE_PORT, ADE_LIVE_TIMEOUT_MS (default: 8000 for load_*, 3000 otherwise)',
   ].join('\n');
 }
 
@@ -165,6 +181,7 @@ function parseFlags(args) {
     if (a.startsWith('--')) {
       const key = a.slice(2);
       if (key === 'no-fire') { flags.fire = false; continue; }
+      if (key === 'overwrite') { flags.overwrite = true; continue; }
       const next = args[i + 1];
       if (next !== undefined && !next.startsWith('--')) { flags[key] = next; i++; }
       else flags[key] = true;
@@ -179,8 +196,8 @@ async function main(argv) {
   const opts = {
     host: process.env.ADE_LIVE_HOST || DEFAULT_HOST,
     port: Number(process.env.ADE_LIVE_PORT) || DEFAULT_PORT,
-    timeoutMs: Number(process.env.ADE_LIVE_TIMEOUT_MS) || 3000,
   };
+  const trackFlag = (f) => (f === undefined ? 'selected' : (/^\d+$/.test(f) ? Number(f) : f));
 
   let cmd;
   switch (sub) {
@@ -213,16 +230,39 @@ async function main(argv) {
           singleNote: flags.singleNote !== undefined ? Number(flags.singleNote) : 60,
         }));
       }
-      const track = flags.track === undefined ? 'selected' : (/^\d+$/.test(flags.track) ? Number(flags.track) : flags.track);
       cmd = {
         cmd: 'create_clip',
-        track,
-        slot: flags.slot !== undefined ? Number(flags.slot) : 0,
+        track: trackFlag(flags.track),
         length: flags.length !== undefined ? Number(flags.length) : length,
         notes,
         fire: flags.fire !== false,
       };
+      // no --slot: the script picks the first empty slot (and never overwrites a differently named clip)
+      if (flags.slot !== undefined) cmd.slot = Number(flags.slot);
+      if (flags.name !== undefined) cmd.name = String(flags.name);
+      if (flags.overwrite) cmd.overwrite = true;
       if (!Array.isArray(parsed) && parsed.bpm) cmd.bpm = Number(parsed.bpm);
+      break;
+    }
+    case 'load_audio_clip': {
+      if (!rest[0]) throw new Error('load_audio_clip needs a file name or path');
+      cmd = { cmd: 'load_audio_clip', name: rest[0], track: trackFlag(flags.track) };
+      if (flags.slot !== undefined) cmd.slot = Number(flags.slot);
+      if (flags['warp-mode'] !== undefined) cmd.warp_mode = String(flags['warp-mode']);
+      if (flags.overwrite) cmd.overwrite = true;
+      break;
+    }
+    case 'clip_info': {
+      cmd = { cmd: 'clip_info', track: trackFlag(flags.track), slot: flags.slot !== undefined ? Number(flags.slot) : 0 };
+      break;
+    }
+    case 'undo':
+    case 'redo': {
+      cmd = { cmd: sub, steps: rest[0] !== undefined ? Number(rest[0]) : 1 };
+      break;
+    }
+    case 'meters': {
+      cmd = { cmd: 'meters', ticks: rest[0] !== undefined ? Number(rest[0]) : 10 };
       break;
     }
     case 'raw': {
@@ -235,7 +275,8 @@ async function main(argv) {
       return 1;
   }
 
-  const reply = await sendToLive(cmd, opts);
+  const envTimeout = Number(process.env.ADE_LIVE_TIMEOUT_MS);
+  const reply = await sendToLive(cmd, { ...opts, timeoutMs: envTimeout > 0 ? envTimeout : defaultTimeoutMs(cmd) });
   process.stdout.write(JSON.stringify(reply) + '\n');
   return reply && reply.ok === false ? 1 : 0;
 }

@@ -7,11 +7,12 @@ import math
 import json
 import os
 import socket
+import time
 
 import Live
 from _Framework.ControlSurface import ControlSurface
 
-VERSION = '5.6'
+VERSION = '5.7'
 HOST = '127.0.0.1'
 PORT = 9004
 GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 42,
@@ -19,9 +20,11 @@ GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 4
                  'crash': 49, 'perc': 54}
 WOULD_BLOCK = (errno.EAGAIN, errno.EWOULDBLOCK, errno.EINPROGRESS)
 PENDING = object()  # returned by a command that will reply later via schedule_message
-COMMANDS = ['arrangement_info', 'arrangement_record', 'browse', 'capture_midi', 'clip_edit', 'create_clip', 'create_midi_track', 'create_scene', 'delete_device', 'delete_track', 'describe_set', 'duplicate_clip', 'duplicate_scene', 'duplicate_track', 'fire_scene', 'focus_clip', 'get_clip_notes', 'list_devices', 'list_scenes', 'list_tracks', 'load_device', 'load_sample', 'load_to_pad', 'pad_info', 'ping', 'play', 'play_for', 'play_scene_for', 'rename_scene', 'rename_track', 'sample_info', 'select_track', 'set_device_param', 'set_mixer', 'set_send', 'set_simpler', 'set_tempo', 'set_track_color', 'show_view', 'stop', 'stop_clip', 'transport_setup', 'version']
+COMMANDS = ['arrangement_info', 'arrangement_record', 'browse', 'capture_midi', 'clip_edit', 'clip_info', 'create_clip', 'create_midi_track', 'create_scene', 'delete_device', 'delete_track', 'describe_set', 'duplicate_clip', 'duplicate_scene', 'duplicate_track', 'fire_scene', 'focus_clip', 'get_clip_notes', 'list_devices', 'list_scenes', 'list_tracks', 'load_audio_clip', 'load_device', 'load_sample', 'load_to_pad', 'meters', 'pad_info', 'ping', 'play', 'play_for', 'play_scene_for', 'redo', 'rename_scene', 'rename_track', 'sample_info', 'select_track', 'session_record', 'set_arm', 'set_clip_warp', 'set_device_param', 'set_mixer', 'set_send', 'set_simpler', 'set_tempo', 'set_track_color', 'show_view', 'stop', 'stop_clip', 'transport_setup', 'undo', 'version']
 LOAD_RETRY_TICKS = 3   # ~0.3 s between browser re-scans
 LOAD_RETRY_MAX = 8     # ~2.4 s total before replying not found
+STALE_SECONDS = 15.0   # commands whose client 'ts' is older than this are dropped
+RECV_CHUNK = 65536
 
 
 def _to_bytes(s):
@@ -39,6 +42,8 @@ class ADEHack(ControlSurface):
         self._seq_id = 0
         self._play_id = 0
         self._record_start = 0.0
+        self._pre_record = None   # song.loop / count_in_duration before an arrangement take
+        self._item_cache = {}     # lower-case device name -> _find_device_item result
         with self.component_guard():
             try:
                 self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -83,17 +88,27 @@ class ADEHack(ControlSurface):
             self.log_message('ADEHack: client connected %r' % (addr,))
         for client in list(self._clients):
             conn = client[0]
+            chunks = []
+            closed = False
             try:
-                data = conn.recv(65536)
+                while True:  # drain: keep reading while full buffers arrive
+                    data = conn.recv(RECV_CHUNK)
+                    if not data:
+                        closed = True
+                        break
+                    chunks.append(data)
+                    if len(data) < RECV_CHUNK:
+                        break
             except socket.error as e:
-                if e.args and e.args[0] in WOULD_BLOCK:
+                if not (e.args and e.args[0] in WOULD_BLOCK):
+                    self._drop(client, 'recv error %r' % (e,))
                     continue
-                self._drop(client, 'recv error %r' % (e,))
-                continue
-            if not data:
+            if closed and not chunks:
                 self._drop(client, 'closed by peer')
                 continue
-            client[1] += data
+            if not chunks:
+                continue
+            client[1] += b''.join(chunks)
             while b'\n' in client[1]:
                 line, client[1] = client[1].split(b'\n', 1)
                 line = line.strip()
@@ -113,7 +128,11 @@ class ADEHack(ControlSurface):
 
     def _send(self, conn, reply):
         try:
-            conn.sendall(_to_bytes(json.dumps(reply) + '\n'))
+            text = json.dumps(reply)
+        except Exception as e:
+            text = json.dumps({'ok': False, 'error': 'unserializable reply: %r' % (e,)})
+        try:
+            conn.sendall(_to_bytes(text + '\n'))
         except Exception as e:
             self.log_message('ADEHack: send failed: %r' % (e,))
 
@@ -124,6 +143,15 @@ class ADEHack(ControlSurface):
             msg = json.loads(text)
             cmd = msg.get('cmd')
             self.log_message('ADEHack: cmd %r' % (text[:300],))
+            ts = msg.get('ts')
+            if ts is not None:
+                try:  # client.js stamps ts (ms); a command queued while Live was busy must not fire late
+                    age = time.time() - float(ts) / 1000.0
+                    if age > STALE_SECONDS:
+                        self.log_message('ADEHack: dropping stale %r (%.1f s old)' % (cmd, age))
+                        return {'ok': False, 'error': 'stale command dropped (%.1f s old)' % (age,), 'cmd': cmd}
+                except (TypeError, ValueError):
+                    pass
             if cmd == 'ping':
                 return self._cmd_ping(msg)
             if cmd == 'version':
@@ -144,9 +172,12 @@ class ADEHack(ControlSurface):
             if cmd == 'arrangement_record':
                 return self._cmd_arrangement_record(msg)
             if cmd == 'play':
+                self._play_id += 1     # an older play_for stop must not cut this off
                 self.song().start_playing()
                 return {'ok': True, 'playing': True}
             if cmd == 'stop':
+                self._play_id += 1     # cancel pending timed stops ...
+                self._seq_id += 1      # ... and any scene sequence
                 self.song().stop_playing()
                 return {'ok': True, 'playing': False}
             if cmd == 'list_devices':
@@ -274,10 +305,27 @@ class ADEHack(ControlSurface):
                 return {'ok': True, 'index': self._index_of(track), 'name': track.name}
             if cmd == 'browse':
                 return self._cmd_browse(msg)
+            if cmd == 'undo':
+                return self._cmd_undo(msg, False)
+            if cmd == 'redo':
+                return self._cmd_undo(msg, True)
+            if cmd == 'set_clip_warp':
+                return self._cmd_set_clip_warp(msg)
+            if cmd == 'clip_info':
+                return self._cmd_clip_info(msg)
+            if cmd == 'load_audio_clip':
+                return self._cmd_load_audio_clip(msg, conn)
+            if cmd == 'meters':
+                return self._cmd_meters(msg, conn)
+            if cmd == 'set_arm':
+                return self._cmd_set_arm(msg)
+            if cmd == 'session_record':
+                return self._cmd_session_record(msg, conn)
             return {'ok': False, 'error': 'unknown cmd: %r' % (cmd,)}
         except Exception as e:
             self.log_message('ADEHack: error: %r' % (e,))
-            return {'ok': False, 'error': '%s: %s' % (e.__class__.__name__, e)}
+            # repr(e): a unicode message inside str(e) would raise UnicodeEncodeError here
+            return {'ok': False, 'error': '%s: %r' % (e.__class__.__name__, e)}
 
     def _track(self, spec):
         song = self.song()
@@ -289,14 +337,14 @@ class ADEHack(ControlSurface):
         if isinstance(spec, (int, float)):
             return tracks[int(spec)]
         text = u'%s' % (spec,)
-        if text.lstrip('-').isdigit():
-            return tracks[int(text)]
-        for t in tracks:  # exact name, then case-insensitive
+        for t in tracks:  # exact name, then case-insensitive, then index (a track may be named "2")
             if t.name == text:
                 return t
         for t in tracks:
             if t.name.lower() == text.lower():
                 return t
+        if text.lstrip('-').isdigit():
+            return tracks[int(text)]
         raise ValueError('no track named %r; tracks: %r' % (text, [t.name for t in tracks]))
 
     def _index_of(self, track):
@@ -342,15 +390,15 @@ class ADEHack(ControlSurface):
         if isinstance(spec, (int, float)) and not isinstance(spec, bool):
             return int(spec), devices[int(spec)]
         text = u'%s' % (spec,)
-        if text.lstrip('-').isdigit():
-            i = int(text)
-            return i, devices[i]
         for i, d in enumerate(devices):
             if d.name == text or getattr(d, 'class_name', '') == text:
                 return i, d
         for i, d in enumerate(devices):
             if d.name.lower() == text.lower() or getattr(d, 'class_name', '').lower() == text.lower():
                 return i, d
+        if text.lstrip('-').isdigit():
+            i = int(text)
+            return i, devices[i]
         raise ValueError('no device %r on %r; devices: %r' % (text, track.name, [d.name for d in devices]))
 
     def _params(self, dev, limit=32):
@@ -373,14 +421,14 @@ class ADEHack(ControlSurface):
         if isinstance(spec, (int, float)) and not isinstance(spec, bool):
             return int(spec), params[int(spec)]
         text = u'%s' % (spec,)
-        if text.isdigit():
-            return int(text), params[int(text)]
         for i, p in enumerate(params):
             if p.name == text or getattr(p, 'original_name', '') == text:
                 return i, p
         for i, p in enumerate(params):
             if p.name.lower() == text.lower() or getattr(p, 'original_name', '').lower() == text.lower():
                 return i, p
+        if text.isdigit():
+            return int(text), params[int(text)]
         raise ValueError('no param %r on %r; params: %r' % (text, dev.name, [p.name for p in params][:32]))
 
     DEVICE_ROOTS = ('audio_effects', 'instruments', 'midi_effects', 'drums', 'sounds')
@@ -394,12 +442,19 @@ class ADEHack(ControlSurface):
         'distortion': 'Overdrive', 'bitcrusher': 'Redux', 'sampler': 'Simpler', 'drumrack': 'Drum Rack',
     }
 
-    def _find_device_item(self, browser, name, max_items=5000, max_depth=6):
+    def _find_device_item(self, browser, name, max_items=1500, max_depth=6):
         """Returns (item, root_name, searched, how). Preference order:
         exact name & is_device > exact name (shallowest) > alias > case-insensitive > substring
         (device first, then shallowest). Devices beat same-named presets."""
         text = u'%s' % (name,)
         low = text.lower().strip()
+        cached = self._item_cache.get(low)
+        if cached is not None:
+            try:
+                cached[0].is_loadable  # still a valid browser item?
+                return cached
+            except Exception:
+                self._item_cache.pop(low, None)
         alias = self.DEVICE_ALIASES.get(low)
         wants = [(text, 'exact')]
         if alias and alias.lower() != low:
@@ -448,7 +503,9 @@ class ADEHack(ControlSurface):
                     hit = table.get((how, is_dev))
                     if hit is not None:
                         label = how if how == 'alias' else how_base
-                        return hit[0], hit[1], searched, label
+                        result = (hit[0], hit[1], searched, label)
+                        self._item_cache[low] = result
+                        return result
         return None, None, searched, None
 
     def _top_names(self, browser, root_name, limit=60):
@@ -467,14 +524,21 @@ class ADEHack(ControlSurface):
                     'audio_effects': self._top_names(browser, 'audio_effects'),
                     'instruments': self._top_names(browser, 'instruments'),
                     'midi_effects': self._top_names(browser, 'midi_effects')}
-        self.song().view.selected_track = track
-        before = len(list(track.devices))
-        browser.load_item(item)  # appends at the end of the selected track's chain
+        song = self.song()
+        song.view.selected_track = track
+        before = list(track.devices)
+        try:
+            if before:  # load_item inserts after the selected device: select the last one so it appends
+                song.view.select_device(before[-1])
+        except Exception as e:
+            self.log_message('ADEHack: select last device failed: %r' % (e,))
+        browser.load_item(item)
         devices = list(track.devices)
-        if len(devices) <= before:
+        new = [(i, d) for i, d in enumerate(devices) if not any(d == b for b in before)]
+        if not new:
             return {'ok': False, 'error': 'load_item(%r) did not add a device to %r' % (item.name, track.name),
                     'devices': self._devices(track)}
-        dev = devices[-1]
+        dev_index, dev = new[-1]
         applied = []
         if how == 'alias' and 'ping pong' in (u'%s' % (name,)).lower() and item.name == 'Delay':
             try:  # Live 10.1 Delay: switch on the Ping Pong mode so the alias sounds as asked
@@ -485,7 +549,7 @@ class ADEHack(ControlSurface):
                 self.log_message('ADEHack: ping pong switch failed: %r' % (e,))
         return {'ok': True, 'track': track.name, 'item': item.name, 'uri': item.uri, 'root': root_name,
                 'match': how, 'requested': name, 'applied': applied,
-                'device': {'index': len(devices) - 1, 'name': dev.name,
+                'device': {'index': dev_index, 'name': dev.name,
                            'class_name': getattr(dev, 'class_name', '')},
                 'params': self._params(dev)}
 
@@ -544,6 +608,10 @@ class ADEHack(ControlSurface):
         if dev is None:
             return 'none', None, False
         name = dev.name
+        cls = getattr(dev, 'class_name', '')
+        if cls not in self.SIMPLER_CLASSES:
+            raise ValueError('track %r already has instrument %r (%s), refusing to replace it; '
+                             'use mode "append" or a new track' % (track.name, name, cls))
         try:
             self.song().view.select_device(dev)
         except Exception as e:
@@ -594,9 +662,15 @@ class ADEHack(ControlSurface):
 
     def _cmd_ping(self, msg):
         song = self.song()
-        return {'ok': True, 'version': VERSION, 'tempo': song.tempo,
-                'tracks': [t.name for t in song.tracks],
-                'selected_track': song.view.selected_track.name}
+        reply = {'ok': True, 'version': VERSION, 'tempo': song.tempo,
+                 'tracks': [t.name for t in song.tracks],
+                 'selected_track': song.view.selected_track.name}
+        try:
+            reply['is_playing'] = bool(song.is_playing)
+            reply['record_mode'] = bool(song.record_mode)
+        except Exception as e:
+            reply['transport_error'] = '%r' % (e,)
+        return reply
 
     def _pattern_notes(self, pattern, mapping, single_note):
         steps_per_bar = int(pattern.get('stepsPerBar', 16) or 16)
@@ -612,7 +686,7 @@ class ADEHack(ControlSurface):
                 step = int(hit['step'])
                 start = step * step_len + (swing * 0.5 * step_len if step % 2 else 0.0)
                 notes.append({'pitch': pitch, 'start': start, 'duration': 0.125,
-                              'velocity': int(hit.get('velocity', 100))})
+                              'velocity': max(1, min(127, int(hit.get('velocity') or 100)))})
         length = float(pattern.get('bars', 1) or 1) * 4.0
         return notes, length
 
@@ -628,23 +702,41 @@ class ADEHack(ControlSurface):
             length = float(msg.get('length', length))
         notes = notes or []
         slot_index = msg.get('slot')
-        if slot_index is None:
-            slot_index = 0
+        if slot_index is None:  # first empty slot; all full -> a new scene, never overwrite
             for i, s in enumerate(track.clip_slots):
                 if not s.has_clip:
                     slot_index = i
                     break
+            if slot_index is None:
+                self.song().create_scene(-1)
+                slot_index = len(list(track.clip_slots)) - 1
         slot = track.clip_slots[int(slot_index)]
+        name = msg.get('name')
+        if slot.has_clip and not msg.get('overwrite'):
+            # our clips are named after their layer, so re-pushing the same layer is fine
+            existing = u'%s' % (slot.clip.name,)
+            if name is None or existing != u'%s' % (name,):
+                return {'ok': False, 'track': track.name, 'slot': int(slot_index), 'existing': existing,
+                        'error': 'slot %d on %s already holds clip %r (wanted %r); pass overwrite:true or another slot'
+                                 % (int(slot_index), track.name, existing, name)}
         tup = tuple((int(n['pitch']), float(n['start']), float(n['duration']),
-                     int(n.get('velocity', 100)), False) for n in notes)
+                     max(1, min(127, int(n.get('velocity') or 100))), False) for n in notes)
         mode = 'created'
         in_place = slot.has_clip and not msg.get('recreate') and getattr(slot.clip, 'is_midi_clip', True)
         if in_place:
             # Swap notes inside the existing clip: a playing clip keeps playing in sync,
             # instead of delete_clip (stops it) + fire (waits for the next launch quantum).
             clip = slot.clip
-            clip.select_all_notes()
-            clip.replace_selected_notes(tup)
+            if tup:
+                clip.select_all_notes()
+                clip.replace_selected_notes(tup)
+            else:
+                # replace_selected_notes(()) is a no-op on some 10.x builds: wipe explicitly
+                try:
+                    span = max(float(clip.length), float(length)) + 1.0
+                except Exception:
+                    span = float(length) + 1.0
+                clip.remove_notes(0.0, 0, span, 128)
             self._set_clip_length(clip, length)
             mode = 'replaced_in_place'
         else:
@@ -659,8 +751,8 @@ class ADEHack(ControlSurface):
                     self.log_message('ADEHack: set_notes failed (%r), trying replace_selected_notes' % (e,))
                     clip.select_all_notes()
                     clip.replace_selected_notes(tup)
-        if msg.get('name'):
-            clip.name = str(msg['name'])
+        if name:
+            clip.name = u'%s' % (name,)
         clip.looping = True
         # ClipSlot.fire() obeys the global launch quantization while the transport runs,
         # so a new clip lands on the next bar in sync. Don't re-fire a slot that is
@@ -719,15 +811,27 @@ class ADEHack(ControlSurface):
         song = self.song()
         self._seq_id += 1          # cancels any running sequence / scheduled stop
         seq_id = self._seq_id
+        self._play_id += 1         # cancels any pending play_for timed stop
         if msg.get('stop'):
             self._finish_recording('stopped by request')
             return {'ok': True, 'recording': False}
-        at_beats, from_bar = self._position_for_record(msg.get('at'))
+        at = msg.get('at')
+        if at is None or at == '':
+            at = 'end'             # append after the last event; never the playhead unless asked
+        at_beats, from_bar = self._position_for_record(at)
         self._record_start = at_beats
+        pre = {}
         try:
+            pre['loop'] = bool(song.loop)
             song.loop = False   # a loop brace would wrap the recording back over itself
         except Exception as e:
             self.log_message('ADEHack: loop off failed: %r' % (e,))
+        try:
+            pre['count_in'] = int(song.count_in_duration)
+            song.count_in_duration = 0   # a count-in would shift the take off at_beats
+        except Exception as e:
+            self.log_message('ADEHack: count-in off failed: %r' % (e,))
+        self._pre_record = pre
         scenes = msg.get('scenes')
         if scenes:
             all_scenes = list(song.scenes)
@@ -842,6 +946,22 @@ class ADEHack(ControlSurface):
             song = self.song()
             song.record_mode = False
             song.stop_playing()
+            try:
+                song.back_to_arranger = False   # the Arrangement plays what was just recorded
+            except Exception as e:
+                self.log_message('ADEHack: back_to_arranger failed: %r' % (e,))
+            pre = self._pre_record or {}
+            self._pre_record = None
+            if 'count_in' in pre:
+                try:
+                    song.count_in_duration = pre['count_in']
+                except Exception as e:
+                    self.log_message('ADEHack: restore count-in failed: %r' % (e,))
+            if 'loop' in pre:
+                try:
+                    song.loop = pre['loop']
+                except Exception as e:
+                    self.log_message('ADEHack: restore loop failed: %r' % (e,))
             # leave the playhead parked at the end of what was just recorded, Arranger visible
             try:
                 last = float(getattr(song, 'last_event_time', 0.0) or 0.0)
@@ -1082,6 +1202,10 @@ class ADEHack(ControlSurface):
         index, rack = self._drum_rack(track)
         if rack is not None:
             return index, rack, False
+        iidx, inst = self._instrument_device(track)
+        if inst is not None:
+            raise ValueError('track %r already has instrument %r; use a fresh track'
+                             % (track.name, inst.name))
         item, root_name, searched, how = self._find_device_item(browser, 'Drum Rack')
         if item is None:
             raise ValueError('no Drum Rack in browser roots %r' % (searched,))
@@ -1225,6 +1349,15 @@ class ADEHack(ControlSurface):
         if not landed:
             reply['error'] = ('sample did not land in pad %d (route %s); pad before=%r after=%r; '
                               '%d device(s) appended to the track instead' % (note, route, before, after, appended))
+            if appended > 0:  # undo only what load_item appended; the rack itself stays
+                removed = []
+                try:
+                    for k in range(len(list(track.devices)) - 1, devices_before - 1, -1):
+                        removed.append(list(track.devices)[k].name)
+                        track.delete_device(k)
+                except Exception as e:
+                    observed.append('cleanup failed: %r' % (e,))
+                reply['removed_devices'] = removed
         return reply
 
     # ------------------------------------------------------- v5.4: read the set
@@ -1232,19 +1365,24 @@ class ADEHack(ControlSurface):
     NOTE_CAP = 2000
     CLIP_SLOT_CAP = 16
 
-    def _clip_notes(self, clip, cap):
+    def _clip_notes(self, clip, cap, max_span=None):
         """Live 10: Clip.get_notes(from_time, from_pitch, time_span, pitch_span) ->
-        ((pitch, time, duration, velocity, muted), ...)."""
+        ((pitch, time, duration, velocity, muted), ...). -> (notes, total, length, partial);
+        max_span limits the fetched beats (previews), partial says the clip was longer."""
         try:
             length = float(clip.length)
         except Exception:
             length = 0.0
         span = max(length, float(getattr(clip, 'loop_end', 0) or 0), 1.0) + 1.0
+        partial = False
+        if max_span is not None and span > float(max_span):
+            span = float(max_span)
+            partial = True
         try:
             raw = clip.get_notes(0.0, 0, span, 128)
         except Exception as e:
             self.log_message('ADEHack: get_notes failed: %r' % (e,))
-            return [], 0, length
+            return [], 0, length, partial
         notes = []
         for n in raw:
             if len(notes) >= cap:
@@ -1255,7 +1393,7 @@ class ADEHack(ControlSurface):
             except Exception:
                 continue
         notes.sort(key=lambda x: (x['start'], x['pitch']))
-        return notes, len(raw), length
+        return notes, len(raw), length, partial
 
     def _describe_clip(self, slot_index, slot):
         clip = slot.clip
@@ -1270,8 +1408,9 @@ class ADEHack(ControlSurface):
         is_midi = bool(getattr(clip, 'is_midi_clip', True))
         info['is_audio'] = not is_midi
         if is_midi:
-            notes, total, _ = self._clip_notes(clip, self.NOTE_PREVIEW)
-            info['note_count'] = total
+            notes, total, _, partial = self._clip_notes(clip, self.NOTE_PREVIEW, 16.0)
+            info['note_count'] = total           # notes within the first 16 beats when partial
+            info['note_count_partial'] = partial
             info['notes_preview'] = notes
         else:
             try:
@@ -1393,7 +1532,7 @@ class ADEHack(ControlSurface):
         clip = slot.clip
         if not getattr(clip, 'is_midi_clip', True):
             return {'ok': False, 'error': 'slot %d on %s holds an audio clip' % (slot_index, track.name)}
-        notes, total, length = self._clip_notes(clip, self.NOTE_CAP)
+        notes, total, length, _ = self._clip_notes(clip, self.NOTE_CAP)
         return {'ok': True, 'track': track.name, 'slot': slot_index, 'name': u'%s' % (clip.name,),
                 'length': length, 'note_count': total, 'truncated': total > len(notes), 'notes': notes}
 
@@ -1412,13 +1551,17 @@ class ADEHack(ControlSurface):
             reply['scene'] = {'index': index, 'name': scenes[index].name}
         else:
             song.start_playing()
-        self.schedule_message(max(1, int(round(seconds * 10.0))), lambda: self._timed_stop(play_id))
+        # +0.3 s so launch quantization / the last beat are not clipped
+        self.schedule_message(max(1, int(round((seconds + 0.3) * 10.0))), lambda: self._timed_stop(play_id))
         return reply
 
     def _timed_stop(self, play_id):
         if play_id != self._play_id:
             return
         try:
+            if bool(self.song().record_mode):
+                self.log_message('ADEHack: timed stop skipped, recording in progress')
+                return
             self.song().stop_playing()
             self.log_message('ADEHack: timed playback stopped')
         except Exception as e:
@@ -1452,10 +1595,10 @@ class ADEHack(ControlSurface):
                 'sends': [{'index': i, 'name': sp.name, 'level': float(sp.value)} for i, sp in enumerate(sends)]}
 
     def _cmd_load_sample(self, msg, conn=None):
-        # Select the target track up front so the user sees where it lands.
-        if msg.get('track') not in (None, 'selected', ''):
-            self.song().view.selected_track = self._track(msg['track'])
-        job = {'msg': msg, 'conn': conn, 'attempt': 0}
+        # Resolve the target track ONCE so a retry cannot land on a track the user clicked meanwhile.
+        track = self._track(msg.get('track', 'selected'))
+        self.song().view.selected_track = track
+        job = {'msg': msg, 'conn': conn, 'attempt': 0, 'track': track}
         return self._try_load(job)
 
     def _try_load(self, job):
@@ -1472,7 +1615,13 @@ class ADEHack(ControlSurface):
             if found is not None:
                 break
         if found is not None:
-            track = self.song().view.selected_track
+            track = job.get('track')
+            if track is None:
+                track = self.song().view.selected_track
+            try:
+                self.song().view.selected_track = track   # load_item targets the selected track
+            except Exception as e:
+                self.log_message('ADEHack: reselect track failed: %r' % (e,))
             how, dev_name, hotswapped = 'none', None, False
             if msg.get('mode', 'replace') == 'replace' and track.has_midi_input:
                 how, dev_name, hotswapped = self._replace_target(browser, track)
@@ -1503,11 +1652,21 @@ class ADEHack(ControlSurface):
             reply = self._try_load(job)
         except Exception as e:
             self.log_message('ADEHack: load retry error: %r' % (e,))
-            reply = {'ok': False, 'error': '%s: %s' % (e.__class__.__name__, e)}
+            reply = {'ok': False, 'error': '%s: %r' % (e.__class__.__name__, e)}
         if reply is not PENDING:
             self._send(job['conn'], reply)
 
-    def _find_item(self, root, names, max_depth=6, max_items=5000):
+    def _find_item(self, root, names, max_depth=6, max_items=1500):
+        # Fast path: direct children first (a Place added for the output folder lists its wavs at depth 1).
+        try:
+            for child in root.children:
+                try:
+                    if child.is_loadable and child.name in names:
+                        return child
+                except Exception:
+                    continue
+        except Exception:
+            pass
         # Bounded iterative DFS so the UI never freezes on a huge library.
         stack = [(root, 0)]
         seen = 0
@@ -1526,6 +1685,642 @@ class ADEHack(ControlSurface):
                 except Exception:
                     pass
         return None
+
+    # ------------------------------------------------------- v5.7: transport
+    QUANTIZATIONS = {'none': 0, '8_bars': 1, '4_bars': 2, '2_bars': 3, 'bar': 4, '1_bar': 4,
+                     'half': 5, '1/2': 5, 'half_triplet': 6, 'quarter': 7, '1/4': 7,
+                     'quarter_triplet': 8, 'eighth': 9, '1/8': 9, 'eighth_triplet': 10,
+                     'sixteenth': 11, '1/16': 11, 'sixteenth_triplet': 12, 'thirtysecond': 13, '1/32': 13}
+    QUANTIZE_GRIDS = {'none': 0, 'eighth': 1, '1/8': 1, '1/8+1/8t': 2, 'eighth_triplet': 3, '1/8t': 3,
+                      'quarter': 4, '1/4': 4, 'sixteenth': 5, '1/16': 5, '1/16+1/16t': 6,
+                      'sixteenth_triplet': 7, '1/16t': 7, 'thirtysecond': 8, '1/32': 8}
+    MONITORING = {'in': 0, 'auto': 1, 'off': 2}
+
+    def _transport_state(self):
+        song = self.song()
+        state = {}
+        for attr in ('tempo', 'is_playing', 'metronome', 'loop', 'loop_start', 'loop_length',
+                     'swing_amount', 'clip_trigger_quantization', 'record_mode', 'can_capture_midi',
+                     'count_in_duration'):
+            try:
+                v = getattr(song, attr)
+                if isinstance(v, (bool, float)):
+                    state[attr] = v
+                else:
+                    try:
+                        state[attr] = int(v)
+                    except Exception:
+                        state[attr] = u'%s' % (v,)
+            except Exception:
+                pass
+        if self._ramp is not None:
+            state['tempo_ramp'] = dict(self._ramp)
+        return state
+
+    def _cmd_transport_setup(self, msg):
+        song = self.song()
+        done, errors = [], {}
+
+        def op(label, fn):
+            try:
+                fn()
+                done.append(label)
+            except Exception as e:
+                errors[label] = '%s: %r' % (e.__class__.__name__, e)
+                self.log_message('ADEHack: transport_setup %s failed: %r' % (label, e))
+
+        if msg.get('metronome') is not None:
+            op('metronome', lambda: setattr(song, 'metronome', bool(msg['metronome'])))
+        if msg.get('loop') is not None:
+            op('loop', lambda: setattr(song, 'loop', bool(msg['loop'])))
+        if msg.get('loop_start') is not None:
+            op('loop_start', lambda: setattr(song, 'loop_start', max(0.0, float(msg['loop_start']))))
+        if msg.get('loop_length') is not None:
+            op('loop_length', lambda: setattr(song, 'loop_length', max(0.0, float(msg['loop_length']))))
+        if msg.get('swing') is not None:
+            op('swing', lambda: setattr(song, 'swing_amount', max(0.0, min(1.0, float(msg['swing'])))))
+        if msg.get('tempo') is not None:
+            def set_tempo():
+                self._ramp_id += 1      # a direct tempo cancels a running ramp
+                self._ramp = None
+                song.tempo = max(20.0, min(999.0, float(msg['tempo'])))
+            op('tempo', set_tempo)
+        if msg.get('launch_quantization') is not None:
+            def set_quant():
+                value = msg['launch_quantization']
+                try:
+                    song.clip_trigger_quantization = self._enum_value(
+                        Live.Song.Quantization, self.QUANTIZATIONS, value)
+                except Exception:
+                    song.clip_trigger_quantization = int(value)
+            op('launch_quantization', set_quant)
+        if msg.get('tempo_ramp') is not None:
+            def ramp():
+                r = msg['tempo_ramp'] or {}
+                self._start_tempo_ramp(float(r.get('to', song.tempo)), float(r.get('seconds', 4) or 4))
+            op('tempo_ramp', ramp)
+        state = {}
+        try:
+            state = self._transport_state()
+        except Exception as e:
+            errors['state'] = '%r' % (e,)
+        return {'ok': not errors or bool(done), 'done': done, 'errors': errors, 'state': state}
+
+    def _start_tempo_ramp(self, to, seconds):
+        song = self.song()
+        self._ramp_id += 1
+        ramp_id = self._ramp_id
+        steps = max(1, int(round(float(seconds) * 10.0)))
+        self._ramp = {'from': float(song.tempo), 'to': float(to), 'steps': steps, 'step': 0}
+        self.schedule_message(1, lambda: self._ramp_step(ramp_id))
+
+    def _ramp_step(self, ramp_id):
+        if ramp_id != self._ramp_id or self._ramp is None:
+            return
+        r = self._ramp
+        r['step'] += 1
+        frac = min(1.0, r['step'] / float(r['steps']))
+        try:
+            self.song().tempo = r['from'] + (r['to'] - r['from']) * frac
+        except Exception as e:
+            self.log_message('ADEHack: tempo ramp failed: %r' % (e,))
+            self._ramp = None
+            return
+        if frac >= 1.0:
+            self._ramp = None
+        else:
+            self.schedule_message(1, lambda: self._ramp_step(ramp_id))
+
+    # ------------------------------------------------------- v5.7: clips
+    def _slot_for(self, msg, need_clip=True):
+        """-> (track, slot_index, slot); ValueError when need_clip and the slot is empty."""
+        track = self._track(msg.get('track', 'selected'))
+        slot_index = int(msg.get('slot', 0) or 0)
+        slots = list(track.clip_slots)
+        if slot_index < 0 or slot_index >= len(slots):
+            raise ValueError('slot %d out of range on %r (0..%d)' % (slot_index, track.name, len(slots) - 1))
+        slot = slots[slot_index]
+        if need_clip and not slot.has_clip:
+            raise ValueError('no clip in %s slot %d' % (track.name, slot_index))
+        return track, slot_index, slot
+
+    def _ensure_slot_count(self, track, slot_index):
+        """Create scenes until track.clip_slots[slot_index] exists; returns the slot."""
+        song = self.song()
+        guard = 0
+        while slot_index >= len(list(track.clip_slots)) and guard < 64:
+            song.create_scene(-1)
+            guard += 1
+        slots = list(track.clip_slots)
+        if slot_index < 0 or slot_index >= len(slots):
+            raise ValueError('slot %d not addressable on %r' % (slot_index, track.name))
+        return slots[slot_index]
+
+    def _warp_mode_name(self, value):
+        try:
+            iv = int(value)
+        except Exception:
+            return u'%s' % (value,)
+        for k, v in self.WARP_MODES.items():
+            if v == iv:
+                return k
+        return iv
+
+    def _set_warp_mode(self, clip, mode):
+        enum_cls = getattr(getattr(Live, 'Clip', None), 'WarpMode', None)
+        if enum_cls is None:
+            raise ValueError('Live.Clip.WarpMode is not available in this Live build')
+        clip.warp_mode = self._enum_value(enum_cls, self.WARP_MODES, mode)
+
+    def _clip_summary(self, clip):
+        info = {}
+        for attr in ('name', 'length', 'looping', 'loop_start', 'loop_end', 'start_marker', 'end_marker',
+                     'color_index', 'is_playing', 'is_recording', 'is_audio_clip', 'is_midi_clip'):
+            try:
+                v = getattr(clip, attr)
+            except Exception:
+                continue
+            if attr == 'name':
+                info[attr] = u'%s' % (v,)
+            elif isinstance(v, (bool, float)):
+                info[attr] = v
+            else:
+                try:
+                    info[attr] = int(v)
+                except Exception:
+                    info[attr] = u'%s' % (v,)
+        is_audio = bool(info.get('is_audio_clip', not info.get('is_midi_clip', True)))
+        info['is_audio_clip'] = is_audio
+        if is_audio:
+            try:
+                info['file_path'] = u'%s' % (clip.file_path,)
+            except Exception:
+                info['file_path'] = None
+            for attr in ('warping', 'pitch_coarse', 'pitch_fine', 'gain', 'gain_display_string'):
+                try:
+                    v = getattr(clip, attr)
+                    if attr == 'gain_display_string':
+                        info[attr] = u'%s' % (v,)
+                    else:
+                        info[attr] = v if isinstance(v, (bool, float)) else int(v)
+                except Exception:
+                    pass
+            try:
+                info['warp_mode'] = self._warp_mode_name(clip.warp_mode)
+            except Exception:
+                pass
+        else:
+            try:
+                info['note_count'] = self._clip_notes(clip, 0)[1]
+            except Exception:
+                pass
+        return info
+
+    def _cmd_clip_edit(self, msg):
+        track, slot_index, slot = self._slot_for(msg)
+        clip = slot.clip
+        done, errors = [], {}
+
+        def op(label, fn):
+            try:
+                fn()
+                done.append(label)
+            except Exception as e:
+                errors[label] = '%s: %r' % (e.__class__.__name__, e)
+                self.log_message('ADEHack: clip_edit %s failed: %r' % (label, e))
+
+        if msg.get('loop_start') is not None or msg.get('loop_end') is not None:
+            def set_loop():
+                start = msg.get('loop_start')
+                end = msg.get('loop_end')
+                start = None if start is None else float(start)
+                end = None if end is None else float(end)
+                last = None
+                for order in (('loop_end', 'loop_start'), ('loop_start', 'loop_end')):
+                    try:
+                        for attr in order:
+                            v = end if attr == 'loop_end' else start
+                            if v is not None:
+                                setattr(clip, attr, v)
+                        return
+                    except Exception as e:
+                        last = e
+                raise last
+            op('loop', set_loop)
+        if msg.get('looping') is not None:
+            op('looping', lambda: setattr(clip, 'looping', bool(msg['looping'])))
+        if msg.get('quantize') is not None:
+            def quantize():
+                q = msg['quantize']
+                if not isinstance(q, dict):
+                    q = {'grid': q}
+                grid = q.get('grid', 5)
+                amount = max(0.0, min(1.0, float(q.get('amount', 1.0))))
+                try:  # Live.Song.RecordingQuantization: 0 none, 1 1/8, 4 1/4, 5 1/16, 8 1/32
+                    clip.quantize(self._enum_value(Live.Song.RecordingQuantization, self.QUANTIZE_GRIDS, grid), amount)
+                except Exception:
+                    clip.quantize(int(grid), amount)
+            op('quantize', quantize)
+        if msg.get('duplicate_loop'):
+            op('duplicate_loop', lambda: clip.duplicate_loop())
+        if msg.get('crop'):
+            op('crop', lambda: clip.crop())
+        if msg.get('color_index') is not None:
+            op('color_index', lambda: setattr(clip, 'color_index', int(msg['color_index'])))
+        if msg.get('name') is not None:
+            op('name', lambda: setattr(clip, 'name', u'%s' % (msg['name'],)))
+        summary = {}
+        try:
+            summary = self._clip_summary(clip)
+        except Exception as e:
+            errors['summary'] = '%r' % (e,)
+        return {'ok': not errors or bool(done), 'track': track.name, 'slot': slot_index,
+                'done': done, 'errors': errors, 'clip': summary}
+
+    def _cmd_clip_info(self, msg):
+        track, slot_index, slot = self._slot_for(msg)
+        try:
+            info = self._clip_summary(slot.clip)
+        except Exception as e:
+            return {'ok': False, 'error': '%r' % (e,), 'track': track.name, 'slot': slot_index}
+        info.update({'ok': True, 'track': track.name, 'slot': slot_index})
+        return info
+
+    def _cmd_set_clip_warp(self, msg):
+        track, slot_index, slot = self._slot_for(msg)
+        clip = slot.clip
+        if not bool(getattr(clip, 'is_audio_clip', False)):
+            return {'ok': False, 'track': track.name, 'slot': slot_index,
+                    'error': 'slot %d on %s holds a MIDI clip; set_clip_warp needs an audio clip' % (slot_index, track.name)}
+        done, errors = [], {}
+
+        def op(label, fn):
+            try:
+                fn()
+                done.append(label)
+            except Exception as e:
+                errors[label] = '%s: %r' % (e.__class__.__name__, e)
+                self.log_message('ADEHack: set_clip_warp %s failed: %r' % (label, e))
+
+        if msg.get('warp') is not None:
+            op('warp', lambda: setattr(clip, 'warping', bool(msg['warp'])))
+        if msg.get('warp_mode') is not None:
+            op('warp_mode', lambda: self._set_warp_mode(clip, msg['warp_mode']))
+        if msg.get('pitch_coarse') is not None:
+            op('pitch_coarse', lambda: setattr(clip, 'pitch_coarse', max(-48, min(48, int(msg['pitch_coarse'])))))
+        if msg.get('pitch_fine') is not None:
+            op('pitch_fine', lambda: setattr(clip, 'pitch_fine', max(-50.0, min(50.0, float(msg['pitch_fine'])))))
+        if msg.get('gain') is not None:
+            op('gain', lambda: setattr(clip, 'gain', max(0.0, min(1.0, float(msg['gain'])))))
+        if msg.get('looping') is not None:
+            op('looping', lambda: setattr(clip, 'looping', bool(msg['looping'])))
+        summary = {}
+        try:
+            summary = self._clip_summary(clip)
+        except Exception as e:
+            errors['summary'] = '%r' % (e,)
+        return {'ok': not errors or bool(done), 'track': track.name, 'slot': slot_index,
+                'done': done, 'errors': errors, 'clip': summary}
+
+    # ------------------------------------------------------- v5.7: undo / redo
+    def _cmd_undo(self, msg, redo):
+        song = self.song()
+        steps = max(1, min(50, int(msg.get('steps', 1) or 1)))
+        key = 'redone' if redo else 'undone'
+        n = 0
+        try:
+            for _ in range(steps):
+                if redo:
+                    if not bool(song.can_redo):
+                        break
+                    song.redo()
+                else:
+                    if not bool(song.can_undo):
+                        break
+                    song.undo()
+                n += 1
+        except Exception as e:
+            return {'ok': False, 'error': '%r' % (e,), key: n, 'requested': steps}
+        reply = {'ok': True, key: n, 'requested': steps}
+        try:
+            reply['can_undo'] = bool(song.can_undo)
+            reply['can_redo'] = bool(song.can_redo)
+        except Exception:
+            pass
+        return reply
+
+    # ------------------------------------------------------- v5.7: audio clips
+    def _locate_sample(self, browser, name):
+        """Same filename lookup as load_sample: basename and stem over ROOT_ORDER. -> (item, searched)"""
+        base = os.path.basename(u'%s' % (name,))
+        stem = os.path.splitext(base)[0]
+        searched = []
+        for root_name, root in self._roots(browser):
+            searched.append('%s:%s' % (root_name, getattr(root, 'name', '')))
+            item = self._find_item(root, (base, stem))
+            if item is not None:
+                return item, searched
+        return None, searched
+
+    def _audio_track_for(self, spec):
+        """Existing track by spec, else a new audio track named after spec. -> (track, created)"""
+        song = self.song()
+        try:
+            return self._track(spec), False
+        except (ValueError, IndexError):
+            if spec in (None, '', 'selected') or isinstance(spec, (int, float)) \
+                    or (u'%s' % (spec,)).lstrip('-').isdigit():
+                raise
+        before = len(list(song.tracks))
+        song.create_audio_track(-1)
+        tracks = list(song.tracks)
+        if len(tracks) != before + 1:
+            raise ValueError('create_audio_track did not add a track')
+        track = tracks[-1]
+        track.name = u'%s' % (spec,)
+        return track, True
+
+    def _cmd_load_audio_clip(self, msg, conn=None):
+        name = msg.get('name') or msg.get('path')
+        if not name:
+            return {'ok': False, 'error': 'load_audio_clip needs name (file name) or path'}
+        track, created = self._audio_track_for(msg.get('track', 'selected'))
+        if track.has_midi_input:
+            return {'ok': False, 'error': 'track %r is a MIDI track; load_audio_clip needs an audio track'
+                    % (track.name,), 'track': track.name}
+        slot_index = int(msg.get('slot', 0) or 0)
+        slot = self._ensure_slot_count(track, slot_index)
+        if slot.has_clip and not msg.get('overwrite'):
+            existing = u'%s' % (slot.clip.name,)
+            return {'ok': False, 'track': track.name, 'slot': slot_index, 'existing': existing,
+                    'error': 'slot %d on %s already holds clip %r; pass overwrite:true or another slot'
+                             % (slot_index, track.name, existing)}
+        job = {'msg': msg, 'conn': conn, 'attempt': 0, 'track': track, 'slot_index': slot_index,
+               'created_track': created, 'name': name}
+        return self._try_load_audio(job)
+
+    def _try_load_audio(self, job):
+        track = job['track']
+        browser = Live.Application.get_application().browser
+        item, searched = self._locate_sample(browser, job['name'])
+        if item is None:
+            job['attempt'] += 1
+            if job['attempt'] < LOAD_RETRY_MAX and job['conn'] is not None:
+                self.log_message('ADEHack: %r not found yet, retry %d' % (job['name'], job['attempt']))
+                self.schedule_message(LOAD_RETRY_TICKS, lambda: self._retry_load_audio(job))
+                return PENDING
+            return {'ok': False, 'error': 'not found in Live browser after %d tries: %r; searched %r. '
+                    'Add the output folder via Places > "Add Folder..." in Live.'
+                    % (job['attempt'], job['name'], searched), 'track': track.name}
+        song = self.song()
+        slot = list(track.clip_slots)[job['slot_index']]
+        if slot.has_clip:
+            slot.delete_clip()
+        song.view.selected_track = track
+        song.view.highlighted_clip_slot = slot   # load_item drops a sample into the highlighted slot
+        try:
+            browser.hotswap_target = None
+        except Exception:
+            pass
+        browser.load_item(item)
+        job['item'] = item
+        job['slot'] = slot
+        if slot.has_clip:
+            return self._finish_load_audio(job)
+        if job['conn'] is not None:  # clip creation may land a tick later
+            self.schedule_message(2, lambda: self._deferred_finish_load_audio(job))
+            return PENDING
+        return self._finish_load_audio(job)
+
+    def _retry_load_audio(self, job):
+        try:
+            reply = self._try_load_audio(job)
+        except Exception as e:
+            self.log_message('ADEHack: load_audio_clip retry error: %r' % (e,))
+            reply = {'ok': False, 'error': '%s: %r' % (e.__class__.__name__, e)}
+        if reply is not PENDING:
+            self._send(job['conn'], reply)
+
+    def _deferred_finish_load_audio(self, job):
+        try:
+            reply = self._finish_load_audio(job)
+        except Exception as e:
+            reply = {'ok': False, 'error': '%s: %r' % (e.__class__.__name__, e)}
+        self._send(job['conn'], reply)
+
+    def _finish_load_audio(self, job):
+        msg, track, slot, item = job['msg'], job['track'], job['slot'], job['item']
+        slot_index = job['slot_index']
+        if not slot.has_clip:
+            return {'ok': False, 'track': track.name, 'slot': slot_index, 'item': item.name,
+                    'error': 'load_item(%r) did not create a clip in %s slot %d' % (item.name, track.name, slot_index),
+                    'devices': self._devices(track)}
+        clip = slot.clip
+        done, errors = [], {}
+
+        def op(label, fn):
+            try:
+                fn()
+                done.append(label)
+            except Exception as e:
+                errors[label] = '%s: %r' % (e.__class__.__name__, e)
+                self.log_message('ADEHack: load_audio_clip %s failed: %r' % (label, e))
+
+        warp = msg.get('warp', True)
+        op('warping', lambda: setattr(clip, 'warping', bool(warp)))
+        if bool(warp) or msg.get('warp_mode') is not None:
+            def set_mode():
+                wanted = msg.get('warp_mode') or 'complex_pro'
+                try:
+                    self._set_warp_mode(clip, wanted)
+                except Exception:
+                    if (u'%s' % (wanted,)).lower() != 'complex_pro':
+                        raise
+                    self._set_warp_mode(clip, 'complex')   # Standard/Intro: no Complex Pro
+            op('warp_mode', set_mode)
+        op('looping', lambda: setattr(clip, 'looping', msg.get('looping', True) is not False))
+        if msg.get('clip_name'):
+            op('name', lambda: setattr(clip, 'name', u'%s' % (msg['clip_name'],)))
+        if msg.get('fire') and not getattr(slot, 'is_playing', False):
+            op('fire', lambda: slot.fire())
+        if msg.get('show', True):
+            self._focus_clip(slot, clip)
+        summary = {}
+        try:
+            summary = self._clip_summary(clip)
+        except Exception as e:
+            errors['summary'] = '%r' % (e,)
+        return {'ok': True, 'track': track.name, 'track_index': self._index_of(track),
+                'track_created': bool(job.get('created_track')), 'slot': slot_index,
+                'item': item.name, 'uri': item.uri, 'attempts': job['attempt'] + 1,
+                'done': done, 'errors': errors, 'clip': summary}
+
+    # ------------------------------------------------------- v5.7: meters
+    def _meter_level(self, track):
+        try:
+            return float(track.output_meter_level)
+        except Exception:
+            return max(float(getattr(track, 'output_meter_left', 0.0) or 0.0),
+                       float(getattr(track, 'output_meter_right', 0.0) or 0.0))
+
+    def _cmd_meters(self, msg, conn=None):
+        if conn is None:
+            return {'ok': False, 'error': 'meters needs a live connection for the deferred reply'}
+        ticks = max(1, min(100, int(msg.get('ticks', 10) or 10)))
+        job = {'conn': conn, 'ticks': ticks, 'done': 0, 'peaks': {}, 'names': {}, 'master': 0.0}
+        self._meter_sample(job)   # first sample now, the rest every ~100 ms
+        return PENDING
+
+    def _meter_sample(self, job):
+        try:
+            song = self.song()
+            for i, t in enumerate(song.tracks):
+                lvl = self._meter_level(t)
+                if lvl > job['peaks'].get(i, 0.0):
+                    job['peaks'][i] = lvl
+                job['names'][i] = t.name
+            job['master'] = max(job['master'], self._meter_level(song.master_track))
+            job['done'] += 1
+            if job['done'] < job['ticks']:
+                self.schedule_message(1, lambda: self._meter_sample(job))
+                return
+            tracks = [{'index': i, 'name': job['names'][i], 'peak': round(job['peaks'].get(i, 0.0), 4),
+                       'silent': job['peaks'].get(i, 0.0) < 0.001} for i in sorted(job['names'].keys())]
+            reply = {'ok': True, 'ticks': job['done'], 'seconds': job['done'] / 10.0,
+                     'is_playing': bool(song.is_playing), 'tracks': tracks,
+                     'master': round(job['master'], 4)}
+        except Exception as e:
+            reply = {'ok': False, 'error': '%r' % (e,)}
+        self._send(job['conn'], reply)
+
+    # ------------------------------------------------------- v5.7: arm / session record
+    def _monitoring_name(self, value):
+        for k, v in self.MONITORING.items():
+            if v == int(value):
+                return k
+        return int(value)
+
+    def _set_monitoring(self, track, spec):
+        key = (u'%s' % (spec,)).lower()
+        if key not in self.MONITORING:
+            raise ValueError('monitoring must be one of %r' % (sorted(self.MONITORING.keys()),))
+        track.current_monitoring_state = self.MONITORING[key]
+
+    def _cmd_set_arm(self, msg):
+        track = self._track(msg.get('track', 'selected'))
+        done, errors = [], {}
+        if msg.get('arm') is not None:
+            try:
+                if not getattr(track, 'can_be_armed', False):
+                    raise ValueError('track %r cannot be armed' % (track.name,))
+                track.arm = bool(msg['arm'])
+                done.append('arm')
+            except Exception as e:
+                errors['arm'] = '%s: %r' % (e.__class__.__name__, e)
+        if msg.get('monitoring') is not None:
+            try:
+                self._set_monitoring(track, msg['monitoring'])
+                done.append('monitoring')
+            except Exception as e:
+                errors['monitoring'] = '%s: %r' % (e.__class__.__name__, e)
+        state = {}
+        try:
+            state['arm'] = bool(track.arm) if getattr(track, 'can_be_armed', False) else None
+        except Exception:
+            state['arm'] = None
+        try:
+            state['monitoring'] = self._monitoring_name(track.current_monitoring_state)
+        except Exception:
+            pass
+        return {'ok': not errors or bool(done), 'track': track.name, 'index': self._index_of(track),
+                'done': done, 'errors': errors, 'state': state}
+
+    def _cmd_session_record(self, msg, conn=None):
+        if conn is None:
+            return {'ok': False, 'error': 'session_record needs a live connection for the deferred reply'}
+        song = self.song()
+        track = self._track(msg.get('track', 'selected'))
+        if not getattr(track, 'can_be_armed', False):
+            return {'ok': False, 'error': 'track %r cannot be armed' % (track.name,), 'track': track.name}
+        slot_index = int(msg.get('slot', 0) or 0)
+        slot = self._ensure_slot_count(track, slot_index)
+        if slot.has_clip:
+            if not msg.get('overwrite'):
+                existing = u'%s' % (slot.clip.name,)
+                return {'ok': False, 'track': track.name, 'slot': slot_index, 'existing': existing,
+                        'error': 'slot %d on %s already holds clip %r; pass overwrite:true or another slot'
+                                 % (slot_index, track.name, existing)}
+            slot.delete_clip()
+        bars = float(msg.get('bars', 4) or 4)
+        if bars <= 0:
+            return {'ok': False, 'error': 'bars must be > 0'}
+        beats = bars * self._beats_per_bar()
+        self._play_id += 1      # a pending play_for stop must not cut the take
+        self._seq_id += 1
+        track.arm = True
+        song.view.selected_track = track
+        song.view.highlighted_clip_slot = slot
+        if msg.get('monitoring') is not None:
+            try:
+                self._set_monitoring(track, msg['monitoring'])
+            except Exception as e:
+                self.log_message('ADEHack: session_record monitoring failed: %r' % (e,))
+        song.trigger_session_record(beats)
+        seconds = self._bars_seconds(bars)
+        # count-in (up to 4 bars) + launch quantization (up to 1 bar) + slack before giving up on a start
+        start_wait = self._bars_seconds(5.0) + 2.0
+        job = {'conn': conn, 'track': track, 'slot': slot, 'slot_index': slot_index, 'bars': bars,
+               'stop_after': bool(msg.get('stop_after')), 'started': False, 'ticks': 0,
+               'start_limit': int(start_wait * 10.0),
+               'max_ticks': int((start_wait + seconds * 1.5 + 2.0) * 10.0)}
+        self.schedule_message(1, lambda: self._session_poll(job))
+        return PENDING
+
+    def _session_poll(self, job):
+        try:
+            slot = job['slot']
+            try:
+                rec = bool(slot.is_recording)
+            except Exception:
+                rec = bool(slot.has_clip and getattr(slot.clip, 'is_recording', False))
+            job['ticks'] += 1
+            if rec:
+                job['started'] = True
+            finished = job['started'] and not rec
+            timed_out = (not job['started'] and job['ticks'] > job['start_limit']) \
+                or job['ticks'] > job['max_ticks']
+            if not finished and not timed_out:
+                self.schedule_message(1, lambda: self._session_poll(job))
+                return
+            song = self.song()
+            track = job['track']
+            if timed_out:
+                try:
+                    song.session_record = False
+                except Exception:
+                    pass
+            try:
+                track.arm = False
+            except Exception as e:
+                self.log_message('ADEHack: un-arm failed: %r' % (e,))
+            if job['stop_after']:
+                try:
+                    song.stop_playing()
+                except Exception:
+                    pass
+            waited = job['ticks'] / 10.0
+            if slot.has_clip:
+                reply = {'ok': True, 'track': track.name, 'slot': job['slot_index'], 'bars': job['bars'],
+                         'timed_out': timed_out, 'seconds_waited': waited, 'clip': self._clip_summary(slot.clip)}
+            else:
+                why = 'started but produced no clip' if job['started'] \
+                    else 'never started: check arm / input routing / count-in'
+                reply = {'ok': False, 'track': track.name, 'slot': job['slot_index'], 'seconds_waited': waited,
+                         'error': 'no clip recorded in %s slot %d after %.1f s (recording %s)'
+                                  % (track.name, job['slot_index'], waited, why)}
+        except Exception as e:
+            reply = {'ok': False, 'error': '%r' % (e,)}
+        self._send(job['conn'], reply)
 
     # --------------------------------------------------------------- lifecycle
     def disconnect(self):
