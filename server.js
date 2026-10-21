@@ -170,12 +170,15 @@ async function nextSlot(role) {
   try { counters = JSON.parse(await fs.readFile(COUNTER_FILE, 'utf8')); } catch {}
   const indexed = await indexedSlotNames();
   const n = POOL_SIZE[role] || 6;
+  // never hand out a slot that a track in the current set is still playing (Live caches by filename)
+  const inUse = new Set(Object.values(lastBuild.samples || {}).map((s) => path.basename(s.slotPath || '')));
   let pick = null;
   for (let i = 0; i < n; i++) {
     const k = ((counters[role] || 0) + i) % n + 1;
     const name = `ADE ${role} ${k}.wav`;
-    if (!indexed || indexed.has(name)) { pick = { name, k }; break; }
+    if ((!indexed || indexed.has(name)) && !inUse.has(name)) { pick = { name, k }; break; }
   }
+  if (!pick) for (let i = 0; i < n; i++) { const k = ((counters[role] || 0) + i) % n + 1; const name = `ADE ${role} ${k}.wav`; if (!indexed || indexed.has(name)) { pick = { name, k }; console.warn(`[slot] all ${role} slots in use, reusing ${name}`); break; } }
   if (!pick) {   // pool not indexed yet (user must re-add the Place once); fall back to the old single role slot
     const legacy = `ADE ${role === 'OpenHat' ? 'Hat Open' : role}.wav`;
     console.warn(`[slot] pool for ${role} not indexed by Live, falling back to ${legacy}`);
