@@ -925,6 +925,10 @@ app.post('/api/live/arrange', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 function okOrThrowHttp(r) { if (!r?.ok) throw new Error(r?.error || 'Live rejected the command'); return r; }
+app.post('/api/render', async (req, res) => {
+  try { const ctx = makeCtx(() => {}); const r = await ctx.render({ bars: req.body?.bars }); res.json(r); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.post('/api/analyze', async (req, res) => {
   try {
     let p = req.body?.path;
