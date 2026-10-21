@@ -9,4 +9,5 @@ export interface Question {
   index: number;
   max: number;
   facet?: string;
+  why?: string;
 }

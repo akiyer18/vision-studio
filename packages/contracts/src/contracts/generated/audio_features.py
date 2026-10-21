@@ -21,3 +21,4 @@ class AudioFeatures(BaseModel):
     chords: list[str] | None = None
     instruments: list[str] | None = None
     confidence: float = Field(..., ge=0.0, le=1.0)
+    path: str | None = None

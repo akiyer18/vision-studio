@@ -1,0 +1,19 @@
+# Stable Audio endpoint URLs and field names.
+# The hackathon API documentation names these. Leave a value blank until it is known.
+# A blank URL, key, or field name keeps the mock renderer.
+# Environment variables override a blank here: STABILITY_TEXT_URL, STABILITY_AUDIO_URL, STABILITY_API_KEY.
+
+text_url: ""
+audio_url: ""
+api_key_env: STABILITY_API_KEY
+text_fields:
+  prompt: ""
+  negative_prompt: ""
+  duration: ""
+  seed: ""
+audio_fields:
+  prompt: ""
+  negative_prompt: ""
+  duration: ""
+  source: ""
+  noise: ""

@@ -56,6 +56,7 @@ export function QuestionMessage({ question, locked = false, onAnswer }: Props) {
         {question.index} of up to {question.max}
       </p>
       <p className="mt-3 text-ink">{question.text}</p>
+      {question.why ? <p className="mt-1 text-secondary">Why I am asking: {question.why}</p> : null}
       {question.options.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-2">
           {question.options.map((option) => (

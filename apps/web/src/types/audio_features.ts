@@ -10,4 +10,5 @@ export interface AudioFeatures {
   chords?: string[];
   instruments?: string[];
   confidence: number;
+  path?: string;
 }

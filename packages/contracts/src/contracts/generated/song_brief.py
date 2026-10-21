@@ -31,6 +31,9 @@ class Slots(BaseModel):
     brightness: SlotValue | None = None
     pattern: SlotValue | None = None
     production: SlotValue | None = None
+    progression: SlotValue | None = None
+    meter: SlotValue | None = None
+    intent: SlotValue | None = None
 
 
 class SongBrief(BaseModel):
@@ -40,6 +43,9 @@ class SongBrief(BaseModel):
     slots: Slots
     output: list[Literal["drums", "chords", "bass", "melody", "texture", "all_layers", "full_mix"]]
     questions_asked: int
-    skipped: list[Literal["output", "mood", "energy", "world", "key", "style", "palette", "structure", "must_keep", "tempo", "sound", "genre", "brightness", "pattern", "production"]]
+    skipped: list[Literal["output", "mood", "energy", "world", "key", "style", "palette", "structure", "must_keep", "tempo", "sound", "genre", "brightness", "pattern", "production", "progression", "meter", "intent"]]
     facets: list[FacetAnswer] | None = None
     arc: Arc | None = None
+    audio_intent: Literal["transform", "extend", "accompany"] | None = None
+    noise: float | None = None
+    coverage: float | None = None

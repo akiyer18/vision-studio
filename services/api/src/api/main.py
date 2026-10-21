@@ -16,7 +16,8 @@ from agent.bedrock import explain_payload, history_payload
 from agent.complete import timing_from_brief
 from agent.explain import explain_result
 from agent.genres import load_genres, present_history, reference_values
-from agent.prompts import seeds_for
+from agent.facts import parse_chords
+from agent.prompts import base_layer, seeds_for
 from agent.theory import bass_midi, chords_midi
 from agent.turn import run_turn
 from contracts import AudioFeatures, LayerPrompt, RenderJob, RenderResult, SongBrief, TraceStep, TurnRequest, TurnResponse
@@ -37,7 +38,8 @@ from api.audio import (
     safe_filename,
     session_dir,
 )
-from api.renderer import MockRenderer, Renderer
+from api.renderer import MockRenderer, Renderer, pin_chord_audio
+from api.stability import StabilityAPIRenderer
 
 _WEB = ["http://localhost:5173", "http://127.0.0.1:5173"]
 _INPUTS = {"text_only", "hum", "vocal", "instrument_loop", "drum_loop", "full_track", "midi"}
@@ -95,6 +97,11 @@ class SessionRecord:
     key: str
     takes: dict[str, int] = field(default_factory=dict)
     results: dict[str, list[RenderResult]] = field(default_factory=dict)
+    upload_path: str = ""
+    audio_intent: str = ""
+    noise: float = 0.5
+    pinned: str = ""
+    progression_locked: bool = False
 
 
 def load_local_env() -> None:
@@ -118,8 +125,8 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     renderer_name = os.environ.get("RENDERER", "mock")
     if provider not in {"mock", "bedrock"}:
         raise RuntimeError("PROVIDER must be mock or bedrock")
-    if renderer_name != "mock":
-        raise RuntimeError("RENDERER must be mock until another renderer exists")
+    if renderer_name not in {"mock", "stability_api"}:
+        raise RuntimeError("RENDERER must be mock or stability_api")
 
     app = FastAPI(title="Vision Studio")
     app.add_middleware(
@@ -131,7 +138,12 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     app.state.data_root = data_root or default_data_root()
     app.state.sessions = {}
     app.state.turns = {}
-    app.state.renderer = MockRenderer(app.state.data_root)
+    app.state.uploads = {}
+    app.state.debug = {}
+    if renderer_name == "stability_api":
+        app.state.renderer = StabilityAPIRenderer(app.state.data_root)
+    else:
+        app.state.renderer = MockRenderer(app.state.data_root)
 
     @app.post("/upload")
     async def upload(
@@ -160,7 +172,13 @@ def create_app(data_root: Path | None = None) -> FastAPI:
                 convert_to_wav(original, target)
             except ConversionError as error:
                 raise HTTPException(422, str(error)) from error
-        return analyse(target, input_type)
+        features = analyse(target, input_type).model_copy(update={"path": str(target)})
+        request.app.state.uploads[session_id] = {
+            "file": original.name,
+            "path": str(target),
+            "features": features.model_dump(),
+        }
+        return features
 
     @app.post("/turn", response_model=TurnResponse)
     def turn(body: TurnRequest, request: Request) -> TurnResponse:
@@ -179,12 +197,15 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     def render(body: RenderBody, request: Request) -> list[RenderResult] | StreamingResponse:
         record, prompts = _prepare_render(request, body)
         renderer = request.app.state.renderer
+        debug = request.app.state.debug.setdefault(body.session_id, {})
+        debug["jobs"] = []
         if _wants_ndjson(request):
-            return _ndjson(_stream_prompts(record, renderer, body.session_id, prompts, take=1))
+            return _ndjson(_stream_prompts(record, renderer, body.session_id, prompts, take=1, debug=debug))
         rendered: list[RenderResult] = []
         for prompt in prompts:
             jobs = _jobs(body.session_id, prompt, record, take=1, seeds=prompt.seeds)
             results = _render_jobs(renderer, jobs, record.chords)
+            _note_debug(debug, renderer, jobs)
             record.takes[prompt.layer] = 1
             record.results[prompt.layer] = results
             rendered.extend(results)
@@ -200,9 +221,13 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         seeds = seeds_for(body.layer, record.mood, record.world, record.key, record.bpm, take)
         jobs = _jobs(body.session_id, prompt, record, take=take, seeds=seeds)
         renderer = request.app.state.renderer
+        debug = request.app.state.debug.setdefault(body.session_id, {})
         if _wants_ndjson(request):
-            return _ndjson(_stream_prompts(record, renderer, body.session_id, [prompt], take=take, seeds=seeds))
+            return _ndjson(
+                _stream_prompts(record, renderer, body.session_id, [prompt], take=take, seeds=seeds, debug=debug)
+            )
         results = _render_jobs(renderer, jobs, record.chords)
+        _note_debug(debug, renderer, jobs)
         record.takes[body.layer] = take
         record.results[body.layer] = results
         return results
@@ -280,6 +305,20 @@ def create_app(data_root: Path | None = None) -> FastAPI:
             raise HTTPException(404, "File not found")
         return FileResponse(target)
 
+    @app.get("/debug/{session_id}")
+    def debug(session_id: str, request: Request) -> dict[str, object]:
+        try:
+            check_session_id(session_id)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        payload = request.app.state.debug.get(session_id, {})
+        return {
+            "upload": request.app.state.uploads.get(session_id),
+            "jobs": payload.get("jobs", []),
+            "payload": payload.get("payload", {}),
+            "notes": payload.get("notes", []),
+        }
+
     return app
 
 
@@ -305,6 +344,9 @@ def _record(response: TurnResponse) -> SessionRecord:
         mood=slots.mood.value if slots.mood is not None else "peaceful",
         world=slots.world.value if slots.world is not None else "warm and intimate",
         key=slots.key.value if slots.key is not None else "C major",
+        audio_intent=response.brief.audio_intent or "",
+        noise=response.brief.noise if response.brief.noise is not None else 0.5,
+        progression_locked=slots.progression is not None and slots.progression.source == "you",
     )
     _complete_record(record)
     return record
@@ -354,6 +396,7 @@ def _jobs(
     take: int,
     seeds: tuple[float, float, float],
 ) -> list[RenderJob]:
+    init_audio, noise = _audio_for(record, prompt.layer)
     return [
         RenderJob(
             session_id=session_id,
@@ -365,13 +408,47 @@ def _jobs(
             seed=int(seed),
             variant=variant,
             take=take,
+            init_audio=init_audio,
+            noise=noise,
         )
         for variant, seed in enumerate(seeds, start=1)
     ]
 
 
+def _audio_for(record: SessionRecord, layer: str) -> tuple[str | None, float | None]:
+    if base_layer(layer) == "chords" and record.pinned:
+        return record.pinned, None
+    if record.audio_intent in {"transform", "extend"} and record.upload_path:
+        noise = record.noise if record.audio_intent == "transform" else None
+        return record.upload_path, noise
+    return None, None
+
+
 def _render_jobs(renderer: Renderer, jobs: list[RenderJob], chords: list[str]) -> list[RenderResult]:
     return [renderer.render(job, chords) for job in jobs]
+
+
+def _note_debug(debug: dict[str, object], renderer: Renderer, jobs: list[RenderJob]) -> None:
+    listed = debug.setdefault("jobs", [])
+    if isinstance(listed, list):
+        listed.extend(_job_view(job) for job in jobs)
+    payload = getattr(renderer, "last_payload", None)
+    if payload:
+        debug["payload"] = payload
+    debug["notes"] = list(getattr(renderer, "notes", []))
+
+
+def _job_view(job: RenderJob) -> dict[str, object]:
+    return {
+        "layer": job.layer,
+        "prompt": job.prompt,
+        "negative": job.negative,
+        "bpm": job.bpm,
+        "bars": job.bars,
+        "seed": job.seed,
+        "init_audio": job.init_audio,
+        "noise": job.noise,
+    }
 
 
 def _prepare_render(request: Request, body: RenderBody) -> tuple[SessionRecord, list[LayerPrompt]]:
@@ -380,8 +457,24 @@ def _prepare_render(request: Request, body: RenderBody) -> tuple[SessionRecord, 
     if body.prompts:
         record.prompts = _apply_prompt_text(record.prompts, body.prompts)
     prompts = _prompts_for(record, body.layer)
+    _attach_audio(request, body.session_id, record)
     _write_midi(request.app.state.data_root, body.session_id, record)
     return record, prompts
+
+
+def _attach_audio(request: Request, session_id: str, record: SessionRecord) -> None:
+    uploaded = request.app.state.uploads.get(session_id)
+    if uploaded and not record.upload_path:
+        record.upload_path = str(uploaded["path"])
+    if record.progression_locked and not record.pinned and record.chords:
+        if parse_chords(", ".join(record.chords)):
+            record.pinned = pin_chord_audio(
+                request.app.state.data_root,
+                session_id,
+                record.chords,
+                record.bpm,
+                record.bars,
+            )
 
 
 def _prompts_for(record: SessionRecord, layer: str | None) -> list[LayerPrompt]:
@@ -417,12 +510,15 @@ async def _stream_prompts(
     *,
     take: int,
     seeds: tuple[float, float, float] | None = None,
+    debug: dict[str, object] | None = None,
 ) -> AsyncIterator[bytes]:
     for prompt in prompts:
         layer_seeds = prompt.seeds if seeds is None else seeds
         jobs = _jobs(session_id, prompt, record, take=take, seeds=layer_seeds)
         async for line in _stream_jobs(record, renderer, jobs, record.chords, take):
             yield line
+        if debug is not None:
+            _note_debug(debug, renderer, jobs)
     yield _line({"kind": "done"})
 
 

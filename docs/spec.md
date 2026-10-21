@@ -9,7 +9,7 @@ Vision Studio is a helper, not the author. The agent only works from what the pr
 
 ```
 SlotSource      = "you" | "detected" | "guessed" | "reference"
-SlotName        = "output" | "mood" | "energy" | "world" | "key" | "style" | "palette" | "structure" | "must_keep" | "tempo" | "sound" | "genre" | "brightness" | "pattern" | "production"
+SlotName        = "output" | "mood" | "energy" | "world" | "key" | "style" | "palette" | "structure" | "must_keep" | "tempo" | "sound" | "genre" | "brightness" | "pattern" | "production" | "progression" | "meter" | "intent"
 OutputChoice    = "drums" | "chords" | "bass" | "melody" | "texture" | "all_layers" | "full_mix"
 AnswerAction    = "answer" | "you_decide" | "skip" | "skip_all"
 InputType       = "text_only" | "hum" | "vocal" | "instrument_loop" | "drum_loop" | "full_track" | "midi"
@@ -17,31 +17,34 @@ InputType       = "text_only" | "hum" | "vocal" | "instrument_loop" | "drum_loop
 SlotValue       { value: string, source: SlotSource, reason: string, confidence: number 0..1 }
 TraceStep       { step: string, detail: string }            // shown in the agent trace
 AudioFeatures   { input_type: InputType, key?: string, mode?: string, bpm?: number,
-                  chords?: string[], instruments?: string[], confidence: number }
+                  chords?: string[], instruments?: string[], confidence: number, path?: string }
 
 SongBrief       { slots: Partial<Record<SlotName, SlotValue>>, output: OutputChoice[],
                   questions_asked: integer, skipped: SlotName[],
-                  facets?: FacetAnswer[], arc?: Arc }
+                  facets?: FacetAnswer[], arc?: Arc,
+                  audio_intent?: "transform" | "extend" | "accompany",
+                  noise?: number, coverage?: number }
 
 FacetAnswer     { id: string, layer: string, label: string, value: string,
                   descriptor: string, options: string[] }
 Arc             { label: string, start: string, end: string, description?: string }
 
 Question        { slot: SlotName, text: string, options: string[], index: integer, max: integer,
-                  facet?: string }
+                  facet?: string, why?: string }
 
 TurnRequest     { session_id: string, request_id?: string, text?: string, audio_features?: AudioFeatures,
                   answer?: { slot: SlotName, action: AnswerAction, value?: string, facet?: string },
                   output?: OutputChoice[], overrides?: Record<SlotName, string>,
                   mode?: "full" | "one_sound", reference?: Record<SlotName, string>,
-                  deepen?: boolean }
+                  deepen?: boolean, build_now?: boolean, write_prompts?: boolean,
+                  back_to_questions?: boolean, review?: boolean, noise?: number }
 
 LayerPrompt     { layer: string, prompt: string, negative: string,
                   seeds: [number, number, number], kb_sources: string[] }
 
-TurnResponse    { status: "question" | "ready", question?: Question, brief: SongBrief,
+TurnResponse    { status: "question" | "review" | "ready", question?: Question, brief: SongBrief,
                   prompts?: LayerPrompt[], progression?: { roman: string[], chords: string[] },
-                  trace: TraceStep[], summary?: string }
+                  trace: TraceStep[], summary?: string, intro?: string }
 
 RenderJob       { session_id, layer, prompt, negative, bpm: integer, bars: integer (default 8),
                   seed: integer, variant: integer, take: integer (default 1), init_audio?, noise?: number, lora? }
@@ -55,8 +58,11 @@ Semantics:
 - reference stores genre traits as source "reference" and locks them so a later guess cannot replace them.
 - "you_decide" fills the slot with the default, source "guessed", reason from the default rule.
 - "skip" does the same and prefixes the reason with "skipped: ".
-- "skip_all" fills every remaining slot with defaults and returns status "ready".
-- deepen asks up to three more facet questions after a ready brief. It can be sent again.
+- "skip_all" fills every remaining slot with defaults and returns status "review". Prompts are written only when write_prompts is sent, which returns status "ready".
+- build_now returns status "review" from whatever has been said so far. back_to_questions leaves the review and continues the interview. review=true lets an override change a locked fact, and the fact stays source you.
+- A locked fact is a slot with source you. Tempo, key, progression, bar count, named instruments, named sound types, and time signature are locked when the producer states them. Claude, defaults, and the preset tables cannot replace a locked slot.
+- audio_intent is transform, extend, or accompany. noise is the "how different" amount for transform, default 0.5. coverage is the fraction of askable slots that are filled or skipped.
+- deepen asks up to three more facet questions after a review or a ready brief. It can be sent again.
 - A facet answer is stored on the brief, not in the slot named by the question. The question's slot is only the carrier.
 - An arc is a musical journey: a start state, an end state, and a short description. Section prompts use the start and the end. The brief shows the label, for example "Dark to bright". Structure never stores the journey. It only stores a bar count.
 - request_id is a client id for one turn. The same id for the same session returns the response already produced and does not run the turn again.
@@ -76,8 +82,11 @@ Semantics:
 | structure | 0.2 | rarely | How long should it be? | 4 bars, 8 bars, 16 bars |
 | must_keep | 0.4 | audio input only | What must stay exactly as it is? | everything, the melody, the rhythm, the chords |
 | tempo | 0 | never | never asked | |
+| progression | 0 | never | never asked | |
+| meter | 0 | never | never asked | |
+| intent | 0 | never by the score | asked once, only when audio has no clear intent | Reshape it, Continue it, Build around it |
 
-Asking rule, used by MockProvider and whenever Bedrock fails: score = impact x (1 - confidence). Ask the highest score above 0.35. Max 5 questions. Bedrock replaces this order with the adaptive interviewer in section 10. The section 2 question text stays the fallback wording.
+Asking rule, used by MockProvider and whenever Bedrock fails: score = impact x (1 - confidence). Ask the highest score above 0.35. The interview stops when coverage is complete, when the producer presses Build now, or after Skip all. The hard maximum is 10 questions. Bedrock replaces the order with the adaptive interviewer in section 10. The section 2 question text stays the fallback wording. Each question carries a one-line reason, Question.why.
 Tempo is a real slot (value, source, reason, confidence) and it shows in the brief. It is never asked. A stated tempo wins over a measured one, and a measured tempo wins over a derived one (section 3 and section 10).
 First question when the input is almost empty: "What is this song about?" (free text, then re run extraction).
 Almost empty means no audio and no MIDI, and the text is blank or a single word that matches no keyword.
@@ -101,7 +110,7 @@ Output defaults to all_layers ("all layers separately"). full_mix is used only w
 Other empty slots: style "no reference", palette "no preference", structure "8 bars"
 (or "16 bars" when the idea has an arc, unless the producer stated a count),
 must_keep "everything" when audio was uploaded and "nothing" otherwise.
-Before a brief is ready, complete_brief fills any gap: tempo (stated, then detected, then derived), an integer bar count, a key with a mode, and an output. Each fill carries a reason. Text in a numeric slot is dropped and the trace says so.
+Before a brief is reviewed, complete_brief fills any gap: tempo (stated, then detected, then derived), an integer bar count, a key with a mode, and an output. Each fill carries a reason. A locked slot is left as the producer stated it, including on the review card. The trace for a locked fact is "Kept your tempo: 105 BPM", and the same shape for key, progression, bar count, instruments, sound, and time signature.
 
 Mock text extraction keywords (MockProvider, and the offline fallback when Bedrock is unavailable):
 - longing: miss, lonely, sad, rain, lost, heart, night drive
@@ -150,9 +159,11 @@ Filled facet descriptors are added on the instrument and rhythm side of that ord
 
 When the idea moves from one state to another, each selected layer is written twice: Section A uses the start mood, energy, and world, and Section B uses the end. The layer ids are `{layer}_a` and `{layer}_b`. The mock renderer plays each section with that layer's sound. Artist and song names are never interpolated. See section 11.
 
+Prompt writer. After review, Claude writes one prompt and one negative prompt per layer from the reviewed brief and the conversation, in the order above, at most about 60 words. Code checks each prompt: every locked tempo, key and mode, progression, and named instrument appears, the layer's anchor is present, no artist or song name appears, and no word contradicts the brief. If that check fails twice, the deterministic template is kept. The trace says "Kept the template: …". A progression the producer named is written as those chord symbols, not as a transposed preset.
+
 ## 5. Theory engine
 
-Progressions to chords: D minor i VI III VII = Dm Bb F C; E minor i VI III VII = Em C G D;
+A progression the producer named, such as C, Am, F, G, is used as those symbols. It is not transposed. Preset progressions still transpose: D minor i VI III VII = Dm Bb F C; E minor i VI III VII = Em C G D;
 E minor i bII = Em F; C major I V vi IV = C G Am F; C major Imaj7 IVmaj7 = Cmaj7 Fmaj7.
 Support any key by transposing. MIDI: chords as close voiced triads around C4, one chord per bar,
 bass as roots around C2, velocity 80 to 100. Detected audio keys replace the preset key.
@@ -256,7 +267,7 @@ Phase 2 choices: the section name is verse. Uploads live in audio/, rendered WAV
 - make dev: runs the API on port 8000 and the web app on port 5173
 - make test: pytest for services, typecheck and lint for apps/web
 - make contracts: regenerates TypeScript types and Pydantic models
-- Environment in .env (never committed): PROVIDER=mock, RENDERER=mock, AWS_PROFILE=vision, AWS_REGION=us-east-1, BEDROCK_MODEL_ID. The agent reads os.environ only. The API startup and `make dev` load the repo .env (uvicorn `--env-file`, and python-dotenv in the API). AWS_PROFILE is passed to boto3 only when it is set.
+- Environment in .env (never committed): PROVIDER=mock, RENDERER=mock or RENDERER=stability_api, AWS_PROFILE=vision, AWS_REGION=us-east-1, BEDROCK_MODEL_ID. Stable Audio URLs and field names live in services/api/stability.yaml and the STABILITY_* variables. They stay blank until the hackathon API documentation names them. The agent reads os.environ only. The API startup and `make dev` load the repo .env (uvicorn `--env-file`, and python-dotenv in the API). AWS_PROFILE is passed to boto3 only when it is set.
 
 ## 10. Bedrock provider
 
@@ -286,11 +297,11 @@ On any Bedrock error or timeout, including a missing model id, extraction falls 
 
 Adaptive interviewer. After every user message or answer, one forced tool call sends Claude the conversation so far, the current brief, the detected audio features, the slot schema with allowed values, and the questions still remaining. Claude returns either next_question (slot, a short question that refers to what the producer already said, 2 to 4 options, and a one-line reason) or ready (a one-line summary of the brief). The summary is TurnResponse.summary.
 
-Guardrails in code, always: never ask a slot filled with source you or detected; never ask tempo; at most 5 questions; options for a closed slot must be labels from section 2; You decide, Skip this, and Skip all still work. One sound still only asks its five slots. If Claude's mood contradicts the producer's words (a calm mood after "aggressive"), keep the mood those words imply and say so in the trace. If the proposal fails a guardrail, the trace says why and the asking rule chooses instead. If the interviewer call fails, the trace says "Bedrock unavailable, used the asking rule".
+Guardrails in code, always: never ask a slot filled with source you or detected; never ask tempo; stop when coverage is complete, on Build now, or after Skip all, and never ask more than 10 questions; options for a closed slot must be labels from section 2; You decide, Skip this, and Skip all still work. One sound still only asks its five slots. If Claude's mood contradicts the producer's words (a calm mood after "aggressive"), keep the mood those words imply and say so in the trace. If the proposal fails a guardrail, the trace says why and the asking rule chooses instead. If the interviewer call fails, the trace says "Bedrock unavailable, used the asking rule". Claude's ready decision returns status review, with the summary kept. write_prompts is what compiles.
 
-Both providers read numbers from the text before Claude or the keyword extractor: "94 bpm" is tempo 94, source you, "Heard 94 BPM in your words"; "F minor" is the key; "8 bars" is the structure. A stated tempo still beats a measured one.
+Both providers read facts from the text before Claude or the keyword extractor: "105bpm" is tempo 105, source you, "Heard 105 BPM in your words" and "Kept your tempo: 105 BPM"; "F minor" is the key; "8 bars" is the structure; "4/4" is the meter; "C, Am, F, G" is the progression; a named instrument or sound type is palette or sound. A stated tempo still beats a measured one. Nothing overwrites a locked fact.
 
-Before status ready, complete_brief checks the brief the compiler is about to read. Tempo stays the stated number, then the detected number, then the derived number. Bars stay a positive integer the producer stated, otherwise 16 when there is an arc, otherwise 8. Key always includes a mode. Output is set. Structure holds only that bar count. A journey found in the structure slot is moved to the arc and the bar count is kept. If bars are not an integer, or a numeric slot holds text, the default stays and a complete_brief trace line says so. The same completion runs before every render, so a missing bar count or tempo cannot fail the render.
+Before status review, and again before prompts are written, complete_brief checks the brief. A locked slot is not replaced. Tempo otherwise stays the stated number, then the detected number, then the derived number. Bars stay a positive integer the producer stated, otherwise 16 when there is an arc, otherwise 8. Key always includes a mode unless the producer locked a key that cannot be read. Output is set. Structure holds only that bar count when it was not locked as something else. A journey found in the structure slot is moved to the arc and the bar count is kept. The same completion runs before every render, so a missing bar count or tempo cannot fail the render.
 
 Facet questions. The catalog is `kb/facets`, one YAML file per layer and one for one-sound types. A facet has an id, a question, an intent, allowed values with the short descriptor used in prompts, a condition, and an importance. A condition `kick_character~distorted` applies only when that answer contains the fragment. The interviewer may return a facet on the same tool call. A separate forced call, used once the section 2 slots that still score above 0.35 are filled or when the producer goes deeper, asks Claude to choose the applicable facet that most changes the sound, phrase the question, and pick 2 to 4 of its values. Code refuses a facet that does not apply, an option that is not one of its values, and a facet already asked. A refusal falls back to importance order and the facet's own question. Free text that matches no value is mapped by Claude to the closest label, or stored as a descriptor. If that call fails, the words are stored as the descriptor. The trace for a failed facet call is "Bedrock unavailable, used the facet order".
 
@@ -304,9 +315,11 @@ Tests stub the Bedrock client. The live test is marked `bedrock` and runs only w
 
 Vision Studio is a producer's translator. The producer describes what they hear, in words, with their voice, or with an instrument. The product makes that sound, explains how it got there, and teaches them to make it themselves in Logic. Text and sound can arrive in the same turn. "Here's my beatbox, make it a dusty lo-fi kit" is the headline example.
 
-There is no level setting. Nothing in the interface, the brief, or the agent changes with Beginner, Producer, or Pro. Detail comes from facets, which branch from the answers, and from Go deeper. Bedrock asks in the producer's own words, one question at a time, up to 5 (section 10). MockProvider, and Bedrock when it fails, use the section 2 question text and the asking rule, then facet importance order and the facet question text.
+There is no level setting. Nothing in the interface, the brief, or the agent changes with Beginner, Producer, or Pro. Detail comes from facets, which branch from the answers, and from Go deeper. Bedrock asks the next most valuable question for the chosen layers and facets, using the conversation and the locked facts, and stops when coverage is complete, when the producer presses Build now, or after Skip all. The hard maximum is 10 (section 10). MockProvider, and Bedrock when it fails, use the section 2 question text and the asking rule, then facet importance order and the facet question text.
 
-The thread is the conversation. Each agent question is an agent message with its option chips and You decide, Skip this, and Skip all and build. After an answer, that message collapses into the question and the answer. The recognition line after an upload is the first agent message. When the brief is ready, the agent posts the one-line summary with the Build button in that message. After the first turn, the composer placeholder is "Answer, or add a detail". Trace lines are plain sentences, for example "Heard 94 BPM in your words", "Industrial and aggressive means a dark, high energy world", and "Asked about texture because the style was unclear".
+The first agent message states the contract: Vision Studio asks a few short questions to match what the producer hears, details stay exactly as given, and Build now works at any point. Each later question shows one line, "Why I am asking", under the question. The thread is messages: agent messages on the left with a small VS mark, the producer's messages on the right. An answered question is an agent bubble with the question and a user bubble with the answer. The active question is an agent bubble that contains the chips. Thinking is an agent bubble with the stepped indicator. The composer stays locked while a turn is in flight. Build now sits beside the composer for the whole session. After the first turn, the composer placeholder is "Answer, or add a detail". Trace lines are plain sentences, for example "Heard 105 BPM in your words", "Kept your tempo: 105 BPM", and "Asked about texture because the style was unclear".
+
+When coverage is complete or Build now is pressed, the agent runs complete_brief and posts a Review card: locked facts with a lock mark, chosen details, defaults marked default, the arc, the audio intent, and the layers. Every value can be edited there. Editing a locked fact is allowed only on that card and the fact stays locked. The buttons are Write prompts and Back to questions. Write prompts shows one editable card per layer, with the note "built from your answers", and the transport Build renders them.
 
 Four rooms. The sidebar reads them from `features.ts`. A room whose flag is off shows a small Soon pill and is not clickable.
 
@@ -327,13 +340,17 @@ Create:
 
 Facets. Files in `kb/facets` describe drums (kick, snare, hats, percussion, groove), bass (sub, 808, reese, synth bass), chords (instrument, voicing, rhythm), melody (instrument, register, movement), texture (ambience, foley, risers, vinyl), and the one-sound types (kick, snare, clap, hat, 808, pad, pluck, riser, impact). Kick character includes punchy club, deep boomy, distorted industrial, and clicky tight. Distortion is asked only after a distorted character, and its values are gritty saturation and full clipping. Tail, tuning, and transient follow.
 
-Facet questions start once the selected layers, or the one-sound type, are known and the section 2 questions that still score above 0.35 are done. That keeps the demo's output, key, and style questions in place. The base limit stays 5. After "Ready to build", Go deeper asks up to three more facet questions and can be pressed again. Build now renders. The layers card still says Build.
+Facet questions start once the selected layers, or the one-sound type, are known and the section 2 questions that still score above 0.35 are done. That keeps the demo's output, key, and style questions in place. The hard maximum is 10. After the prompts are written, Go deeper asks up to three more facet questions and can be pressed again. The transport button Build renders. The layers card does not add a second Build.
 
 The brief shows filled facets under each selected layer as a compact row, for example "Kick: distorted industrial, full clipping, short tight". Clicking a row edits a value.
 
 An idea that says "from dark to bright" stores an arc and is written as Section A and Section B. The brief shows "Dark to bright". A release such as "agony and tension, release into a positive breath at the end" is an arc too: the start state, the end state, and a short description. The structure slot stays a bar count, 16 bars when the journey was not given a length. A stated bar count still wins. The end state "a positive breath" reads as peaceful, because it is a breath rather than a dance. Names that look like an artist or a song, including "like Billie Eilish", stay a reference. Descriptors may be written instead. The name is never sent to the compiler.
 
-One sound is a sample-library request, such as "a snappy EDM snare" or "a warm 808". It asks only what is missing among sound type, genre, duration, mood, and brightness, still one at a time and still at most 5. MockProvider asks them in that order. Bedrock may ask any of those five that are still empty. Duration uses the structure slot and its existing question. Sound type, genre, and brightness use the questions in section 2. The other slots are not asked. The same answer, You decide, Skip this, and Skip all and build rules apply. You decide and Skip use these defaults: sound "pad", genre "no genre", brightness "balanced", plus the section 3 defaults for duration and mood. Skip all fills whatever of those five is still empty, then the remaining section 3 defaults, and returns one prompt.
+One sound is a sample-library request, such as "a snappy EDM snare" or "a warm 808". It asks only what is missing among sound type, genre, duration, mood, and brightness, still one at a time, and still within the hard maximum of 10. MockProvider asks them in that order. Bedrock may ask any of those five that are still empty. Duration uses the structure slot and its existing question. Sound type, genre, and brightness use the questions in section 2. The other slots are not asked. The same answer, You decide, Skip this, and Skip all and build rules apply. You decide and Skip use these defaults: sound "pad", genre "no genre", brightness "balanced", plus the section 3 defaults for duration and mood. Skip all fills whatever of those five is still empty, then the remaining section 3 defaults, and returns the review. Write prompts then returns the one prompt.
+
+Audio. When a file is uploaded or recorded, Claude classifies the intention as transform, extend, or accompany from the producer's words. If it is unclear, the agent asks once: "Should I reshape your recording, continue it, or build new layers around it?" Transform uses audio to audio on that file with the how-different amount. Extend continues from that file. Accompany writes new layers at the detected tempo and key and does not send the upload as source audio. The theory engine uses a stated progression as the chord symbols, renders those notes to MIDI and to a chord stem, and passes that stem as init audio for the chords layer so the notes stay pinned.
+
+Stable Audio. RENDERER=stability_api selects StabilityAPIRenderer behind the Renderer interface. Endpoint URLs, field names, and the API key come from .env and services/api/stability.yaml. They are not hard coded. Text to audio sends the prompt, the negative prompt, the duration, and the seed. Audio to audio sends the source file, the prompt, the negative prompt, the duration, and the noise amount. Duration is bars times 4 times 60 divided by the BPM. Results are saved as WAV under renders. Trim to the bar count, loudness, and the key and tempo check still run. If the URL, the key, or a field name is missing, or the call fails, MockRenderer runs and the trace says the mock was used. A debug panel, visible only with ?debug=1, shows the uploaded file, its detected features, and the payload sent to the renderer, without the API key.
 
 The prompt is one layer named sound:
 

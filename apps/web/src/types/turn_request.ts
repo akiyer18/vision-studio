@@ -17,6 +17,11 @@ export interface TurnRequest {
     facet?: string;
   };
   deepen?: boolean;
+  build_now?: boolean;
+  write_prompts?: boolean;
+  back_to_questions?: boolean;
+  review?: boolean;
+  noise?: number;
   output?: OutputChoice[];
   overrides?: {
     output?: string;
@@ -34,6 +39,9 @@ export interface TurnRequest {
     brightness?: string;
     pattern?: string;
     production?: string;
+    progression?: string;
+    meter?: string;
+    intent?: string;
   };
   mode?: "full" | "one_sound";
   reference?: {
@@ -52,5 +60,8 @@ export interface TurnRequest {
     brightness?: string;
     pattern?: string;
     production?: string;
+    progression?: string;
+    meter?: string;
+    intent?: string;
   };
 }

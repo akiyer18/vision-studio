@@ -6,7 +6,7 @@ import type { SongBrief } from "./song_brief.ts";
 import type { TraceStep } from "./trace_step.ts";
 
 export interface TurnResponse {
-  status: "question" | "ready";
+  status: "question" | "review" | "ready";
   question?: Question;
   brief: SongBrief;
   prompts?: LayerPrompt[];
@@ -16,4 +16,5 @@ export interface TurnResponse {
   };
   trace: TraceStep[];
   summary?: string;
+  intro?: string;
 }

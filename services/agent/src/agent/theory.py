@@ -15,6 +15,11 @@ _KEY = re.compile(r"^([A-G])([#b]?)\s+(major|minor)\b", re.IGNORECASE)
 _DEGREE = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7}
 
 
+def chords_from_symbols(symbols: list[str]) -> list[str]:
+    """The producer's own chords, already named. They are not transposed."""
+    return list(symbols)
+
+
 def chords_for(key: str, romans: list[str] | tuple[str, ...]) -> list[str]:
     tonic, mode, prefer_flats = _parse_key(key)
     relative_major = tonic if mode == "major" else (tonic + 3) % 12

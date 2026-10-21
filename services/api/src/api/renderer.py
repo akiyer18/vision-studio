@@ -22,6 +22,16 @@ class Renderer(Protocol):
     def render(self, job: RenderJob, chords: list[str]) -> RenderResult: ...
 
 
+def pin_chord_audio(data_root: Path, session_id: str, chords: list[str], bpm: int, bars: int) -> str:
+    """Render the producer's chords once, so the chords layer can start from those notes."""
+    frames = bar_frames(bpm, bars)
+    symbols = [chords[bar % len(chords)] for bar in range(max(1, bars))]
+    audio = _trim(_chords(symbols, bpm, frames, seed=1), frames)
+    path = session_dir(data_root, session_id) / "renders" / f"verse_chords_pinned_{bpm}bpm_{bars}bars.wav"
+    write_wav(path, audio)
+    return str(path)
+
+
 class MockRenderer:
     def __init__(self, data_root: Path) -> None:
         self.data_root = data_root
@@ -31,7 +41,11 @@ class MockRenderer:
         if base not in _LAYERS:
             raise ValueError(f"unknown layer: {job.layer}")
         frames = bar_frames(job.bpm, job.bars)
-        audio = _synthesize(base, chords, job.bpm, frames, job.seed)
+        pinned = Path(job.init_audio) if job.init_audio and base == "chords" else None
+        if pinned is not None and pinned.is_file():
+            audio = _read_wav(pinned)
+        else:
+            audio = _synthesize(base, chords, job.bpm, frames, job.seed)
         audio = _trim(audio, frames)
         name = wav_name(job.layer, job.bpm, job.bars, job.variant)
         path = session_dir(self.data_root, job.session_id) / "renders" / name
@@ -225,6 +239,19 @@ def _limit(audio: np.ndarray) -> np.ndarray:
     if peak > _LIMIT_DB:
         audio = audio * (_LIMIT_DB / peak)
     return np.clip(audio, -_LIMIT_DB, _LIMIT_DB)
+
+
+def _read_wav(path: Path) -> np.ndarray:
+    import wave
+
+    with wave.open(str(path), "rb") as handle:
+        channels = handle.getnchannels()
+        frames = np.frombuffer(handle.readframes(handle.getnframes()), dtype="<i2").astype(np.float64)
+    if channels == 1:
+        frames = np.column_stack([frames, frames])
+    else:
+        frames = frames.reshape(-1, channels)[:, :2]
+    return frames / 32768.0
 
 
 def _trim(audio: np.ndarray, frames: int) -> np.ndarray:

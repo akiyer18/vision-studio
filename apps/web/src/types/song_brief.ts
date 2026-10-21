@@ -23,10 +23,16 @@ export interface SongBrief {
     brightness?: SlotValue;
     pattern?: SlotValue;
     production?: SlotValue;
+    progression?: SlotValue;
+    meter?: SlotValue;
+    intent?: SlotValue;
   };
   output: OutputChoice[];
   questions_asked: number;
   skipped: SlotName[];
   facets?: FacetAnswer[];
   arc?: Arc;
+  audio_intent?: "transform" | "extend" | "accompany";
+  noise?: number;
+  coverage?: number;
 }

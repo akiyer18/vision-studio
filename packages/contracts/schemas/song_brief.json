@@ -23,7 +23,10 @@
         "genre": { "$ref": "slot_value.json" },
         "brightness": { "$ref": "slot_value.json" },
         "pattern": { "$ref": "slot_value.json" },
-        "production": { "$ref": "slot_value.json" }
+        "production": { "$ref": "slot_value.json" },
+        "progression": { "$ref": "slot_value.json" },
+        "meter": { "$ref": "slot_value.json" },
+        "intent": { "$ref": "slot_value.json" }
       }
     },
     "output": {
@@ -39,6 +42,9 @@
       "type": "array",
       "items": { "$ref": "facet_answer.json" }
     },
-    "arc": { "$ref": "arc.json" }
+    "arc": { "$ref": "arc.json" },
+    "audio_intent": { "type": "string", "enum": ["transform", "extend", "accompany"] },
+    "noise": { "type": "number" },
+    "coverage": { "type": "number" }
   }
 }

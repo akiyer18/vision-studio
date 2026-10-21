@@ -277,7 +277,8 @@ def test_successful_polish_keeps_wording_and_leaves_negatives() -> None:
 
     stub.converse = converse
     provider = _ready_provider(stub)
-    response = provider.run_turn(request("polish", answer={"slot": "mood", "action": "skip_all"}))
+    provider.run_turn(request("polish", answer={"slot": "mood", "action": "skip_all"}))
+    response = provider.run_turn(request("polish", write_prompts=True))
 
     assert response.status == "ready"
     assert response.prompts is not None
@@ -336,7 +337,8 @@ def _assert_template_kept(layer: str, mutate, reason: str) -> None:
 
     stub.converse = converse
     provider = BedrockProvider(client=stub, model_id="anthropic.test")
-    response = provider.run_turn(request(f"keep-{layer}-{reason}", answer={"slot": "mood", "action": "skip_all"}))
+    provider.run_turn(request(f"keep-{layer}-{reason}", answer={"slot": "mood", "action": "skip_all"}))
+    response = provider.run_turn(request(f"keep-{layer}-{reason}", write_prompts=True))
     assert response.prompts is not None
     kept = next(item for item in response.prompts if item.layer == layer)
     original = json.loads(stub.calls[0]["messages"][0]["content"][0]["text"])
@@ -369,7 +371,8 @@ def test_fallback_on_timeout_uses_the_offline_extractor() -> None:
 def test_polish_fallback_keeps_the_template() -> None:
     stub = Stub([ReadTimeoutError(endpoint_url="https://bedrock-runtime.us-east-1.amazonaws.com")])
     provider = BedrockProvider(client=stub, model_id="anthropic.test")
-    response = provider.run_turn(request("polish-down", answer={"slot": "mood", "action": "skip_all"}))
+    provider.run_turn(request("polish-down", answer={"slot": "mood", "action": "skip_all"}))
+    response = provider.run_turn(request("polish-down", write_prompts=True))
 
     assert response.prompts is not None
     assert "74 BPM" in response.prompts[0].prompt

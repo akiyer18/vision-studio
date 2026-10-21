@@ -313,6 +313,47 @@ body {
   opacity: 0.4;
 }
 
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bubble-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.bubble-row.is-user {
+  justify-content: flex-end;
+}
+
+.bubble {
+  max-width: 36rem;
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.bubble-row.is-user .bubble {
+  background: var(--raised);
+}
+
+.vs-mark {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--ink);
+}
+
 .session-steps {
   display: flex;
   flex-direction: column;

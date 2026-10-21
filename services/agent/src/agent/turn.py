@@ -22,10 +22,12 @@ from agent.arc import Motion, detect_arc
 from agent.complete import complete_brief
 from agent.asking import AskContext, almost_empty, next_one_sound, next_question
 from agent.defaults import PRESETS, default_slot, derive_bpm, parse_bpm, preset_for, skipped
-from agent.extract import extract_audio, extract_numbers, extract_text, stated_tempo
+from agent.extract import extract_audio, extract_text, stated_tempo
+from agent.facts import FACTS, INTRO, classify_intent, extract_facts, kept_line, parse_chords, why_for
+from agent.prompt_check import problems
 from agent.facets import Facet, FacetPick, applicable, by_importance, catalog, facet_by_id, fallback_pick, guard_pick, resolve_answer
 from agent.prompts import compile_one_sound, compile_prompts, selected_layers
-from agent.slots import ABOUT_QUESTION, MAX_QUESTIONS, slot_specs
+from agent.slots import ABOUT_QUESTION, ASK_THRESHOLD, MAX_QUESTIONS, slot_specs
 from agent.theory import chords_for
 
 OUTPUT_LABEL = {
@@ -49,6 +51,7 @@ class Pending:
     text: str
     options: tuple[str, ...]
     facet: str = ""
+    why: str = ""
 
 
 @dataclass
@@ -100,6 +103,10 @@ class Session:
     extra: int = 0
     budget: int = MAX_QUESTIONS
     deepening: bool = False
+    audio_intent: str | None = None
+    noise: float = 0.5
+    upload_path: str = ""
+    intent_asked: bool = False
 
     def note(self, step: str, detail: str) -> None:
         self.trace.append(TraceStep(step=step, detail=detail))
@@ -164,8 +171,14 @@ def run_session(sessions: dict[str, Session], request: TurnRequest, hooks: TurnH
     if request.output:
         _set_output(session, list(request.output), "you", "You chose this output", 1.0)
         session.note("answer", f"output: {session.slots['output'].value}")
+    if request.noise is not None:
+        session.noise = request.noise
     if request.overrides is not None:
-        _apply_overrides(session, request.overrides)
+        _apply_overrides(session, request.overrides, review=bool(request.review))
+    if request.back_to_questions:
+        session.force_ready = False
+        session.pending = None
+        session.note("ask", "Back to questions")
     if request.text:
         _remember_text(session, request.text, hooks)
     if request.answer is not None:
@@ -177,7 +190,13 @@ def run_session(sessions: dict[str, Session], request: TurnRequest, hooks: TurnH
             hooks,
             request.answer.facet,
         )
-    elif session.pending is not None and not request.deepen:
+    if request.build_now:
+        session.transcript.append({"role": "user", "text": "Build now"})
+        session.note("answer", "Build now")
+        return _review(session)
+    if request.write_prompts:
+        return _ready(session, hooks)
+    if session.pending is not None and request.answer is None and not request.deepen:
         return _question_response(session, session.pending, waiting=True)
     if request.deepen:
         session.force_ready = False
@@ -186,23 +205,37 @@ def run_session(sessions: dict[str, Session], request: TurnRequest, hooks: TurnH
         session.deepening = True
         session.note("ask", "Going deeper")
     if session.force_ready:
-        return _ready(session, hooks)
+        return _review(session)
     if session.deepening:
         facet_turn = _facet_turn(session, hooks)
         if facet_turn is not None:
             return facet_turn
         session.deepening = False
         session.extra = 0
-        return _ready(session, hooks)
+        return _review(session)
     picked = hooks.choose(session)
     if picked is not None and picked.ready:
         if picked.summary:
             session.summary = picked.summary
-        return _ready(session, hooks)
+        return _review(session)
     if picked is not None and picked.facet:
         return _ask_choice_facet(session, picked)
     if picked is not None:
         return _ask(session, Pending("slot", picked.slot, picked.text, picked.options), picked.reason)
+    if session.is_audio and session.audio_intent is None and not session.intent_asked:
+        heard = classify_intent(session.text)
+        if heard is not None:
+            _set_intent(session, heard, "you", "Heard it in your words")
+        else:
+            session.intent_asked = True
+            pending = Pending(
+                "slot",
+                "intent",
+                "Should I reshape your recording, continue it, or build new layers around it?",
+                ("Reshape it", "Continue it", "Build around it"),
+                why=why_for("intent"),
+            )
+            return _ask(session, pending, why_for("intent"))
     if session.mode != "one_sound" and _should_ask_about(session):
         session.about_asked = True
         pending = Pending("about", "mood", ABOUT_QUESTION, ())
@@ -213,12 +246,12 @@ def run_session(sessions: dict[str, Session], request: TurnRequest, hooks: TurnH
         else next_question(_context(session))
     )
     if spec is not None and session.questions_asked < session.budget:
-        pending = Pending("slot", spec.slot, spec.question, spec.options)
-        return _ask(session, pending)
+        pending = Pending("slot", spec.slot, spec.question, spec.options, why=why_for(spec.slot))
+        return _ask(session, pending, why_for(spec.slot))
     facet_turn = _facet_turn(session, hooks)
     if facet_turn is not None:
         return facet_turn
-    return _ready(session, hooks)
+    return _review(session)
 
 
 def _remember_text(session: Session, text: str, hooks: TurnHooks) -> None:
@@ -245,10 +278,18 @@ def ingest_mock(session: Session) -> None:
         session.note("extract", f"{name}: {value.value} ({value.reason})")
 
 
-def store_slot(session: Session, name: str, value: SlotValue) -> None:
+def store_slot(session: Session, name: str, value: SlotValue, *, review: bool = False) -> None:
+    current = session.slots.get(name)
+    locked = current is not None and current.source == "you" and name in session.locked
+    if locked and not review:
+        if value.value != current.value and name in FACTS:
+            session.note("lock", kept_line(name, current.value))
+        return
     session.slots[name] = value
     if value.source == "you":
         session.locked.add(name)
+        if name in FACTS and (current is None or current.value != value.value):
+            session.note("lock", kept_line(name, value.value))
 
 
 _store = store_slot
@@ -264,6 +305,8 @@ def _apply_audio(session: Session, features: AudioFeatures) -> None:
         session.note("detect", f"{name}: {value.value} ({value.reason})")
         if name == "key":
             session.gave_key = True
+    if features.path:
+        session.upload_path = features.path
     if features.bpm is not None:
         session.detected_bpm = features.bpm
         measured = str(int(features.bpm + 0.5))
@@ -303,7 +346,7 @@ def _apply_reference(session: Session, reference: object) -> None:
         session.note("reference", f"{name}: {value}")
 
 
-def _apply_overrides(session: Session, overrides: object) -> None:
+def _apply_overrides(session: Session, overrides: object, *, review: bool = False) -> None:
     data = overrides.model_dump(exclude_none=True) if hasattr(overrides, "model_dump") else dict(overrides)
     for name, value in data.items():
         if name == "output":
@@ -315,10 +358,13 @@ def _apply_overrides(session: Session, overrides: object) -> None:
                 SlotValue(
                     value=str(value),
                     source="you",
-                    reason="You set this in the request",
+                    reason="You edited this in the review" if review else "You set this in the request",
                     confidence=1.0,
                 ),
+                review=review,
             )
+            if name == "intent" and str(value) in {"transform", "extend", "accompany"}:
+                session.audio_intent = str(value)
             if name == "key":
                 session.gave_key = True
         session.locked.add(name)
@@ -327,9 +373,10 @@ def _apply_overrides(session: Session, overrides: object) -> None:
 
 def _apply_numbers(session: Session, text: str) -> None:
     stated = stated_tempo(text)
-    for name, value in extract_numbers(text).items():
+    for name, value in extract_facts(text).items():
         current = session.slots.get(name)
         if current is not None and current.source == "you":
+            session.note("lock", kept_line(name, current.value))
             continue
         if (
             name == "tempo"
@@ -344,6 +391,9 @@ def _apply_numbers(session: Session, text: str) -> None:
         session.note("extract", value.reason)
         if name == "key":
             session.gave_key = True
+    heard = classify_intent(text)
+    if heard is not None and session.audio_intent is None:
+        _set_intent(session, heard, "you", "Heard it in your words")
 
 
 def _apply_answer(
@@ -378,6 +428,17 @@ def _apply_answer(
     if spoken:
         session.transcript.append({"role": "user", "text": spoken})
     target = pending.slot if pending is not None else slot
+    if target == "intent":
+        mapped = {
+            "reshape it": "transform",
+            "continue it": "extend",
+            "build around it": "accompany",
+        }.get((value or "").strip().lower())
+        if action in {"skip", "you_decide"} or mapped is None:
+            _set_intent(session, "accompany", "guessed", "Left the recording as it is")
+        else:
+            _set_intent(session, mapped, "you", "You chose this")
+        return
     if action == "you_decide" or (action == "answer" and target == "key" and (value or "").lower() == "not sure"):
         _use_default(session, target, mark_skipped=False)
         return
@@ -399,6 +460,11 @@ def _apply_answer(
 
 
 def _use_default(session: Session, slot: str, *, mark_skipped: bool) -> None:
+    current = session.slots.get(slot)
+    if current is not None and current.source == "you" and slot in session.locked:
+        if slot in FACTS:
+            session.note("lock", kept_line(slot, current.value))
+        return
     value = default_slot(slot, session.mood_name(), audio=session.is_audio)
     if mark_skipped:
         value = skipped(value)
@@ -407,7 +473,7 @@ def _use_default(session: Session, slot: str, *, mark_skipped: bool) -> None:
     if slot == "output":
         _set_output(session, ["all_layers"], value.source, value.reason, value.confidence)
     else:
-        session.slots[slot] = value
+        _store(session, slot, value)
     session.note("default", f"{slot}: {value.value} ({value.reason})")
 
 
@@ -470,6 +536,8 @@ def _context(session: Session) -> AskContext:
 
 
 def _ask(session: Session, pending: Pending, reason: str = "") -> TurnResponse:
+    if not pending.why:
+        pending.why = why_for(pending.slot)
     session.questions_asked += 1
     if pending.kind == "facet" and pending.facet:
         session.asked_facets.add(pending.facet)
@@ -491,9 +559,84 @@ def _question_response(session: Session, pending: Pending, *, waiting: bool) -> 
             index=session.questions_asked,
             max=session.budget,
             facet=pending.facet or None,
+            why=pending.why or None,
         ),
         brief=_brief(session),
         trace=list(session.trace),
+        intro=INTRO,
+    )
+
+
+def _set_intent(session: Session, intent: str, source: str, reason: str) -> None:
+    session.audio_intent = intent
+    session.intent_asked = True
+    _store(
+        session,
+        "intent",
+        SlotValue(value=intent, source=source, reason=reason, confidence=1.0 if source == "you" else 0.4),
+    )
+    session.note("intent", f"{intent}: {reason}")
+
+
+def _with_locked(session: Session, arrangement: str) -> str:
+    extra: list[str] = []
+    progression = session.slots.get("progression")
+    if progression is not None and progression.source == "you":
+        extra.append(progression.value)
+    palette = session.slots.get("palette")
+    if palette is not None and palette.source == "you":
+        extra.append(palette.value)
+    meter = session.slots.get("meter")
+    if meter is not None and meter.source == "you":
+        extra.append(meter.value)
+    if arrangement:
+        extra.append(arrangement)
+    return ", ".join(extra)
+
+
+def _coverage(session: Session) -> float:
+    total = 0.0
+    have = 0.0
+    for spec in slot_specs():
+        if spec.impact <= ASK_THRESHOLD:
+            continue
+        if spec.slot == "key" and (session.gave_key or session.is_audio):
+            continue
+        if spec.slot == "must_keep" and not session.is_audio:
+            continue
+        if session.mode == "one_sound" and spec.slot not in {"sound", "genre", "structure", "mood", "brightness"}:
+            continue
+        total += spec.impact
+        if spec.slot == "output" and session.output:
+            have += spec.impact
+        elif spec.slot in session.slots or spec.slot in session.skipped:
+            have += spec.impact
+    if session.is_audio:
+        total += 1.0
+        if session.audio_intent is not None:
+            have += 1.0
+    if total <= 0:
+        return 1.0
+    return round(have / total, 3)
+
+
+def _review(session: Session) -> TurnResponse:
+    if session.mode == "one_sound" and "output" not in session.slots:
+        _store(
+            session,
+            "output",
+            SlotValue(value="one sound", source="you", reason="One sound mode", confidence=1.0),
+        )
+    _fill_gaps(session, skipped_fill=False)
+    complete_brief(session)
+    session.pending = None
+    session.force_ready = True
+    return TurnResponse(
+        status="review",
+        brief=_brief(session),
+        trace=list(session.trace),
+        intro=INTRO,
+        summary=session.summary or "Review the brief, then write the prompts.",
     )
 
 
@@ -531,21 +674,30 @@ def _ready(session: Session, hooks: TurnHooks) -> TurnResponse:
     key = session.slots["key"].value
     bpm, tempo_reason = _tempo(session, energy, mood)
     session.note("tempo", tempo_reason)
-    arrangement = _style_descriptors(session, hooks)
+    arrangement = _with_locked(session, _style_descriptors(session, hooks))
+    stated = session.slots.get("progression")
+    symbols = parse_chords(stated.value) if stated is not None and stated.source == "you" else None
     romans = list(PRESETS.get(mood, PRESETS["peaceful"]).roman)
-    try:
-        chords = chords_for(key, romans)
-    except ValueError:
-        key = preset_for(mood).key
-        session.slots["key"] = SlotValue(
-            value=key,
-            source="guessed",
-            reason=f"{key} because that is the {mood} preset",
-            confidence=0.4,
-        )
-        session.note("complete_brief", f"Kept {key}: the key could not be read")
-        chords = chords_for(key, romans)
-    session.note("theory", f"{' '.join(romans)} in {key} is {', '.join(chords)}")
+    if symbols:
+        chords = symbols
+        romans = []
+        session.note("theory", f"Your progression is {', '.join(chords)}")
+    else:
+        try:
+            chords = chords_for(key, romans)
+        except ValueError:
+            if session.slots.get("key") is not None and session.slots["key"].source == "you":
+                raise
+            key = preset_for(mood).key
+            session.slots["key"] = SlotValue(
+                value=key,
+                source="guessed",
+                reason=f"{key} because that is the {mood} preset",
+                confidence=0.4,
+            )
+            session.note("complete_brief", f"Kept {key}: the key could not be read")
+            chords = chords_for(key, romans)
+        session.note("theory", f"{' '.join(romans)} in {key} is {', '.join(chords)}")
     if session.mode == "one_sound":
         prompts = compile_one_sound(
             sound=session.slots["sound"].value,
@@ -584,7 +736,16 @@ def _ready(session: Session, hooks: TurnHooks) -> TurnResponse:
             arrangement=arrangement,
             arc=session.arc,
         )
+    templates = list(prompts)
     prompts = hooks.polish(session, prompts)
+    issues = problems(prompts, session.slots, session.references)
+    if issues:
+        session.note("prompt", issues[0])
+        prompts = hooks.polish(session, templates)
+        issues = problems(prompts, session.slots, session.references)
+    if issues:
+        session.note("prompt", f"Kept the template: {issues[0]}")
+        prompts = templates
     prompts = [_scrub_prompt(prompt, session.references) for prompt in prompts]
     _note_references(session)
     session.note("prompt", f"Wrote {len(prompts)} prompt" if len(prompts) == 1 else f"Wrote {len(prompts)} prompts")
@@ -635,6 +796,10 @@ def _brief(session: Session) -> SongBrief:
             "end": session.arc.end,
             "description": session.arc.description,
         }
+    if session.audio_intent is not None:
+        payload["audio_intent"] = session.audio_intent
+    payload["noise"] = session.noise
+    payload["coverage"] = _coverage(session)
     return SongBrief.model_validate(payload)
 
 

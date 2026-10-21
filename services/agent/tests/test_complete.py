@@ -24,7 +24,7 @@ def test_the_synth_pattern_message_completes_and_keeps_the_journey_on_the_arc() 
         )
     )
 
-    assert response.status == "ready"
+    assert response.status == "review"
     slots = response.brief.slots
     assert slots.tempo is not None
     assert slots.tempo.value == "105"
@@ -39,7 +39,12 @@ def test_the_synth_pattern_message_completes_and_keeps_the_journey_on_the_arc() 
     assert response.brief.arc.start == "agony and tension"
     assert response.brief.arc.end == "a positive breath"
     assert response.brief.arc.description == "Agony and tension releases into a positive breath"
-    assert response.prompts
+    written = run_turn(
+        TurnRequest.model_validate({"session_id": "synth-pattern", "write_prompts": True})
+    )
+    assert written.status == "ready"
+    assert written.prompts
+    response = written
     assert "105 BPM" in response.prompts[0].prompt
     opening = next(prompt for prompt in response.prompts if prompt.layer.endswith("_a"))
     closing = next(prompt for prompt in response.prompts if prompt.layer.endswith("_b"))
@@ -81,16 +86,15 @@ def test_text_in_a_numeric_slot_keeps_the_default_and_says_so() -> None:
         )
     )
 
-    assert response.status == "ready"
+    assert response.status == "review"
     tempo = response.brief.slots.tempo
     structure = response.brief.slots.structure
-    assert tempo is not None and tempo.value.isdigit()
-    assert structure is not None and structure.value == "8 bars"
-    details = [step.detail for step in response.trace if step.step == "complete_brief"]
-    assert any("not a tempo" in detail for detail in details)
-    assert any("not a bar count" in detail for detail in details)
-    assert response.prompts
-    assert f"{tempo.value} BPM" in response.prompts[0].prompt
+    assert tempo is not None and tempo.value == "wavy"
+    assert tempo.source == "you"
+    assert structure is not None and structure.value == "a long journey"
+    assert structure.source == "you"
+    assert any(step.detail == "Kept your tempo: wavy BPM" for step in response.trace)
+    assert any(step.detail == "Kept your bar count: a long journey" for step in response.trace)
 
 
 def test_compiler_does_not_raise_when_a_field_is_missing() -> None:

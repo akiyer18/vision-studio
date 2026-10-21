@@ -75,6 +75,8 @@ def timing_from_brief(brief: SongBrief, prompt: str) -> tuple[int, int]:
 def _complete_closed(session: _BriefSession, slot: str) -> None:
     options = _options(slot)
     current = session.slots.get(slot)
+    if current is not None and current.source == "you":
+        return
     if current is not None and current.value in options:
         return
     fallback = default_slot(slot, session.mood_name(), audio=False)
@@ -87,6 +89,8 @@ def _complete_closed(session: _BriefSession, slot: str) -> None:
 
 def _complete_key(session: _BriefSession) -> None:
     current = session.slots.get("key")
+    if current is not None and current.source == "you":
+        return
     if current is not None and _key_ok(current.value):
         return
     chosen = preset_for(session.mood_name()).key
@@ -100,6 +104,8 @@ def _complete_key(session: _BriefSession) -> None:
 
 def _complete_tempo(session: _BriefSession) -> None:
     current = session.slots.get("tempo")
+    if current is not None and current.source == "you":
+        return
     number = parse_bpm(current.value) if current is not None else None
     if current is not None and number is not None:
         if current.value.strip() != str(number):
@@ -138,8 +144,9 @@ def _complete_bars(session: _BriefSession) -> None:
         if found is not None:
             session.arc = found
             session.note("complete_brief", f"The idea moves: {found.label}")
-    if current is not None and current.source == "you" and count is not None:
-        _store_bars(session, count, source="you", reason=current.reason, confidence=current.confidence)
+    if current is not None and current.source == "you":
+        if count is not None:
+            _store_bars(session, count, source="you", reason=current.reason, confidence=current.confidence)
         return
     if session.arc is not None:
         if count == 16 and current is not None and current.value == "16 bars":

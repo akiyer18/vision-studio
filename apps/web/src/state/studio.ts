@@ -114,7 +114,7 @@ export const useStudio = create<StudioState>((set) => ({
   commitTurn: (turn, clearOverrides = false) =>
     set((state) => ({
       turn,
-      status: turn.status === "ready" ? "ready" : "idle",
+      status: turn.status === "ready" || turn.status === "review" ? "ready" : "idle",
       overrides: clearOverrides ? {} : state.overrides,
       promptEdits: {},
       streamToken: state.streamToken + 1,
@@ -245,7 +245,7 @@ export const useStudio = create<StudioState>((set) => ({
       },
       renders: entry.renders.map((item) => ({ ...item })),
       picks: {},
-      status: entry.status === "ready" ? "ready" : "idle",
+      status: entry.status === "ready" || entry.status === "review" ? "ready" : "idle",
       overrides: {},
       promptEdits: {},
       streamToken: state.streamToken + 1,

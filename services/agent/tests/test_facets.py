@@ -106,8 +106,8 @@ def test_go_deeper_adds_questions_and_can_be_pressed_again() -> None:
     opened = run_turn(request("deeper", text="Hello"))
     assert opened.question is not None
     ready = run_turn(request("deeper", answer={"slot": "mood", "action": "skip_all"}))
-    assert ready.status == "ready"
-    assert ready.prompts is not None
+    assert ready.status == "review"
+    assert ready.prompts is None
 
     response = run_turn(request("deeper", deepen=True))
     asked = ready.brief.questions_asked
@@ -119,7 +119,7 @@ def test_go_deeper_adds_questions_and_can_be_pressed_again() -> None:
         assert response.brief.questions_asked == asked
         response = run_turn(request("deeper", answer=_answer(response, response.question.options[0])))
 
-    assert response.status == "ready"
+    assert response.status == "review"
     again = run_turn(request("deeper", deepen=True))
     assert again.status == "question"
     assert again.question is not None
@@ -137,8 +137,10 @@ def test_a_transition_stores_an_arc_and_two_section_prompts() -> None:
         )
     )
 
-    assert response.status == "ready"
+    assert response.status == "review"
     assert response.brief.arc is not None
+    response = run_turn(request("arc", write_prompts=True))
+    assert response.status == "ready"
     assert response.brief.arc.label == "Dark to bright"
     assert response.prompts is not None
     assert [prompt.layer for prompt in response.prompts] == ["drums_a", "drums_b"]
@@ -162,6 +164,11 @@ def test_artist_names_never_appear_in_prompts() -> None:
             output=["drums"],
             answer={"slot": "mood", "action": "skip_all"},
         ),
+        Describing(),
+    )
+    response = run_session(
+        sessions,
+        request("artist", write_prompts=True),
         Describing(),
     )
 

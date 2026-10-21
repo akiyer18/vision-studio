@@ -114,3 +114,18 @@ production:
   ask_when: never
   question: never asked
   options: []
+progression:
+  impact: 0
+  ask_when: never
+  question: never asked
+  options: []
+meter:
+  impact: 0
+  ask_when: never
+  question: never asked
+  options: []
+intent:
+  impact: 0
+  ask_when: never
+  question: never asked
+  options: []

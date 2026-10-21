@@ -15,4 +15,7 @@ export type SlotName =
   | "genre"
   | "brightness"
   | "pattern"
-  | "production";
+  | "production"
+  | "progression"
+  | "meter"
+  | "intent";

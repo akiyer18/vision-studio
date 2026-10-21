@@ -91,6 +91,14 @@ async function loadLoop(): Promise<File> {
 async function promptsReady(count: number) {
   await until(() => {
     const turn = useStudio.getState().turn
+    return turn?.status === "review" || turn?.status === "ready" || findButton("Write prompts") !== null
+  }, "The brief did not reach review.")
+  const write = findButton("Write prompts")
+  if (write && useStudio.getState().turn?.status !== "ready") {
+    write.click()
+  }
+  await until(() => {
+    const turn = useStudio.getState().turn
     const prompts = turn?.prompts ?? []
     return turn?.status === "ready" && prompts.length >= count && prompts.every((item) => item.prompt.trim().length > 0)
   }, "The prompts did not fill in.")

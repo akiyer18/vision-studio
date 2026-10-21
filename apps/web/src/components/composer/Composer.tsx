@@ -431,6 +431,17 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
     })
   }, [features, unsure, fixing, keyText, tempoText, confirmLabel])
 
+  async function buildNow() {
+    if (inFlight() || useStudio.getState().status === "working") return
+    setError(null)
+    try {
+      await postTurn({ build_now: true })
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "That did not go through. Try again."
+      setError(message.trim().length < 160 ? message : "That did not go through. Try again.")
+    }
+  }
+
   return (
     <div className={`canvas-column flex flex-col gap-4 ${started ? "pb-4" : ""}`}>
       <form
@@ -452,7 +463,12 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
           if (file) acceptFile(file, "drop")
         }}
       >
-        <IdeaMode />
+        <div className="flex items-center justify-between gap-2">
+          <IdeaMode />
+          <Button tone="secondary" disabled={working || recording} onClick={() => void buildNow()}>
+            Build now
+          </Button>
+        </div>
         <div className="flex items-end gap-2">
           <div className="flex shrink-0 items-center">
             <input

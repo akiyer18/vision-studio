@@ -16,9 +16,11 @@ def test_one_sound_skip_all_returns_one_layer() -> None:
     assert first.question.slot == "sound"
     assert first.question.text == "What kind of sound is it?"
     assert first.question.options == ["snare", "808", "pad", "riser"]
-    assert first.question.max == 5
+    assert first.question.max == 10
 
-    ready = run_turn(request("one-sound", mode="one_sound", answer={"slot": "sound", "action": "skip_all"}))
+    reviewed = run_turn(request("one-sound", mode="one_sound", answer={"slot": "sound", "action": "skip_all"}))
+    assert reviewed.status == "review"
+    ready = run_turn(request("one-sound", mode="one_sound", write_prompts=True))
 
     assert ready.status == "ready"
     assert ready.prompts is not None
@@ -39,7 +41,8 @@ def test_one_sound_skip_all_returns_one_layer() -> None:
 def test_one_sound_snare_is_sfx_after_skip_all() -> None:
     run_turn(request("snare", text="a calm morning", mode="one_sound"))
     run_turn(request("snare", mode="one_sound", answer={"slot": "sound", "action": "answer", "value": "snare"}))
-    ready = run_turn(request("snare", mode="one_sound", answer={"slot": "genre", "action": "skip_all"}))
+    run_turn(request("snare", mode="one_sound", answer={"slot": "genre", "action": "skip_all"}))
+    ready = run_turn(request("snare", mode="one_sound", write_prompts=True))
 
     assert ready.prompts is not None
     assert ready.prompts[0].prompt.startswith("TrackType: SFX, snare")

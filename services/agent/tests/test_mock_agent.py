@@ -30,6 +30,9 @@ def test_slots_match_the_spec_table() -> None:
         "brightness",
         "pattern",
         "production",
+        "progression",
+        "meter",
+        "intent",
     ]
     assert specs["tempo"].impact == 0
     assert specs["output"].impact == 1.0
@@ -49,7 +52,7 @@ def test_one_word_asks_what_the_song_is_about() -> None:
     assert response.question.options == []
     assert response.question.slot == "mood"
     assert response.question.index == 1
-    assert response.question.max == 5
+    assert response.question.max == 10
     assert response.brief.questions_asked == 1
     assert response.brief.slots.mood is None
     assert [step.step for step in response.trace] == ["extract", "ask"]
@@ -137,12 +140,15 @@ def test_detected_audio_features_then_skip_all() -> None:
     assert first.brief.slots.tempo.value == "90"
     assert first.brief.slots.tempo.source == "detected"
     assert first.question is not None
-    assert first.question.slot == "output"
+    assert first.question.slot == "intent"
+    assert first.question.text == "Should I reshape your recording, continue it, or build new layers around it?"
     assert "tempo" not in first.question.text.lower()
     assert any(step.detail == "bpm: 90.0" or step.detail == "bpm: 90" for step in first.trace)
     assert any(step.detail == "chords: Dm, Bb" for step in first.trace)
 
-    ready = run_turn(request("audio", answer={"slot": "output", "action": "skip_all"}))
+    reviewed = run_turn(request("audio", answer={"slot": "output", "action": "skip_all"}))
+    assert reviewed.status == "review"
+    ready = run_turn(request("audio", write_prompts=True))
 
     assert ready.status == "ready"
     assert ready.question is None
@@ -183,7 +189,10 @@ def test_skip_all_on_the_first_question_is_ready_with_prompts() -> None:
     assert first.question is not None
     assert first.question.text == "What is this song about?"
 
-    ready = run_turn(request("skip-all", answer={"slot": "mood", "action": "skip_all"}))
+    reviewed = run_turn(request("skip-all", answer={"slot": "mood", "action": "skip_all"}))
+    assert reviewed.status == "review"
+    assert reviewed.prompts is None
+    ready = run_turn(request("skip-all", write_prompts=True))
 
     assert ready.status == "ready"
     assert ready.question is None
@@ -218,7 +227,9 @@ def test_skip_all_on_the_first_question_is_ready_with_prompts() -> None:
 
 
 def test_skip_all_without_a_prior_question_is_ready() -> None:
-    ready = run_turn(request("skip-now", answer={"slot": "mood", "action": "skip_all"}))
+    reviewed = run_turn(request("skip-now", answer={"slot": "mood", "action": "skip_all"}))
+    assert reviewed.status == "review"
+    ready = run_turn(request("skip-now", write_prompts=True))
 
     assert ready.status == "ready"
     assert ready.prompts is not None
@@ -235,9 +246,11 @@ def test_full_brief_asks_nothing() -> None:
         )
     )
 
-    assert response.status == "ready"
+    assert response.status == "review"
     assert response.question is None
     assert response.brief.questions_asked == 0
+    response = run_turn(request("full", write_prompts=True))
+    assert response.status == "ready"
     assert response.prompts is not None
     assert response.prompts[0].prompt == (
         "TrackType: Music, bright plucks, punchy kick and synth bass, clean modern production "

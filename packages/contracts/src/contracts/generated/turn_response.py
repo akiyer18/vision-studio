@@ -25,10 +25,11 @@ class TurnResponse(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    status: Literal["question", "ready"]
+    status: Literal["question", "review", "ready"]
     question: Question | None = None
     brief: SongBrief
     prompts: list[LayerPrompt] | None = None
     progression: Progression | None = None
     trace: list[TraceStep]
     summary: str | None = None
+    intro: str | None = None

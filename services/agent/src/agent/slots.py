@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 
 ASK_THRESHOLD = 0.35
-MAX_QUESTIONS = 5
+MAX_QUESTIONS = 10
 ABOUT_QUESTION = "What is this song about?"
 
 
@@ -55,8 +55,8 @@ def slot_specs() -> tuple[SlotSpec, ...]:
         else:
             current[key] = value
         specs[-1] = _spec_from(current)
-    if len(specs) != 15:
-        raise ValueError(f"expected 15 slots, found {len(specs)}")
+    if len(specs) != 18:
+        raise ValueError(f"expected 18 slots, found {len(specs)}")
     return tuple(specs)
 
 

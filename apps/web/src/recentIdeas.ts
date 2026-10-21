@@ -28,7 +28,7 @@ export type RecentIdea = {
   thread: RecentMessage[]
   trace: TraceStep[]
   question?: Question
-  status: "question" | "ready"
+  status: "question" | "review" | "ready"
   mode?: "full" | "one_sound"
 }
 
@@ -44,7 +44,7 @@ export type RecentDraft = {
   thread: RecentMessage[]
   trace: TraceStep[]
   question?: Question
-  status: "question" | "ready"
+  status: "question" | "review" | "ready"
   mode?: "full" | "one_sound"
 }
 

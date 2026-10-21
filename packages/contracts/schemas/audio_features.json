@@ -17,6 +17,7 @@
       "type": "array",
       "items": { "type": "string" }
     },
-    "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "path": { "type": "string" }
   }
 }

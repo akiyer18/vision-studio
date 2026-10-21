@@ -109,6 +109,15 @@ export function explainResult(body: { brief: SongBrief; prompts: LayerPrompt[]; 
   })
 }
 
+export function sessionDebug(sessionId: string): Promise<{
+  upload: { file?: string; path?: string; features?: AudioFeatures } | null
+  jobs: { layer: string; prompt: string; negative: string; init_audio?: string | null; noise?: number | null }[]
+  payload: Record<string, unknown>
+  notes: string[]
+}> {
+  return request(`/debug/${encodeURIComponent(sessionId)}`)
+}
+
 export function turn(body: TurnRequest): Promise<TurnResponse> {
   return request<TurnResponse>("/turn", {
     method: "POST",

@@ -21,6 +21,11 @@
       }
     },
     "deepen": { "type": "boolean" },
+    "build_now": { "type": "boolean" },
+    "write_prompts": { "type": "boolean" },
+    "back_to_questions": { "type": "boolean" },
+    "review": { "type": "boolean" },
+    "noise": { "type": "number" },
     "output": {
       "type": "array",
       "items": { "$ref": "output_choice.json" }
@@ -43,7 +48,10 @@
         "genre": { "type": "string" },
         "brightness": { "type": "string" },
         "pattern": { "type": "string" },
-        "production": { "type": "string" }
+        "production": { "type": "string" },
+        "progression": { "type": "string" },
+        "meter": { "type": "string" },
+        "intent": { "type": "string" }
       }
     },
     "mode": { "type": "string", "enum": ["full", "one_sound"] },
@@ -65,7 +73,10 @@
         "genre": { "type": "string" },
         "brightness": { "type": "string" },
         "pattern": { "type": "string" },
-        "production": { "type": "string" }
+        "production": { "type": "string" },
+        "progression": { "type": "string" },
+        "meter": { "type": "string" },
+        "intent": { "type": "string" }
       }
     }
   }

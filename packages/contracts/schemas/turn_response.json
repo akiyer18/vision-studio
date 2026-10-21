@@ -7,7 +7,7 @@
   "properties": {
     "status": {
       "type": "string",
-      "enum": ["question", "ready"]
+      "enum": ["question", "review", "ready"]
     },
     "question": { "$ref": "question.json" },
     "brief": { "$ref": "song_brief.json" },
@@ -34,6 +34,7 @@
       "type": "array",
       "items": { "$ref": "trace_step.json" }
     },
-    "summary": { "type": "string" }
+    "summary": { "type": "string" },
+    "intro": { "type": "string" }
   }
 }

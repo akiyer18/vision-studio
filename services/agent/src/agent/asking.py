@@ -1,4 +1,4 @@
-"""Asking rule. Plain code: score = impact x (1 - confidence), highest above 0.35, max 5."""
+"""Asking rule. Plain code: score = impact x (1 - confidence), highest above 0.35, hard maximum 10."""
 
 from __future__ import annotations
 

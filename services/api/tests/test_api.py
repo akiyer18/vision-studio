@@ -37,7 +37,9 @@ def test_render_uses_edited_prompt_text(tmp_path: Path) -> None:
             },
         )
         assert turn.status_code == 200
-        assert turn.json()["status"] == "ready"
+        assert turn.json()["status"] == "review"
+        written = client.post("/turn", json={"session_id": "edited", "write_prompts": True})
+        assert written.json()["status"] == "ready"
         rendered = client.post(
             "/render",
             json={
@@ -66,7 +68,9 @@ def test_turn_render_and_export_match_the_bar_length(tmp_path: Path) -> None:
             },
         )
         assert turn.status_code == 200
-        body = turn.json()
+        assert turn.json()["status"] == "review"
+        written = client.post("/turn", json={"session_id": "phase2", "write_prompts": True})
+        body = written.json()
         assert body["status"] == "ready"
         assert body["progression"]["chords"] == ["Dm", "Bb", "F", "C"]
 
@@ -251,6 +255,8 @@ def test_render_stream_reports_each_variation_and_keeps_other_layers(tmp_path: P
             },
         )
         assert turn.status_code == 200
+        written = client.post("/turn", json={"session_id": "stream", "write_prompts": True})
+        assert written.json()["status"] == "ready"
         rendered = client.post(
             "/render",
             headers={"Accept": "application/x-ndjson"},
@@ -341,11 +347,13 @@ def test_the_synth_pattern_message_renders(tmp_path: Path) -> None:
         )
         assert turn.status_code == 200
         body = turn.json()
-        assert body["status"] == "ready"
+        assert body["status"] == "review"
         assert body["brief"]["slots"]["tempo"]["value"] == "105"
         assert body["brief"]["slots"]["structure"]["value"] == "16 bars"
         assert body["brief"]["arc"]["start"] == "agony and tension"
         assert body["brief"]["arc"]["description"] == "Agony and tension releases into a positive breath"
+        written = client.post("/turn", json={"session_id": "synth-pattern", "write_prompts": True})
+        assert written.json()["status"] == "ready"
         rendered = client.post("/render", json={"session_id": "synth-pattern"})
     assert rendered.status_code == 200
     assert rendered.json()

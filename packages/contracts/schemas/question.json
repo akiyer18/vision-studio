@@ -13,6 +13,7 @@
     },
     "index": { "type": "integer" },
     "max": { "type": "integer" },
-    "facet": { "type": "string" }
+    "facet": { "type": "string" },
+    "why": { "type": "string" }
   }
 }
