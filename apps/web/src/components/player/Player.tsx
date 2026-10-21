@@ -130,7 +130,7 @@ export function PlayerBar({ onStartOver }: { onStartOver: () => void }) {
             </div>
             <ul aria-label="Exported files" className="flex flex-col gap-1 text-sm text-secondary">
               {listing.files.map((file) => (
-                <li key={file} className="break-all">
+                <li key={file} className="mono break-all">
                   {fileName(file)}
                 </li>
               ))}

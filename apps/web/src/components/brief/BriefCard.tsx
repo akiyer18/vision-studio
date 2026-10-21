@@ -23,10 +23,18 @@ export function BriefCard({ mark, onDescribe }: Props) {
   const key = field("key", brief, overrides)
   const rows = ROWS.filter((slot) => Boolean(overrides[slot] ?? brief?.slots[slot]?.value))
   const empty = !tempo && !key && rows.length === 0
+  const reduce = useReducedMotion()
 
   return (
-    <section className="glass panel-brief flex flex-col gap-4 p-4" data-tour="brief" aria-label="Song brief">
-      <h2 className="text-sm text-secondary">Song brief</h2>
+    <motion.section
+      className="glass panel-brief flex flex-col gap-4 p-4"
+      data-tour="brief"
+      aria-label="Song brief"
+      initial={reduce ? false : { opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: reduce ? 0 : 0.22 }}
+    >
+      <h2 className="section-title">Song brief</h2>
       {empty ? (
         <div>
           <p className="text-secondary">Slots appear here as they are filled.</p>
@@ -83,7 +91,7 @@ export function BriefCard({ mark, onDescribe }: Props) {
           })}
         </div>
       )}
-    </section>
+    </motion.section>
   )
 }
 

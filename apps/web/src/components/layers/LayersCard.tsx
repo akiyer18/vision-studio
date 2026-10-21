@@ -10,7 +10,6 @@ import { polishNote } from "../../studio/traceMark.ts"
 import { useStudio } from "../../state/studio.ts"
 import type { OutputChoice } from "../../types/output_choice.ts"
 import { Button } from "../Button.tsx"
-import { Chip } from "../Chip.tsx"
 
 const chipHue: Partial<Record<OutputChoice, string>> = {
   drums: LANE_PAINT.drums.fill,
@@ -55,19 +54,25 @@ export function LayersCard() {
     await renderCurrent()
   }
 
+  const options = OUTPUTS.filter((option) => features.fullMix || option.choice !== "full_mix")
+  const rows = [options.slice(0, 4), options.slice(4)]
+
   return (
-    <section className="glass panel-layers flex flex-col gap-4 p-4" aria-label="Layers">
-      <h2 className="text-sm text-secondary">Layers</h2>
-      <div className="flex flex-wrap gap-2" role="group" aria-label="Output">
-        {OUTPUTS.filter((option) => features.fullMix || option.choice !== "full_mix").map((option) => (
-          <Chip
-            key={option.choice}
-            selected={option.choice === shown}
-            onClick={() => choose(option.choice)}
-            style={chipHue[option.choice] ? { borderColor: chipHue[option.choice] } : undefined}
-          >
-            {option.choice === "all_layers" ? "All layers" : option.label}
-          </Chip>
+    <section className="glass panel-layers flex flex-col gap-4 px-2 py-4" aria-label="Layers">
+      <h2 className="section-title">Layers</h2>
+      <div className="flex flex-col gap-2" role="group" aria-label="Output">
+        {rows.map((row) => (
+          <div key={row[0]?.choice ?? "rest"} className="flex flex-nowrap gap-2">
+            {row.map((option) => (
+              <LayerChip
+                key={option.choice}
+                label={option.choice === "all_layers" ? "All layers" : option.label}
+                hue={chipHue[option.choice]}
+                selected={option.choice === shown}
+                onClick={() => choose(option.choice)}
+              />
+            ))}
+          </div>
         ))}
       </div>
       {cards.length > 0 ? (
@@ -114,7 +119,7 @@ export function LayersCard() {
           </div>
         </details>
       ) : (
-        <p className="text-secondary">Skip all and build, and these layers can be built.</p>
+        <p className="text-sm text-secondary">Pick layers, then build.</p>
       )}
       {problem ? (
         <div role="alert">
@@ -130,10 +135,36 @@ export function LayersCard() {
           </Button>
         </div>
       ) : (
-        <Button data-tour="build" disabled={!canBuild} onClick={() => void build()}>
+        <Button data-tour="build" className="w-full" disabled={!canBuild} title={cards.length === 0 ? "Send an idea first." : undefined} onClick={() => void build()}>
           Build
         </Button>
       )}
     </section>
+  )
+}
+
+function LayerChip({
+  label,
+  hue,
+  selected,
+  onClick,
+}: {
+  label: string
+  hue?: string
+  selected: boolean
+  onClick: () => void
+}) {
+  const ink = hue ?? "#8B6CFF"
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onClick}
+      className={`inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-full border px-2 text-[13px] leading-none whitespace-nowrap ${selected ? "text-ink" : "border-white/15 text-secondary"}`}
+      style={selected ? { background: `${ink}33`, borderColor: `${ink}66` } : undefined}
+    >
+      {selected ? <span className="size-1.5 shrink-0 rounded-full" style={{ background: ink }} /> : null}
+      <span>{label}</span>
+    </button>
   )
 }

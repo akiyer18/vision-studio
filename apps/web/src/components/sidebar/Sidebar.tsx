@@ -93,11 +93,11 @@ export function Sidebar({ open, onClose, onReplay }: Props) {
   }
 
   return (
-    <aside className="studio-side glass flex h-full flex-col gap-6 p-4" data-open={open ? "true" : "false"} data-tour="sidebar">
+    <aside className="studio-side glass flex h-full min-h-0 flex-col gap-6 p-4" data-open={open ? "true" : "false"} data-tour="sidebar">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <AudioWaveform aria-hidden className="text-accent" size={22} />
-          <p className="text-base font-medium">Vision Studio</p>
+          <AudioWaveform aria-hidden className="text-accent" size={18} />
+          <p className="section-title">Vision Studio</p>
         </div>
         <button type="button" className="studio-menu-close text-secondary min-[768px]:hidden" aria-label="Close the menu" onClick={onClose}>
           <X size={18} />
@@ -107,7 +107,7 @@ export function Sidebar({ open, onClose, onReplay }: Props) {
         <button
           type="button"
           aria-current="page"
-          className="flex items-center gap-2 rounded-xl bg-white/8 px-3 py-2 text-left text-ink"
+          className="flex h-10 items-center gap-2 rounded-xl bg-white/8 px-2 text-left text-ink"
           onClick={() => {
             document.getElementById("idea")?.focus()
             onClose()
@@ -119,7 +119,7 @@ export function Sidebar({ open, onClose, onReplay }: Props) {
         <SoonItem icon={AudioWaveform} label="Song analyser" soon={!features.analyser} />
         <SoonItem icon={SlidersHorizontal} label="Song edits" soon={!features.edits} />
       </nav>
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 overflow-auto">
         <p className="text-sm text-muted">Recent ideas</p>
         {ideas.length === 0 ? (
           <p className="mt-2 text-sm text-secondary">Recent ideas land here.</p>
@@ -216,17 +216,17 @@ export function Sidebar({ open, onClose, onReplay }: Props) {
 function SoonItem({ icon: Icon, label, soon }: { icon: typeof Music; label: string; soon: boolean }) {
   if (!soon) {
     return (
-      <button type="button" className="flex items-center gap-2 rounded-xl px-3 py-2 text-left text-secondary">
+      <button type="button" className="flex h-10 items-center gap-2 rounded-xl px-2 text-left text-secondary">
         <Icon size={18} aria-hidden />
         {label}
       </button>
     )
   }
   return (
-    <div className="flex items-center gap-2 rounded-xl px-3 py-2 text-muted" aria-disabled="true">
+    <div className="flex h-10 items-center gap-2 rounded-xl px-2 text-muted" aria-disabled="true">
       <Icon size={18} aria-hidden />
-      <span>{label}</span>
-      <span className="ml-auto rounded-full border border-white/15 px-2 py-0.5 text-xs text-secondary">Soon</span>
+      <span className="truncate">{label}</span>
+      <span className="ml-auto rounded-full border border-white/10 px-1.5 py-px text-[11px] leading-none text-muted">Soon</span>
     </div>
   )
 }

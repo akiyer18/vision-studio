@@ -54,13 +54,13 @@ export function Thread({ started, bubbles, onBubble, showLayers, showDemo }: Pro
   )
 
   return (
-    <div className="studio-thread px-4 py-6 md:px-8">
+    <div className={`studio-thread ${started ? "px-0 py-4" : ""}`}>
       {showDemo ? <DemoMenu /> : null}
       <AnimatePresence>
         {started ? (
           <motion.div
             key="thread"
-            className="mx-auto flex w-full max-w-3xl flex-col gap-4"
+            className="canvas-column flex flex-col gap-4"
             initial={reduce ? false : { opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             exit={reduce ? undefined : { opacity: 0, y: -8 }}
@@ -106,7 +106,7 @@ export function Thread({ started, bubbles, onBubble, showLayers, showDemo }: Pro
         ) : (
           <motion.div
             key="home"
-            className="flex h-full min-h-64 flex-col items-center justify-center px-4 text-center"
+            className="canvas-column text-center"
             initial={reduce ? false : { opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={reduce ? undefined : { opacity: 0, y: -10 }}
@@ -115,7 +115,7 @@ export function Thread({ started, bubbles, onBubble, showLayers, showDemo }: Pro
             <h1 className="greeting" data-tour="welcome">
               What are you feeling today?
             </h1>
-            <p className="mt-3 max-w-md text-secondary">Turn it into layers you can edit.</p>
+            <p className="mt-4 text-secondary">Turn it into layers you can edit.</p>
           </motion.div>
         )}
       </AnimatePresence>

@@ -12,6 +12,7 @@ import { ReasoningCard } from "../reasoning/ReasoningCard.tsx"
 import { Sidebar } from "../sidebar/Sidebar.tsx"
 import { Thread, type Bubble } from "../thread/Thread.tsx"
 import { Tour } from "../tour/Tour.tsx"
+import { GettingStarted } from "./GettingStarted.tsx"
 
 const PlayerBar = lazy(() => import("../layers/stage.tsx").then((module) => ({ default: module.PlayerBar })))
 
@@ -69,10 +70,15 @@ export function Dashboard() {
       {open ? (
         <button type="button" className="fixed inset-0 z-40 bg-black/50 min-[768px]:hidden" aria-label="Close the menu" onClick={() => setOpen(false)} />
       ) : null}
-      <div className={`studio-shell ${showLayers ? "has-player" : ""}`}>
+      <div className={`studio-shell ${showLayers ? "has-player" : ""} ${started ? "" : "is-home"}`}>
         <Sidebar open={open} onClose={() => setOpen(false)} onReplay={tour.replay} />
-        <Thread started={started} bubbles={bubbles} onBubble={addBubble} showLayers={showLayers} showDemo={demoQuery} />
-        <div className="studio-rail px-4 py-4" role="radiogroup" aria-label="Song details">
+        <div className="studio-canvas">
+          <Thread started={started} bubbles={bubbles} onBubble={addBubble} showLayers={showLayers} showDemo={demoQuery} />
+          <div className="studio-composer">
+            <Composer started={started} onBegin={() => setTalking(true)} onBubble={addBubble} />
+          </div>
+        </div>
+        <div className="studio-rail px-2 py-4" role="radiogroup" aria-label="Song details">
           <input id="rail-brief" className="sr-only" type="radio" name="rail" defaultChecked />
           <input id="rail-reasoning" className="sr-only" type="radio" name="rail" />
           <input id="rail-layers" className="sr-only" type="radio" name="rail" />
@@ -88,13 +94,19 @@ export function Dashboard() {
             </label>
           </div>
           <div className="rail-stack flex flex-col gap-4">
-            <BriefCard mark={mark} onDescribe={describe} />
-            <ReasoningCard mark={mark} onMark={setMark} onDescribe={describe} />
-            <LayersCard />
+            {turn ? (
+              <>
+                <BriefCard mark={mark} onDescribe={describe} />
+                <ReasoningCard mark={mark} onMark={setMark} onDescribe={describe} />
+                <LayersCard />
+              </>
+            ) : (
+              <>
+                <GettingStarted />
+                <LayersCard />
+              </>
+            )}
           </div>
-        </div>
-        <div className="studio-composer">
-          <Composer started={started} onBegin={() => setTalking(true)} onBubble={addBubble} />
         </div>
         {showLayers ? (
           <Suspense fallback={<p className="studio-player px-4 py-3 text-secondary">Opening the player.</p>}>

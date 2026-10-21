@@ -28,9 +28,15 @@ export function ReasoningCard({ mark, onMark, onDescribe }: Props) {
   const reduce = useReducedMotion()
 
   return (
-    <section className="glass panel-reasoning flex flex-col gap-3 p-4" aria-label="Agent reasoning">
+    <motion.section
+      className="glass panel-reasoning flex flex-col gap-3 p-4"
+      aria-label="Agent reasoning"
+      initial={reduce ? false : { opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: reduce ? 0 : 0.22 }}
+    >
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm text-secondary">Agent reasoning</h2>
+        <h2 className="section-title">Agent reasoning</h2>
         <button type="button" className="inline-flex items-center gap-1 text-sm text-muted" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
           {open ? "Hide" : "Show"}
           <ChevronDown size={14} aria-hidden className={open ? "rotate-180" : ""} />
@@ -52,7 +58,7 @@ export function ReasoningCard({ mark, onMark, onDescribe }: Props) {
           </ol>
         )}
       </div>
-    </section>
+    </motion.section>
   )
 }
 

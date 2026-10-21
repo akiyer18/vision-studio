@@ -49,6 +49,7 @@ export function Composer({ started, onBegin, onBubble }: Props) {
   const [demoBusy, setDemoBusy] = useState(false)
   const [demoError, setDemoError] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  const areaRef = useRef<HTMLTextAreaElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
@@ -106,6 +107,14 @@ export function Composer({ started, onBegin, onBubble }: Props) {
   useEffect(() => {
     return () => release()
   }, [])
+
+  useEffect(() => {
+    const field = areaRef.current
+    if (!field) return
+    field.style.height = "auto"
+    const next = Math.min(field.scrollHeight, 15 * 1.5 * 6)
+    field.style.height = `${Math.max(next, 15 * 1.5 * 2)}px`
+  }, [text])
 
   function acceptFile(file: File, source: "drop" | "recording") {
     const problem = fileProblem(file)
@@ -367,7 +376,7 @@ export function Composer({ started, onBegin, onBubble }: Props) {
   const unsure = waiting && features !== null && features.confidence < 0.6
 
   return (
-    <div className="flex flex-col gap-4 px-4 pb-4">
+    <div className={`canvas-column flex flex-col gap-4 ${started ? "pb-4" : ""}`}>
       {features ? (
         <div className="rounded-2xl border border-white/15 px-4 py-3">
           <p className="text-secondary">{describeFeatures(features)}</p>
@@ -385,7 +394,7 @@ export function Composer({ started, onBegin, onBubble }: Props) {
                       keyTextRef.current = event.target.value
                       setKeyText(event.target.value)
                     }}
-                    className="rounded-xl border border-white/15 bg-transparent px-3 py-2 text-ink outline-none"
+                    className="mono rounded-xl border border-white/15 bg-transparent px-3 py-2 text-ink outline-none"
                   />
                   <label className="text-sm text-muted" htmlFor="fix-tempo">
                     Tempo
@@ -398,7 +407,7 @@ export function Composer({ started, onBegin, onBubble }: Props) {
                       tempoTextRef.current = event.target.value
                       setTempoText(event.target.value)
                     }}
-                    className="rounded-xl border border-white/15 bg-transparent px-3 py-2 text-ink outline-none"
+                    className="mono rounded-xl border border-white/15 bg-transparent px-3 py-2 text-ink outline-none"
                   />
                 </div>
               ) : null}
@@ -418,7 +427,7 @@ export function Composer({ started, onBegin, onBubble }: Props) {
       ) : null}
       <form
         data-tour="composer"
-        className={`glass flex flex-col gap-3 p-3 ${dragging ? "outline outline-2 outline-accent" : ""}`}
+        className={`glass flex flex-col gap-2 p-2 ${dragging ? "outline outline-2 outline-accent" : ""}`}
         onSubmit={(event) => {
           event.preventDefault()
           void submit()
@@ -435,35 +444,85 @@ export function Composer({ started, onBegin, onBubble }: Props) {
           if (file) acceptFile(file, "drop")
         }}
       >
-        <label className="sr-only" htmlFor="idea">
-          The idea
-        </label>
-        <textarea
-          id="idea"
-          value={text}
-          rows={3}
-          placeholder="a rainy night drive, missing someone"
-          aria-invalid={hint ? true : undefined}
-          aria-describedby={hint ? "idea-hint" : undefined}
-          onChange={(event) => {
-            textRef.current = event.target.value
-            setText(event.target.value)
-            if (hint) setHint(null)
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return
-            event.preventDefault()
-            event.currentTarget.form?.requestSubmit()
-          }}
-          className="min-h-24 w-full resize-y bg-transparent px-2 py-2 text-base text-ink outline-none placeholder:text-muted"
-        />
+        <div className="flex items-end gap-2">
+          <div className="flex shrink-0 items-center">
+            <input
+              ref={fileInput}
+              type="file"
+              accept=".wav,.mp3,.m4a,.webm,.mid,.midi,audio/wav,audio/mpeg,audio/mp4,audio/webm,audio/midi"
+              className="sr-only"
+              aria-label="Choose a sound file"
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                if (file) acceptFile(file, "drop")
+              }}
+            />
+            <button
+              type="button"
+              aria-label="Attach a sound"
+              className="inline-flex size-8 items-center justify-center rounded-full text-secondary"
+              onClick={() => fileInput.current?.click()}
+            >
+              <Paperclip size={16} aria-hidden />
+            </button>
+            {flags.record ? (
+              <button
+                type="button"
+                aria-label="Record"
+                className="inline-flex size-8 items-center justify-center rounded-full text-secondary disabled:opacity-40"
+                onClick={() => void startRecording()}
+                disabled={busy || recording}
+              >
+                <Mic size={16} aria-hidden />
+              </button>
+            ) : null}
+          </div>
+          <label className="sr-only" htmlFor="idea">
+            The idea
+          </label>
+          <textarea
+            ref={areaRef}
+            id="idea"
+            value={text}
+            rows={2}
+            placeholder="a rainy night drive, missing someone"
+            aria-invalid={hint ? true : undefined}
+            aria-describedby={hint ? "idea-hint" : undefined}
+            onChange={(event) => {
+              textRef.current = event.target.value
+              setText(event.target.value)
+              if (hint) setHint(null)
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return
+              event.preventDefault()
+              event.currentTarget.form?.requestSubmit()
+            }}
+            className="composer-input w-full bg-transparent py-1 text-ink outline-none placeholder:text-muted"
+          />
+          <div className="shrink-0">
+            {waiting ? null : error ? (
+              <Button onClick={() => void submit()}>Try again</Button>
+            ) : (
+              <button
+                type="submit"
+                aria-label="Send the idea"
+                disabled={busy || recording}
+                className="btn-primary inline-flex size-8 items-center justify-center rounded-full bg-accent text-canvas disabled:opacity-40"
+              >
+                <ArrowUp size={16} aria-hidden />
+                <span className="sr-only">Send the idea</span>
+              </button>
+            )}
+          </div>
+        </div>
         {hint ? (
           <p id="idea-hint" role="status" className="px-2 text-sm text-secondary">
             {hint}
           </p>
         ) : null}
         {held ? (
-          <p className="px-2 text-sm text-secondary">
+          <p className="mono px-2 text-sm text-secondary">
             {held.file.name}{" "}
             <button type="button" className="text-ink underline-offset-4 hover:underline" onClick={clearHeld}>
               Remove
@@ -496,53 +555,6 @@ export function Composer({ started, onBegin, onBubble }: Props) {
             </button>
           </div>
         ) : null}
-        <div className="flex items-center gap-2">
-          <input
-            ref={fileInput}
-            type="file"
-            accept=".wav,.mp3,.m4a,.webm,.mid,.midi,audio/wav,audio/mpeg,audio/mp4,audio/webm,audio/midi"
-            className="sr-only"
-            aria-label="Choose a sound file"
-            onChange={(event) => {
-              const file = event.target.files?.[0]
-              if (file) acceptFile(file, "drop")
-            }}
-          />
-          <button
-            type="button"
-            aria-label="Attach a sound"
-            className="inline-flex size-11 items-center justify-center rounded-full text-secondary"
-            onClick={() => fileInput.current?.click()}
-          >
-            <Paperclip size={18} aria-hidden />
-          </button>
-          {flags.record ? (
-            <button
-              type="button"
-              aria-label="Record"
-              className="inline-flex size-11 items-center justify-center rounded-full text-secondary disabled:opacity-40"
-              onClick={() => void startRecording()}
-              disabled={busy || recording}
-            >
-              <Mic size={18} aria-hidden />
-            </button>
-          ) : null}
-          <span className="ml-auto">
-            {waiting ? null : error ? (
-              <Button onClick={() => void submit()}>Try again</Button>
-            ) : (
-              <button
-                type="submit"
-                aria-label="Send the idea"
-                disabled={busy || recording}
-                className="btn-primary inline-flex size-11 items-center justify-center rounded-full bg-accent text-canvas disabled:opacity-40"
-              >
-                <ArrowUp size={18} aria-hidden />
-                <span className="sr-only">Send the idea</span>
-              </button>
-            )}
-          </span>
-        </div>
       </form>
       {error ? (
         <p role="alert" className="text-danger">
@@ -579,7 +591,7 @@ export function Composer({ started, onBegin, onBubble }: Props) {
               {demoError}
             </p>
           ) : null}
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-3 gap-2">
             <HowCard icon={Sparkles} title="Describe it" text="Write a feeling, or bring a sound." />
             <HowCard icon={ListChecks} title="Answer or skip" text="A few questions, or skip them all." />
             <HowCard icon={Headphones} title="Hear your layers" text="Build, listen, and pick a take." />
@@ -592,10 +604,12 @@ export function Composer({ started, onBegin, onBubble }: Props) {
 
 function HowCard({ icon: Icon, title, text }: { icon: typeof Sparkles; title: string; text: string }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/3 px-3 py-3">
-      <Icon size={18} aria-hidden className="text-accent" />
-      <p className="mt-2 font-medium">{title}</p>
-      <p className="text-sm text-secondary">{text}</p>
+    <div className="how-card flex flex-col justify-center gap-1 rounded-2xl border border-white/10 bg-white/3 px-2">
+      <div className="flex items-center gap-2">
+        <Icon size={16} aria-hidden className="shrink-0 text-accent" />
+        <p className="font-semibold whitespace-nowrap">{title}</p>
+      </div>
+      <p className="text-sm whitespace-nowrap text-secondary">{text}</p>
     </div>
   )
 }

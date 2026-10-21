@@ -1,7 +1,6 @@
 @import "tailwindcss";
-@import "@fontsource/instrument-sans/latin-400.css";
-@import "@fontsource/instrument-sans/latin-500.css";
-@import "@fontsource/instrument-serif/latin-400.css";
+@import "@fontsource-variable/geist/wght.css";
+@import "@fontsource-variable/geist-mono/wght.css";
 
 :root {
   --bg: #0b0a1a;
@@ -26,8 +25,10 @@
 }
 
 @theme inline {
-  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-serif: "Instrument Serif", ui-serif, Georgia, serif;
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+  --text-sm: 13px;
+  --text-base: 15px;
   --color-ink: var(--ink);
   --color-secondary: var(--secondary);
   --color-muted: var(--muted);
@@ -48,6 +49,9 @@ body {
   background: var(--bg);
   color: var(--ink);
   font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.5;
 }
 
 :focus-visible {
@@ -57,7 +61,8 @@ body {
 
 .studio-root {
   position: relative;
-  min-height: 100svh;
+  height: 100svh;
+  overflow: hidden;
   background: var(--bg);
 }
 
@@ -85,19 +90,37 @@ body {
   z-index: 1;
   display: grid;
   height: 100svh;
-  grid-template-columns: 248px minmax(0, 1fr) 340px;
-  grid-template-rows: minmax(0, 1fr) auto;
-  grid-template-areas:
-    "side thread rail"
-    "side composer rail";
+  overflow: hidden;
+  grid-template-columns: 240px minmax(0, 1fr) 320px;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "side canvas rail";
 }
 
 .studio-shell.has-player {
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   grid-template-areas:
-    "side thread rail"
-    "side composer rail"
+    "side canvas rail"
     "side player rail";
+}
+
+.studio-canvas {
+  grid-area: canvas;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.studio-shell.is-home .studio-canvas {
+  justify-content: center;
+  gap: 24px;
+  overflow: hidden;
+}
+
+.canvas-column {
+  width: min(760px, 100%);
+  margin-inline: auto;
+  padding-inline: 16px;
 }
 
 .studio-side {
@@ -108,7 +131,14 @@ body {
 .studio-thread {
   grid-area: thread;
   min-height: 0;
+  min-width: 0;
+  flex: 1;
   overflow: auto;
+}
+
+.studio-shell.is-home .studio-thread {
+  flex: none;
+  overflow: visible;
 }
 
 .studio-rail {
@@ -119,6 +149,7 @@ body {
 
 .studio-composer {
   grid-area: composer;
+  min-width: 0;
 }
 
 .studio-player {
@@ -139,18 +170,50 @@ body {
 }
 
 .greeting {
-  font-family: var(--font-serif);
-  font-size: clamp(2.4rem, 4vw, 4.25rem);
-  font-weight: 400;
+  font-size: 44px;
+  font-weight: 600;
   letter-spacing: -0.03em;
   line-height: 1.05;
+  background-image: linear-gradient(180deg, #f4f2ff 0%, #c9c2ff 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+.section-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
 .tempo-mark {
-  font-family: var(--font-serif);
-  font-size: clamp(2.5rem, 3vw, 4.5rem);
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
-  line-height: 0.9;
+  line-height: 1.1;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-input {
+  min-height: calc(15px * 1.5 * 2);
+  max-height: calc(15px * 1.5 * 6);
+  resize: none;
+  overflow: auto;
+}
+
+.how-card {
+  height: 88px;
+}
+
+@media (min-width: 1440px) {
+  .greeting {
+    font-size: 56px;
+  }
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -178,12 +241,22 @@ body {
 }
 
 @media (max-width: 1199px) {
+  .studio-root {
+    height: auto;
+    min-height: 100svh;
+    overflow: visible;
+  }
+
+  .studio-canvas {
+    display: contents;
+  }
+
   .studio-shell,
   .studio-shell.has-player {
     height: auto;
     min-height: 100svh;
     overflow: visible;
-    grid-template-columns: 248px minmax(0, 1fr);
+    grid-template-columns: 240px minmax(0, 1fr);
     grid-template-rows: auto auto auto auto;
     grid-template-areas:
       "side thread"
@@ -229,7 +302,7 @@ body {
     top: 0;
     bottom: 0;
     left: 0;
-    width: min(248px, 86vw);
+    width: min(240px, 86vw);
     transform: translateX(-105%);
     transition: transform 180ms ease;
   }

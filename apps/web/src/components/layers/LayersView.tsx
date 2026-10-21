@@ -245,7 +245,7 @@ function Variation({
   return (
     <div hidden={!selected} data-layer={result.layer} data-variant={result.variant} data-seconds={moving ? playback.seconds.toFixed(3) : undefined}>
       {selected ? <Waveform url={url} label={`${title} variation ${result.variant} waveform`} seek={seekRef} wave={wave} progress={progress} /> : null}
-      <p className="mt-2 truncate text-sm">{name}</p>
+      <p className="mono mt-2 truncate text-sm">{name}</p>
       <div className="mt-2 flex flex-wrap gap-2">
         <Button tone="secondary" aria-pressed={solo} aria-label={solo ? `Pause ${title} variation ${result.variant}` : `Play ${title} variation ${result.variant}`} onClick={() => void toggle()} style={{ color: ink }}>
           {solo ? "Pause" : "Play"}

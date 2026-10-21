@@ -26,7 +26,7 @@ export function Styleguide() {
       <div className="relative z-1 mx-auto flex w-full max-w-3xl flex-col gap-8 p-6">
         <header className="flex items-end justify-between gap-3">
           <div>
-            <h1 className="greeting text-5xl">Styleguide</h1>
+            <h1 className="greeting">Styleguide</h1>
             <p className="mt-2 text-secondary">Tokens, buttons, chips, and source badges.</p>
           </div>
           <a href="/" className="text-secondary underline-offset-4 hover:underline">
