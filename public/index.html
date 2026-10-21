@@ -104,6 +104,9 @@
   .build .big { font-size:16px; padding:12px 20px; }
   .steps { font-size:12px; color:var(--muted); margin-top:8px; }
   .steps .ok { color:var(--accent2); } .steps .bad { color:var(--danger); }
+.msg .progress{font-size:12px;color:var(--muted);margin:2px 0 4px;padding-left:8px;border-left:2px solid var(--border,#333)}
+.chip.quick{opacity:.8;border-style:dashed}
+.moves{margin-top:8px}
 </style>
 </head>
 <body>
@@ -879,6 +882,16 @@ function profileCard(profile, title) {
 }
 $('c-reset').onclick = async () => { await postJson('/api/chat/reset', {}); $('c-log').innerHTML = ''; addBot('New session. Live keeps whatever is already there.'); };
 document.querySelectorAll('#c-chips .chip').forEach(ch => ch.onclick = () => { $('c-text').value = ch.textContent; $('c-text').focus(); });
+// quoted moves in the reply ("make the kick dirtier") become one-click chips; plus always-on quick actions
+function renderMoves(bot, text) {
+  const old = bot.querySelector('.moves'); if (old) old.remove();
+  const seen = new Set(); const moves = [];
+  for (const m of text.matchAll(/[\u201c"]([^"\u201d\n]{4,90})[\u201d"]/g)) { const t = m[1].trim(); if (!seen.has(t.toLowerCase()) && /^[a-z]/i.test(t) && t.split(' ').length <= 14) { seen.add(t.toLowerCase()); moves.push(t); } if (moves.length >= 5) break; }
+  const w = document.createElement('div'); w.className = 'chips moves';
+  moves.forEach(t => { const sp = document.createElement('span'); sp.className = 'chip'; sp.textContent = t; sp.onclick = () => { $('c-text').value = t; sendChat(); }; w.appendChild(sp); });
+  [['▶ play it', 'Play what you just built in Live for 4 bars, then stop. Do not change anything.'], ['🎧 listen & judge', 'Listen to 4 bars of what is playing now and tell me honestly, as a producer, what works and the one thing you would change. Do not build.'], ['↶ undo last', 'Undo the last sound or pattern change you made and tell me what came back.'], ['another take', 'Make another take of the last thing you built: same role and pattern idea, different sound and feel. Put it as an alternative I can A/B, keep the first.']].forEach(([label, msg]) => { const sp = document.createElement('span'); sp.className = 'chip quick'; sp.textContent = label; sp.onclick = () => { $('c-text').value = msg; sendChat(); }; w.appendChild(sp); });
+  bot.appendChild(w);
+}
 function addMsg(cls, text) { const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text; $('c-log').appendChild(d); $('c-log').scrollTop = 1e9; return d; }
 function addBot(text) { return addMsg('bot', text); }
 $('c-send').onclick = sendChat;
@@ -912,7 +925,11 @@ async function sendChat() {
         }
         else if (ev.type === 'explanation') { bot.insertBefore(explainPanel(ev), body); }
         else if (ev.type === 'variations') { bot.insertBefore(variantsPanel(ev), body); }
-        else if (ev.type === 'text') { body.textContent = ev.text || ''; }
+        else if (ev.type === 'text') {
+          // intermediate texts (the agent's one-line intent before a tool batch) stay as a muted progress line; the last one is the reply
+          if (body.textContent && body.textContent !== 'thinking…' && !body.dataset.final) { const pl = document.createElement('div'); pl.className = 'progress'; pl.textContent = body.textContent; bot.insertBefore(pl, tools); }
+          body.textContent = ev.text || ''; renderMoves(bot, ev.text || '');
+        }
         else if (ev.type === 'error') { body.textContent = 'Error: ' + ev.error; body.style.color = 'var(--danger)'; }
         else if (ev.type === 'done') { if (!body.textContent) body.textContent = 'Done.'; }
         $('c-log').scrollTop = 1e9;
@@ -938,6 +955,7 @@ async function recoverLastTurn(tools, body) {
     }
     if (t.status === 'running') { body.textContent = `Still working… (${Math.round((Date.now() - t.startedAt) / 1000)} s)`; continue; }
     body.textContent = t.status === 'error' ? 'Error: ' + ((t.events.find(e => e.type === 'error') || {}).error || 'unknown') : (t.text || 'Done.');
+          if (t.status !== 'error' && t.text) renderMoves(bot, t.text);
     return true;
   }
   return false;

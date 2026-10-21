@@ -625,7 +625,7 @@ function makeCtx(emit) {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const cut = path.join(TMP, `${id}-slice.wav`), norm = path.join(TMP, `${id}-slice-norm.wav`);
       const len = clamp(Number(lengthSeconds), 0.05, 4), fade = Math.min(fadeMs / 1000, len / 4);
-      await ffmpeg(['-ss', String(Math.max(0, Number(startSeconds) || 0)), '-i', refPath, '-t', String(len), '-af', `afade=t=in:st=0:d=${fade},afade=t=out:st=${(len - fade).toFixed(3)}:d=${fade}`, '-ac', '1', '-ar', '44100', cut]);
+      await ffmpeg(['-ss', String(Math.max(0, Number(startSeconds) || 0)), '-i', refPath, '-t', String(len), '-af', `afade=t=in:st=0:d=${fade},afade=t=out:st=${(len - fade).toFixed(3)}:d=${fade}`, '-ac', '2', '-ar', '44100', cut]);
       await normalize(cut, norm);
       const f = await publish(await fs.readFile(norm), name, '.wav', 'oneshot');
       return { path: f.path, name: f.name, url: f.url, durationSeconds: len };
@@ -748,6 +748,18 @@ function makeCtx(emit) {
       emit({ type: 'explanation', ...rec });
       await saveChat();
       return { stored: key };
+    },
+    async referenceTrack({ query }) {
+      const sc = await import('./lib/soundcharts.js');
+      const r = await sc.lookupReference(query);
+      if (r.song) {
+        const k = await import('./lib/knowledge.js');
+        const slug = k.matchGenre((r.song.genres || []).join(' ') + ' ' + r.song.name);
+        if (slug) { const bp = k.getBlueprint(slug); r.blueprint = { slug, title: bp.title }; lastBuild.genreTarget = `${bp.title}: ${bp.summary}`; }
+        lastBuild.reference = { name: r.song.name, artists: r.song.artists, genres: r.song.genres, tempo: r.song.audio?.tempo, key: r.song.audio?.key, producers: r.song.producers, releaseDate: r.song.releaseDate };
+      }
+      r.note = r.mode === 'sandbox' ? 'Soundcharts sandbox: only test songs are available; add SOUNDCHARTS_CLIENT_ID/SECRET to .env for the full catalogue' : undefined;
+      return r;
     },
     async genreGuide({ genre }) {
       const Anthropic = (await import('@anthropic-ai/sdk')).default;
@@ -1019,6 +1031,7 @@ function makeCtx(emit) {
       if (!k) throw new Error('knowledge base not built yet (lib/knowledge.js)');
       const slug = k.matchGenre(String(genre || ''));
       if (!slug) throw new Error(`unknown genre "${genre}"; known: ${k.listGenres().join(', ')}`);
+      if (!slug) { try { const g = await k.ensureBlueprint(genre); if (g.slug) { const bp = k.getBlueprint(g.slug); return { ...bp, generated: g.generated }; } } catch (e) { throw new Error(`no blueprint for "${genre}" and generating one failed: ${e.message}`); } }
       return k.getBlueprint(slug);
     },
     productionDna: async (p) => { if (!audioPathOk(p)) throw new Error('dna: path outside project audio'); return (await import('./lib/ears.js')).productionDna(p); },
@@ -1041,7 +1054,7 @@ function makeCtx(emit) {
     async processAudio(p, chain, name = 'processed') { if (!audioPathOk(p)) throw new Error('process: path outside project audio'); const m = await import('./lib/pytools.js'); const out = path.join(TMP, `proc-${Date.now()}.wav`); const r = await m.processAudio(p, chain, out); const f = await publish(await fs.readFile(r.out || out), name, '.wav', 'oneshot'); return { path: f.path, url: f.url, name: f.name, peakDbfs: r.peakDbfs }; },
     async masterAudio(lufs = -12) { const src = lastBuild.lastRender; if (!src) throw new Error('master: render a preview first'); const m = await import('./lib/pytools.js'); const out = path.join(TMP, `master-${Date.now()}.wav`); const r = await m.masterAudio(src, out, lufs); const f = await publish(await fs.readFile(r.out || out), 'master', '.wav', 'loop'); return { path: f.path, url: f.url, lufs: r.lufs, peakDbfs: r.peakDbfs }; },
     async shapeSample(a) {
-      const { path: src, trimStartMs = 0, lengthMs, fadeOutMs = 10, gainDb = 0, highpassHz, lowpassHz, name = 'shaped' } = a;
+      const { path: src, trimStartMs = 0, lengthMs, fadeOutMs = 10, gainDb = 0, highpassHz, lowpassHz, widen, name = 'shaped' } = a;
       if (!audioPathOk(src)) throw new Error('shape: path outside project audio');
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const out = path.join(TMP, `${id}-shape.wav`);
@@ -1055,9 +1068,13 @@ function makeCtx(emit) {
       else af.push('areverse', `afade=t=in:st=0:d=${fade}`, 'areverse');
       args.push('-af', af.join(','), '-ac', '2', '-ar', '44100', out);
       await ffmpeg(args);
-      const f = await publish(await fs.readFile(out), name, '.wav', 'oneshot');
+      let shaped = out;
+      if (widen && Number(widen) > 0) { try { const r = await this.processAudio(out, [{ type: 'widen', amount: clamp(Number(widen), 0, 1) }], name); shaped = r.path; } catch (e) { console.warn('[shape] widen skipped:', e.message); } }
+      const f = await publish(await fs.readFile(shaped), name, '.wav', 'oneshot');
       const audio = await import('./lib/audio.js');
-      return { path: f.path, url: f.url, name: f.name, durationSeconds: await audio.durationSeconds(f.path) };
+      const { analyzeAudio } = await import('./lib/analyze.js');
+      let width = null; try { width = (await analyzeAudio(f.path))?.stereo?.width ?? null; } catch {}
+      return { path: f.path, url: f.url, name: f.name, durationSeconds: await audio.durationSeconds(f.path), stereoWidth: width != null ? Number(width.toFixed(2)) : null, widened: Boolean(widen) };
     },
     async tuneSample({ path: src, semitones, targetMidi, targetNote, name = 'tuned', preserveFormants, allowLarge = false, role = '' }) {
       const vocal = /vox|vocal|chop|voice|adlib|ad-lib|hook/i.test(`${role} ${name} ${path.basename(String(src || ''))}`);
@@ -1477,7 +1494,8 @@ async function runChatTurn(req, res, emit0) {
     try {
       const k = await import('./lib/knowledge.js');
       const explicit = userText.match(/\[genre:\s*([^\]]+)\]/i);
-      const slug = k.matchGenre(explicit ? explicit[1] : userText);
+      let slug = k.matchGenre(explicit ? explicit[1] : userText);
+      if (!slug && explicit) { try { emit({ type: 'tool', name: 'style', summary: `writing a blueprint for ${explicit[1].trim()}` }); slug = (await k.ensureBlueprint(explicit[1])).slug; } catch (e) { emit({ type: 'tool_done', name: 'style', ok: false, summary: `blueprint generation failed: ${e.message.slice(0, 80)}` }); } }
       if (slug) { const bp = k.getBlueprint(slug); if (bp?.summary) { userText += `\n\n[genre blueprint: ${bp.title}] ${bp.summary}`; lastBuild.genreTarget = `${bp.title}: ${bp.summary}`; emit({ type: 'tool_done', name: 'style', ok: true, summary: `style guide loaded: ${bp.title}` }); } }
     } catch {}
     chat.room = (userText.match(/\[room:\s*(create|analyse|tweak)\]/i) || [])[1]?.toLowerCase() || 'create';

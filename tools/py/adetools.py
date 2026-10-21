@@ -218,6 +218,35 @@ def build_board(chain):
         else: fail(f"unknown chain step type: {t}", known=["highpass","lowpass","compressor","reverb","limiter","gain","pitch","saturate","chorus","delay","phaser","bitcrush","noisegate","ladder"])
     return pb.Pedalboard(plugins)
 
+def widen(x, sr, amount=0.5, delay_ms=12.0, mode="haas"):
+    """Make a (dual-)mono sound stereo. haas: the right channel gets a short delayed copy mixed in (6-25 ms) plus a touch of
+    opposite-polarity high band so the sides decorrelate; ms: just lifts the side signal (no effect on dual-mono)."""
+    import numpy as np
+    amount = max(0.0, min(1.0, amount))
+    if x.shape[0] == 1: x = np.vstack([x, x])
+    L, R = x[0].copy(), x[1].copy()
+    if mode == "ms":
+        mid, side = (L + R) * 0.5, (L - R) * 0.5
+        side *= 1.0 + 2.0 * amount
+        return np.vstack([mid + side, mid - side]).astype(np.float32)
+    d = max(1, int(sr * max(2.0, min(30.0, delay_ms)) / 1000.0))
+    mono = (L + R) * 0.5
+    delayed = np.concatenate([np.zeros(d, dtype=mono.dtype), mono[:-d]]) if mono.size > d else mono
+    # keep the low end centred: only the band above ~200 Hz is spread
+    try:
+        from scipy.signal import butter, sosfilt
+        sos = butter(2, 200.0 / (sr * 0.5), btype="high", output="sos")
+        spread = sosfilt(sos, delayed).astype(mono.dtype)
+    except Exception:
+        spread = delayed
+    g = 0.9 * amount
+    outL = mono - g * spread * 0.5          # opposite-polarity delayed band on the left, full on the right: strong decorrelation,
+    outR = mono * (1.0 - 0.2 * amount) + g * spread   # the mono sum keeps the original plus a mild comb only above 200 Hz
+    peak = max(float(np.max(np.abs(outL))), float(np.max(np.abs(outR))), 1e-9)
+    src_peak = max(float(np.max(np.abs(mono))), 1e-9)
+    k = min(1.0, src_peak / peak)
+    return np.vstack([outL * k, outR * k]).astype(np.float32)
+
 def peak_dbfs(x):
     import numpy as np
     p = float(np.max(np.abs(x))) if x.size else 0.0
@@ -236,9 +265,13 @@ def cmd_process(a):
     try: chain = json.loads(a.chain)
     except Exception as e: fail(f"chain is not JSON: {e}")
     if not isinstance(chain, list) or not chain: fail("chain must be a non-empty JSON array")
-    board = build_board(chain)
+    widen_steps = [st for st in chain if str(st.get("type", "")).lower() in ("widen", "stereo")]
+    board_steps = [st for st in chain if str(st.get("type", "")).lower() not in ("widen", "stereo")]
+    board = build_board(board_steps) if board_steps else None
     x, sr = read_audio(a.inp)
-    y = board(x, sr)
+    y = board(x, sr) if board is not None else x
+    for st in widen_steps:
+        y = widen(y, sr, amount=float(st.get("amount", 0.5)), delay_ms=float(st.get("delay_ms", 12.0)), mode=str(st.get("mode", "haas")))
     write_audio(a.out, y, sr)
     out({"ok": True, "out": a.out, "peakDbfs": peak_dbfs(y), "inPeakDbfs": peak_dbfs(x), "sampleRate": sr, "steps": len(chain)})
 
