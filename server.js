@@ -100,15 +100,25 @@ async function synthesize({ prompt = '', mode = 'oneshot', kind, name = 'sound',
     // Drums: Stable Audio cannot do "a single kick" (it returns a sub drone) but it is excellent at a SEQUENCE of hits.
     // Generate 10 s of separate hits, keep the ones that sound like the role, cut each with its natural tail, pick the best.
     const genreTitle = lastBuild.genreTarget ? String(lastBuild.genreTarget).split(':')[0].replace(/\s*\(.*\)\s*$/, '') : '';
-    const full = hitsPrompt({ role: hitRole, character: prompt, genreTitle });
-    result = await textToAudio({ prompt: full, duration: 10, model: 'stable-audio-2.5' });
-    const gen = path.join(TMP, `${id}-hits.wav`);
-    await fs.writeFile(gen, result.buffer);
-    const ex = await extractHits(gen, { role: hitRole, max: clamp(Number(alternates) || 3, 1, 4), outDir: TMP, name: `${id}-${hitRole}` });
-    if (ex.hits.length) {
-      for (const [i, h] of ex.hits.entries()) files.push({ ...(await publish(await fs.readFile(h.path), i ? `${name}-${h.label}` : name, '.wav', i ? 'alt' : 'oneshot')), label: h.label, length: h.length, centroidHz: h.centroidHz, subShare: h.subShare, score: h.score });
-      files.push(await publish(result.buffer, `${name}-hits`, '.wav', 'loop'));
-      return { files, seed: result.seed, mode, role: hitRole, prompt: full, hits: { total: ex.total, matching: ex.matching }, alternates: files.filter((f) => f.kind === 'alt') };
+    // the seed decides whether the model honours "separate hits": two phrasings in parallel, pool every usable hit, one retry
+    const want = clamp(Number(alternates) || 3, 1, 4);
+    const round = async (variants) => Promise.all(variants.map(async (v) => {
+      const full = hitsPrompt({ role: hitRole, character: prompt, genreTitle, variant: v });
+      const r = await textToAudio({ prompt: full, duration: 10, model: 'stable-audio-2.5' });
+      const gen = path.join(TMP, `${id}-hits-${v}.wav`); await fs.writeFile(gen, r.buffer);
+      const ex = await extractHits(gen, { role: hitRole, max: want, outDir: TMP, name: `${id}-${hitRole}-${v}` });
+      return { full, r, gen, ex };
+    }));
+    let rounds = await round([0, 1]);
+    let pool = rounds.flatMap((x) => x.ex.hits.map((h) => ({ ...h, from: x })));
+    if (pool.length < 2) { rounds = rounds.concat(await round([2])); pool = rounds.flatMap((x) => x.ex.hits.map((h) => ({ ...h, from: x }))); }
+    pool.sort((a, b) => b.score - a.score);
+    if (pool.length) {
+      const chosen = pool.slice(0, want);
+      for (const [i, h] of chosen.entries()) files.push({ ...(await publish(await fs.readFile(h.path), i ? `${name}-${String.fromCharCode(65 + i)}` : name, '.wav', i ? 'alt' : 'oneshot')), label: String.fromCharCode(65 + i), length: h.length, centroidHz: h.centroidHz, subShare: h.subShare, score: h.score });
+      const best = chosen[0].from;
+      files.push(await publish(best.r.buffer, `${name}-hits`, '.wav', 'loop'));
+      return { files, seed: best.r.seed, mode, role: hitRole, prompt: best.full, hits: { generations: rounds.length, total: rounds.reduce((n, x) => n + x.ex.total, 0), matching: rounds.reduce((n, x) => n + x.ex.matching, 0) }, alternates: files.filter((f) => f.kind === 'alt') };
     }
     // nothing usable came back: fall through to the single-hit path on a fresh generation
     result = await textToAudio({ prompt: buildPrompt(prompt, 'oneshot', kind), duration: genSec, model });
@@ -1425,7 +1435,8 @@ function makeCtx(emit) {
       async setSimpler({ track, ...opts }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'set_simpler', track: t.name, ...opts }), 'set_simpler'); },
       async sampleInfo({ track }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'sample_info', track: t.name }), 'sample_info'); },
       // loop/texture as a layer: load the file into Simpler, warp it to tempo, trigger with one long C3 note
-      async addLoopLayer({ name, prompt, kind = 'tops', bars = 2, bpm, matchMix = true, strength = 0.6, seedPath, slot = 0 }) {
+      async addLoopLayer({ name, prompt, kind = 'tops', bars = 2, bpm, matchMix = true, strength, seedPath, slot = 0 }) {
+        strength = Number(strength) || (kind === 'tops' || kind === 'fx' ? 0.8 : 0.6);   // tops seeded from a mix with a kick keep the kick unless they move far enough
         const tempo = bpm || await syncTempo();
         const hasLayers = Object.keys(lastBuild.clips || {}).length > 0 || Boolean(lastBuild.lastCapture);
         const init = seedPath ? seedPath : (matchMix && hasLayers ? 'mix' : null);
