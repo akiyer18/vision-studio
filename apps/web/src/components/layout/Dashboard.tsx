@@ -1,8 +1,9 @@
 import { Menu } from "lucide-react"
-import { lazy, Suspense, useRef, useState } from "react"
+import { lazy, Suspense, useEffect, useRef, useState } from "react"
 
 import { inputBridge } from "../../input/bridge.ts"
 import { transport } from "../../playback/transport.ts"
+import { currentIdea, saveRecent } from "../../recentIdeas.ts"
 import { useStudio } from "../../state/studio.ts"
 import { useTour } from "../../tour.ts"
 import { Composer } from "../composer/Composer.tsx"
@@ -24,18 +25,45 @@ export function Dashboard() {
   const renders = useStudio((state) => state.renders)
   const layerOrder = useStudio((state) => state.layerOrder)
   const status = useStudio((state) => state.status)
+  const thread = useStudio((state) => state.thread)
   const tour = useTour()
   const [open, setOpen] = useState(false)
   const [mark, setMark] = useState<string | null>(null)
   const [talking, setTalking] = useState(false)
   const [bubbles, setBubbles] = useState<Bubble[]>([])
   const [stamp, setStamp] = useState(sessionId)
-  const nextId = useRef(1)
+  const synced = useRef(sessionId)
   if (stamp !== sessionId) {
     setStamp(sessionId)
-    setTalking(false)
-    setBubbles([])
+    setBubbles(thread)
+    setTalking(thread.length > 0 || turn !== null)
   }
+
+  useEffect(() => {
+    if (!turn) {
+      synced.current = sessionId
+      return
+    }
+    if (synced.current !== sessionId) {
+      synced.current = sessionId
+      return
+    }
+    const noted = currentIdea()
+    saveRecent({
+      id: sessionId,
+      sessionId,
+      idea: noted.idea,
+      audioOnly: noted.audioOnly,
+      brief: turn.brief,
+      prompts: turn.prompts ?? [],
+      layers: turn.brief.output,
+      renders: renders.map((item) => ({ layer: item.layer, variant: item.variant, path: item.path, seconds: item.seconds, bpm: item.bpm })),
+      thread: bubbles,
+      trace: turn.trace,
+      question: turn.question,
+      status: turn.status,
+    })
+  }, [turn, renders, bubbles, sessionId])
 
   const started = talking || turn !== null
   const showLayers = renders.length > 0 || (status === "working" && layerOrder.length > 0)
@@ -47,9 +75,7 @@ export function Dashboard() {
   function addBubble(text: string) {
     const trimmed = text.trim()
     if (!trimmed) return
-    const id = nextId.current
-    nextId.current += 1
-    setBubbles((current) => [...current, { id, text: trimmed }])
+    setBubbles((current) => [...current, { id: current.reduce((max, item) => Math.max(max, item.id), 0) + 1, text: trimmed }])
   }
 
   function startOver() {

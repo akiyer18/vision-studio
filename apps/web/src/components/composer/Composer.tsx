@@ -7,7 +7,7 @@ import { runScenario } from "../../demo/runScenario.ts"
 import { features as flags } from "../../features.ts"
 import { registerInput } from "../../input/bridge.ts"
 import { applyCorrection, describeFeatures, fileKind, fileProblem, inputTypeFor, keyPhrase } from "../../input/describe.ts"
-import { rememberIdea } from "../../recentIdeas.ts"
+import { noteIdea } from "../../recentIdeas.ts"
 import { useStudio } from "../../state/studio.ts"
 import type { AudioFeatures } from "../../types/audio_features.ts"
 import type { InputType } from "../../types/input_type.ts"
@@ -272,8 +272,8 @@ export function Composer({ started, onBegin, onBubble }: Props) {
         }
       }
       const said = currentText.trim()
+      noteIdea(said, said.length === 0)
       await sendTurn(audio)
-      if (said) rememberIdea(said)
       onBubbleRef.current(said || currentHeld?.file.name || "A sound")
       onBeginRef.current()
       textRef.current = ""
@@ -298,8 +298,8 @@ export function Composer({ started, onBegin, onBubble }: Props) {
       const next = fixingRef.current ? applyCorrection(audio, keyTextRef.current, tempoTextRef.current) : audio
       rememberFeatures(next)
       const said = textRef.current.trim()
+      noteIdea(said, said.length === 0)
       await sendTurn(next)
-      if (said) rememberIdea(said)
       markFixing(false)
       textRef.current = ""
       setText("")

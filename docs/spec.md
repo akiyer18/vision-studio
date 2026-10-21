@@ -195,7 +195,7 @@ An empty card has one sentence and one button. An error sits in the card it belo
 
 The first visit opens a glass tour after 800 ms. It says what Vision Studio is and that it takes about 60 seconds, then highlights the sidebar, the composer, the brief card, and the Build button. Next, Back, and close. Finishing or closing stores that it was seen. Help, in the sidebar, holds Replay tour and Shortcuts. The tour does not mention a feature that is switched off.
 
-Flags live in `apps/web/src/features.ts`: record, soloMute, fullMix, styleguideLink, demo, analyser, and edits. Analyser and edits are off, so Song analyser and Song edits show a Soon pill and are not clickable. Solo and mute are local when the flag is on. Mute drops that layer from playback and from the next full build. Solo keeps only that layer. The buttons use `aria-pressed`. Recent ideas are remembered in localStorage.
+Flags live in `apps/web/src/features.ts`: record, soloMute, fullMix, styleguideLink, demo, analyser, and edits. Analyser and edits are off, so Song analyser and Song edits show a Soon pill and are not clickable. Solo and mute are local when the flag is on. Mute drops that layer from playback and from the next full build. Solo keeps only that layer. The buttons use `aria-pressed`. Recent ideas are kept in localStorage, up to 20, newest first. The first turn of a session saves the title, date, brief, prompts, selected layers, and any render paths. Opening one restores that session on screen without another agent turn. If a render file is gone, that layer says Build again. Rename and delete sit on the row.
 
 Under 1200px the rail becomes a tabbed panel above the composer. Under 768px the sidebar is a drawer opened from a menu button, and the thread is full width.
 

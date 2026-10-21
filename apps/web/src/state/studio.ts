@@ -1,5 +1,6 @@
 import { create } from "zustand"
 
+import type { RecentIdea, RecentMessage } from "../recentIdeas.ts"
 import type { RenderResult } from "../types/render_result.ts"
 import type { SlotName } from "../types/slot_name.ts"
 import type { TurnRequest } from "../types/turn_request.ts"
@@ -33,6 +34,9 @@ type StudioState = {
   muted: string[]
   focusedLane: string | null
   heard: boolean
+  restored: boolean
+  missing: string[]
+  thread: RecentMessage[]
   setTurn: (turn: TurnResponse | null) => void
   commitTurn: (turn: TurnResponse, clearOverrides?: boolean) => void
   queueOverride: (slot: SlotName, value: string) => void
@@ -54,6 +58,8 @@ type StudioState = {
   setFocusedLane: (layer: string | null) => void
   hear: () => void
   resetSession: () => void
+  restoreSession: (entry: RecentIdea) => void
+  setMissing: (layers: string[]) => void
 }
 
 export const useStudio = create<StudioState>((set) => ({
@@ -76,6 +82,9 @@ export const useStudio = create<StudioState>((set) => ({
   muted: [],
   focusedLane: null,
   heard: false,
+  restored: false,
+  missing: [],
+  thread: [],
   setTurn: (turn) => set({ turn }),
   commitTurn: (turn, clearOverrides = false) =>
     set((state) => ({
@@ -93,6 +102,8 @@ export const useStudio = create<StudioState>((set) => ({
       exportListing: null,
       exportError: null,
       heard: false,
+      restored: false,
+      missing: [],
     })),
   queueOverride: (slot, value) => set((state) => ({ overrides: { ...state.overrides, [slot]: value } })),
   editPrompt: (layer, field, value) =>
@@ -119,6 +130,8 @@ export const useStudio = create<StudioState>((set) => ({
       exportListing: null,
       exportError: null,
       heard: false,
+      restored: false,
+      missing: [],
     })),
   beginLayer: (layer, action) =>
     set((state) => ({
@@ -188,8 +201,55 @@ export const useStudio = create<StudioState>((set) => ({
       muted: [],
       focusedLane: null,
       heard: false,
+      restored: false,
+      missing: [],
+      thread: [],
     })),
+  restoreSession: (entry) =>
+    set((state) => ({
+      sessionId: entry.sessionId,
+      turn: {
+        status: entry.status,
+        question: entry.question,
+        brief: entry.brief,
+        prompts: entry.prompts,
+        trace: entry.trace,
+      },
+      renders: entry.renders.map((item) => ({ ...item })),
+      picks: {},
+      status: entry.status === "ready" ? "ready" : "idle",
+      overrides: {},
+      promptEdits: {},
+      streamToken: state.streamToken + 1,
+      runId: 0,
+      layerOrder: layerOrder(entry.renders),
+      runs: {},
+      failures: {},
+      takes: {},
+      exportListing: null,
+      exportError: null,
+      solo: null,
+      muted: [],
+      focusedLane: null,
+      heard: false,
+      restored: true,
+      missing: [],
+      thread: entry.thread,
+    })),
+  setMissing: (layers) =>
+    set((state) => {
+      if (state.missing.length === layers.length && state.missing.every((layer, index) => layer === layers[index])) return state
+      return { missing: layers }
+    }),
 }))
+
+function layerOrder(renders: { layer: string }[]): string[] {
+  const order: string[] = []
+  for (const item of renders) {
+    if (!order.includes(item.layer)) order.push(item.layer)
+  }
+  return order
+}
 
 function without<T>(record: Record<string, T>, key: string): Record<string, T> {
   if (!(key in record)) return record

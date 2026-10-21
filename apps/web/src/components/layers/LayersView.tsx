@@ -2,6 +2,7 @@ import { motion, useReducedMotion } from "framer-motion"
 import { memo, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react"
 
 import { fileName, fileUrl } from "../../api/client.ts"
+import { missingLayers } from "../../recentIdeas.ts"
 import { features } from "../../features.ts"
 import { transport } from "../../playback/transport.ts"
 import { lanePaint } from "../../studio/lanes.ts"
@@ -18,6 +19,9 @@ export function LayersView() {
   const layerOrder = useStudio((state) => state.layerOrder)
   const status = useStudio((state) => state.status)
   const runId = useStudio((state) => state.runId)
+  const restored = useStudio((state) => state.restored)
+  const sessionId = useStudio((state) => state.sessionId)
+  const setMissing = useStudio((state) => state.setMissing)
   const reduce = useReducedMotion()
   const results = useRef<HTMLDivElement>(null)
   const seen = useRef(0)
@@ -30,6 +34,20 @@ export function LayersView() {
     seen.current = runId
     results.current?.focus()
   }, [runId])
+
+  useEffect(() => {
+    if (!restored || renders.length === 0) {
+      setMissing([])
+      return
+    }
+    let cancel = false
+    void unavailablePaths(sessionId, renders).then((paths) => {
+      if (!cancel) setMissing(missingLayers(renders, paths))
+    })
+    return () => {
+      cancel = true
+    }
+  }, [restored, renders, sessionId, setMissing])
 
   return (
     <div id="results" ref={results} tabIndex={-1} className="flex flex-col gap-3 outline-none" aria-busy={status === "working" || undefined}>
@@ -55,6 +73,7 @@ const LayerCard = memo(function LayerCard({ layer, reduce }: { layer: string; re
   const title = layerTitle(layer)
   const paint = lanePaint(layer)
   const variations = renders.filter((item) => item.layer === layer).sort((left, right) => left.variant - right.variant)
+  const unavailable = useStudio((state) => state.missing.includes(layer))
   const [tab, setTab] = useState(1)
   const isMuted = muted.includes(layer)
 
@@ -110,7 +129,12 @@ const LayerCard = memo(function LayerCard({ layer, reduce }: { layer: string; re
             </Button>
           </>
         ) : null}
-        {variations.length > 0 && !failure && !run ? (
+        {unavailable ? (
+          <Button tone="secondary" onClick={() => void renderCurrent(layer)}>
+            Build again
+          </Button>
+        ) : null}
+        {variations.length > 0 && !unavailable && !failure && !run ? (
           <Button
             tone="secondary"
             aria-label={`Another take for ${title}`}
@@ -136,7 +160,7 @@ const LayerCard = memo(function LayerCard({ layer, reduce }: { layer: string; re
           </Button>
         </div>
       ) : null}
-      {variations.length > 0 ? (
+      {unavailable ? null : variations.length > 0 ? (
         <div role="tablist" aria-label={`${title} variations`} className="flex gap-2">
           {variations.map((item) => (
             <button
@@ -155,12 +179,30 @@ const LayerCard = memo(function LayerCard({ layer, reduce }: { layer: string; re
       ) : (
         <p>Each layer comes back as three variations.</p>
       )}
-      {variations.map((item) => (
-        <Variation key={item.variant} result={item} take={take} selected={tab === item.variant} ink={paint.ink} wave={paint.wave} progress={paint.progress} />
-      ))}
+      {unavailable
+        ? null
+        : variations.map((item) => (
+            <Variation key={item.variant} result={item} take={take} selected={tab === item.variant} ink={paint.ink} wave={paint.wave} progress={paint.progress} />
+          ))}
     </motion.section>
   )
 })
+
+async function unavailablePaths(sessionId: string, renders: RenderResult[]): Promise<Set<string>> {
+  const paths = [...new Set(renders.map((item) => item.path))]
+  const missing = new Set<string>()
+  await Promise.all(
+    paths.map(async (path) => {
+      try {
+        const response = await fetch(fileUrl(sessionId, path), { method: "HEAD" })
+        if (!response.ok) missing.add(path)
+      } catch {
+        missing.add(path)
+      }
+    }),
+  )
+  return missing
+}
 
 function Variation({
   result,

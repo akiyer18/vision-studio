@@ -2,10 +2,11 @@ import { AudioWaveform, Keyboard, Menu, Music, SlidersHorizontal, X } from "luci
 import { useEffect, useRef, useState } from "react"
 
 import { features } from "../../features.ts"
-import { inputBridge } from "../../input/bridge.ts"
-import { readRecent } from "../../recentIdeas.ts"
+import { transport } from "../../playback/transport.ts"
+import type { RecentIdea } from "../../recentIdeas.ts"
 import type { UiStatus } from "../../state/studio.ts"
 import { useStudio } from "../../state/studio.ts"
+import { RecentList } from "./RecentList.tsx"
 
 const statusLabel: Record<UiStatus, string> = {
   idle: "Waiting",
@@ -29,23 +30,11 @@ type Props = {
 
 export function Sidebar({ open, onClose, onReplay }: Props) {
   const status = useStudio((state) => state.status)
-  const [ideas, setIdeas] = useState(readRecent)
+  const restoreSession = useStudio((state) => state.restoreSession)
   const [menu, setMenu] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const helpRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    function sync() {
-      setIdeas(readRecent())
-    }
-    window.addEventListener("vision-studio-recent", sync)
-    window.addEventListener("storage", sync)
-    return () => {
-      window.removeEventListener("vision-studio-recent", sync)
-      window.removeEventListener("storage", sync)
-    }
-  }, [])
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -82,14 +71,10 @@ export function Sidebar({ open, onClose, onReplay }: Props) {
     if (shortcutsOpen) dialogRef.current?.focus()
   }, [shortcutsOpen])
 
-  function recall(text: string) {
-    try {
-      inputBridge().apply(text, null)
-    } catch {
-      return
-    }
+  function openRecent(entry: RecentIdea) {
+    transport.stop()
+    restoreSession(entry)
     onClose()
-    document.getElementById("idea")?.focus()
   }
 
   return (
@@ -119,26 +104,7 @@ export function Sidebar({ open, onClose, onReplay }: Props) {
         <SoonItem icon={AudioWaveform} label="Song analyser" soon={!features.analyser} />
         <SoonItem icon={SlidersHorizontal} label="Song edits" soon={!features.edits} />
       </nav>
-      <div className="min-h-0 flex-1 overflow-auto">
-        <p className="text-sm text-muted">Recent ideas</p>
-        {ideas.length === 0 ? (
-          <p className="mt-2 text-sm text-secondary">Recent ideas land here.</p>
-        ) : (
-          <ul className="mt-2 flex flex-col gap-1">
-            {ideas.map((idea) => (
-              <li key={idea}>
-                <button
-                  type="button"
-                  className="w-full truncate rounded-xl px-2 py-1.5 text-left text-sm text-secondary hover:text-ink"
-                  onClick={() => recall(idea)}
-                >
-                  {idea}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      <RecentList onOpen={openRecent} />
       <div className="relative flex flex-col gap-3">
         <button
           ref={helpRef}

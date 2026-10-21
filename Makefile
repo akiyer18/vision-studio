@@ -14,6 +14,7 @@ dev:
 
 test:
 	uv run pytest
+	npm --prefix apps/web test
 	npm --prefix apps/web run typecheck
 	npm --prefix apps/web run lint
 
