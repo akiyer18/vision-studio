@@ -8,7 +8,7 @@ assert.ok(Anthropic && betaZodTool, "SDK helpers import");
 assert.equal(MODEL, "claude-opus-5-5");
 assert.ok(PRODUCER_SYSTEM.includes("dry one-shot") && PRODUCER_SYSTEM.includes("ok:true"), "system prompt has prompt rules + ok rule");
 
-const calls = [], events = [];
+const calls = [], events = []; let refCounter = 2;
 const ctx = {
   emit: (e) => events.push(e),
   synth: async (o) => { calls.push(["synth", o]); return { path: "/out/x.wav", name: "x.wav", url: "/out/x.wav", durationSeconds: 1, peakDb: -1 }; },
@@ -25,6 +25,18 @@ const ctx = {
   tuneSample: async (o) => { calls.push(["tuneSample", o]); return { path: `/out/${o.name}.wav`, url: `/out/${o.name}.wav`, detectedMidi: 36, appliedSemitones: o.semitones ?? 5 }; },
   shapeSample: async (o) => { calls.push(["shapeSample", o]); return { path: `/out/${o.name}.wav`, url: `/out/${o.name}.wav`, durationSeconds: (o.lengthMs || 500) / 1000 }; },
   reviewMix: async () => { calls.push(["reviewMix"]); return { path: "/out/preview.wav", whole: { loudness: { integratedLufs: -11.2, peakDbfs: -0.9, rmsDbfs: -14, crestFactorDb: 9.1 }, ratings: { loudness: { level: "high", value: -11.2, unit: "LUFS" }, punch: { level: "low", value: 9.1, unit: "dB crest" } }, summary: "whole mix crest 9 dB" }, perLayer: { Kick: { ratings: { subWeight: { level: "high", value: 0.4, unit: "share" } } }, Bass: { ratings: { subWeight: { level: "high", value: 0.38, unit: "share" } } }, Hats: { ratings: { loudness: { level: "high", value: -9, unit: "LUFS" } } } }, issues: [{ severity: "high", text: "Kick and Bass both high sub share (0.40 / 0.38): masking below 80 Hz", fix: "add_effect Bass EQ Eight highpass 60 Hz" }, { severity: "medium", text: "Hats 4 dB above Snare", fix: "set_mixer Hats volume 0.6" }] }; },
+  stems: async (p) => { calls.push(["stems", p]); return { stems: { drums: "/out/stems/drums.wav", bass: "/out/stems/bass.wav", other: "/out/stems/other.wav", vocals: "/out/stems/vocals.wav" } }; },
+  addRef: async (name, path) => { calls.push(["addRef", name, path]); refCounter += 1; return { index: refCounter, name }; },
+  analyzeMusic: async (p) => { calls.push(["analyzeMusic", p]); return { tempo: 93.2, beats: Array(60).fill(0), downbeats: Array(15).fill(0), key: { tonic: "F", mode: "minor", confidence: 0.81 }, onsets: Array(120).fill(0), groove: { swing: 0.22, microtiming: Array.from({ length: 16 }, (_, i) => (i % 2 ? 11.3 : -1.2)), velocityProfile: Array.from({ length: 16 }, (_, i) => (i % 4 ? 0.7 : 1)) }, sections: [{ start: 0, end: 15.5 }, { start: 15.5, end: 31 }], duration: 31 }; },
+  setGroove: async (g) => { calls.push(["setGroove", g]); },
+  transcribeLocal: async (p, o) => { calls.push(["transcribeLocal", p, o]); return { notes: [{ pitch: 53, startBeats: 0, durationBeats: 1, velocity: 100 }], bars: 1, bpm: 93 }; },
+  processAudio: async (p, chain, name) => { calls.push(["processAudio", p, chain, name]); return { path: `/out/${name}.wav`, url: `/out/${name}.wav`, peakDbfs: -1.02 }; },
+  masterAudio: async (lufs) => { calls.push(["masterAudio", lufs]); return { path: "/out/master.wav", url: "/out/master.wav", lufs: lufs + 0.1, peakDbfs: -1 }; },
+  generateLoop: async (o) => { calls.push(["generateLoop", o]); return { loop: { path: "/out/loop.wav", url: "/out/loop.wav" }, kit: o.kind === "drums" ? [{ kind: "kick", path: "/out/k.wav", time: 0.012 }, { kind: "snare", path: "/out/s.wav", time: 0.655 }, { kind: "hat_closed", path: "/out/h.wav", time: 0.33 }] : [] }; },
+  restyleMix: async (o) => { calls.push(["restyleMix", o]); return { path: "/out/restyle.wav", url: "/out/restyle.wav", durationSeconds: 7.7 }; },
+  productionDna: async (p) => { calls.push(["productionDna", p]); return { drums: { kick: "round dusty kick, soft attack", snare: "cracked layered snare", hats: "crisp swung hats" }, groove: "lazy, behind the beat", space: "short plate on snare", tempo: 93, key: "F minor", arrangement: "8-bar loops, drop at bar 17", expensive: ["kick and bass share a sub lane", "hats panned wide", "vocal chops tuned"] }; },
+  critiqueMix: async (ref) => { calls.push(["critiqueMix", ref]); return { groove: "straight vs reference swing 0.22", lowEnd: "kick/bass masking 60-90 Hz", topFixes: [{ what: "bass highpass", how: "add_effect Bass EQ Eight highpass 60 Hz" }] }; },
+  labelPieces: async (paths) => { calls.push(["labelPieces", paths]); return paths.map((p, i) => ({ path: p, label: i % 2 ? "consonant" : "vowel", pitchedness: i % 2 ? 0.2 : 0.9, usableAs: i % 2 ? "perc" : "chop" })); },
   listen: async (p, q) => { calls.push(["listen", p, q]); return { text: "a dry, clicky kick with a short sub tail; dark and driving" }; },
   judge: async (p, intent) => { calls.push(["judge", p, intent]); return { text: "tight and clicky but the sub tail is too short", match: 6 }; },
   transcribe: async (p, o) => { calls.push(["transcribe", p, o]); return { notes: Array.from({ length: 12 }, (_, i) => ({ pitch: 60 + (i % 5), startBeats: i * 0.5, durationBeats: 0.5, velocity: 90 })), bars: 2, bpm: 118, tracks: [{ name: "piano", noteCount: 12 }], summary: "12 notes, piano", midiPath: "/tmp/t.mid", ms: 1234 }; },
@@ -57,7 +69,7 @@ const ctx = {
 };
 
 const tools = makeTools(ctx, { beat: "/tmp/fake.wav", refs: [{ name: "loop.wav", path: "/tmp/ref1.wav" }, { name: "kick.wav", path: "/tmp/ref2.wav" }] });
-const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "transcribe_audio", "judge_sound", "slice_sample", "chop_sample", "load_device", "add_effect", "set_param", "list_devices", "set_mixer", "create_scene", "fire_scene", "record_arrangement", "analyze_audio", "compare_audio", "render_preview", "set_track_color", "capture_midi", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "show_live", "play", "stop"];
+const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "transcribe_audio", "judge_sound", "slice_sample", "chop_sample", "load_device", "add_effect", "set_param", "list_devices", "set_mixer", "create_scene", "fire_scene", "record_arrangement", "analyze_audio", "compare_audio", "render_preview", "set_track_color", "capture_midi", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "separate_stems", "analyze_music", "process_audio", "master_preview", "generate_loop", "restyle_mix", "production_dna", "critique_mix", "label_pieces", "show_live", "play", "stop"];
 assert.deepEqual(tools.map((t) => t.name), expected, "tool names");
 for (const t of tools) {
   assert.ok(t.description && t.description.length > 20, `${t.name} description`);
@@ -102,6 +114,15 @@ const sample = {
   browse_library: { root: "sounds", query: "Bass" },
   mix_balance: { overrides: [{ track: "Hats", volume: 0.6 }] },
   review_mix: {},
+  separate_stems: { which: "ref#1" },
+  analyze_music: { which: "ref#1" },
+  process_audio: { which: "/out/vox.wav", chain: [{ type: "highpass", hz: 150 }, { type: "compressor", threshold_db: -18, ratio: 4, attack_ms: 5, release_ms: 80 }], name: "vox-proc" },
+  master_preview: { lufs: -12 },
+  generate_loop: { prompt: "dusty boom bap drum loop, round kick, cracked snare", bpm: 93, bars: 2, kind: "drums" },
+  restyle_mix: { prompt: "warm tape-saturated boom bap", strength: 0.45 },
+  production_dna: { which: "ref#1" },
+  critique_mix: { reference: "ref#1" },
+  label_pieces: { paths: ["/out/p0.wav", "/out/p1.wav"] },
   show_live: {}, play: {}, stop: {},
 };
 for (const t of tools) {
@@ -136,7 +157,9 @@ assert.equal(lf.ok, false); assert.match(lf.error, /timed out/); assert.equal(ev
 assert.ok(PRODUCER_SYSTEM.includes("judge_sound") && PRODUCER_SYSTEM.includes("at most 3"), "system prompt covers ears + cap");
 // transcribe_audio: ok path (ref), summary truncation keeps full count, bad ref -> ok:false, schema bounds
 const tr = tools.find((t) => t.name === "transcribe_audio");
+const savedLocal = ctx.transcribeLocal; ctx.transcribeLocal = undefined;   // this block tests the MuScriptor path
 const trOk = JSON.parse(await tr.run(tr.parse({ which: "ref#1", instruments: ["acoustic_piano"] })));
+assert.equal(trOk.engine, "muscriptor");
 assert.equal(trOk.ok, true); assert.equal(trOk.noteCount, 12); assert.equal(trOk.bars, 2); assert.equal(trOk.bpm, 118);
 assert.equal(trOk.notes.split(" ").length, 12, "all 12 notes present as compact strings"); assert.match(trOk.notes, /^\d+@[\d.]+:[\d.]+/); assert.equal(trOk.format, "pitch@startBeats:durationBeats[vVelocity]");
 assert.deepEqual(calls.filter((c) => c[0] === "transcribe").at(-1).slice(1), ["/tmp/ref1.wav", { instruments: ["acoustic_piano"] }], "ref path + instruments forwarded");
@@ -145,6 +168,7 @@ assert.equal(trBad.ok, false); assert.match(trBad.error, /no ref#9/);
 const trHum = JSON.parse(await tr.run(tr.parse({ which: "hum" })));
 assert.equal(trHum.ok, false); assert.match(trHum.error, /no hum recording/);
 assert.throws(() => tr.parse({ which: "loop.wav" }), "which must be beat|hum|ref#N");
+ctx.transcribeLocal = savedLocal;
 assert.throws(() => tr.parse({ which: "ref#1", instruments: ["a","b","c","d","e","f","g"] }), "max 6 instrument hints");
 assert.ok(PRODUCER_SYSTEM.includes("transcribe_audio"), "system prompt mentions transcribe_audio");
 // lengthSeconds bound: 16 ok (long pad), 25 rejected
@@ -163,7 +187,7 @@ assert.equal(rh.ok, true); assert.equal(calls.filter((c) => c[0] === "humToNotes
 const rd = JSON.parse(await ar.run(ar.parse({ which: "ref#1" })));   // default as beat
 assert.equal(rd.ok, true); assert.ok("firstOnsetSeconds" in rd, "ref default analyzed as beat");
 const rbad = JSON.parse(await ar.run(ar.parse({ which: "ref#9", as: "beat" })));
-assert.equal(rbad.ok, false); assert.match(rbad.error, /no ref#9 .*2 reference files/);
+assert.equal(rbad.ok, false); assert.match(rbad.error, /no ref#9 .*\d+ reference files/);
 assert.throws(() => ar.parse({ which: "loop.wav" }), "which must be beat|hum|ref#N");
 const ss0 = tools.find((t) => t.name === "synthesize_sound");
 const rs = JSON.parse(await ss0.run(ss0.parse({ role: "kick", prompt: "kick like the reference, dry one-shot", source: "ref#1", offsetSeconds: 0.5 })));
@@ -314,7 +338,9 @@ const hn = JSON.parse(await T("analyze_recording").run({ which: "beat", as: "hum
 const hn2 = JSON.parse(await makeTools(ctx, { hum: "/tmp/hum.wav" }).find((t) => t.name === "analyze_recording").run({ which: "hum" }));
 assert.equal(hn2.noteCount, 70); assert.equal(hn2.truncated, 6); assert.equal(hn2.notes.split(" ").length, 64); assert.match(hn2.notes, /^60@0:0.25v80 61@0.25:0.25 /);
 ctx.transcribe = async () => ({ notes: many.slice(0, 10), bars: 1, bpm: 120, tracks: ["acoustic_piano"], summary: "piano" });
+const savedLocal2 = ctx.transcribeLocal; ctx.transcribeLocal = undefined;
 const tr2 = JSON.parse(await T("transcribe_audio").run({ which: "ref#1" }));
+ctx.transcribeLocal = savedLocal2;
 assert.equal(tr2.noteCount, 10); assert.equal(tr2.notes.split(" ").length, 10); assert.ok(!("truncated" in tr2));
 for (const k of ["PRODUCTION PLAYBOOK", "never copy bar 1", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "humanize", "QUALITY GATE", "reused:true", "Review:", "[density: minimal]", "i-VI-III-VII"]) assert.ok(PRODUCER_SYSTEM.includes(k), `system prompt has ${k}`);
 assert.ok(!PRODUCER_SYSTEM.includes("EFFECTS AND MIX (add_effect") && !PRODUCER_SYSTEM.includes("VOCAL CHOPS AND SAMPLE PIECES"), "old sections replaced");
@@ -337,6 +363,78 @@ const fxm = JSON.parse(await T("add_effect").run({ track: "Snare", device: "reve
 assert.equal(fxm.match, "ci"); assert.equal(fxm.device, "Reverb"); assert.equal(fxm.requested, "reverb");
 for (const k of ["LIVE 10 STANDARD ON THIS MACHINE", "NO Ping Pong Delay", "KIT PATH", "909 Core Kit.adg", "kick 36, snare 38, clap 39", "Arpeggiator", "Dynamic Tube", "bitcrusher", '"exact"|"alias"|"ci"|"fuzzy"', "return tracks"]) assert.ok(PRODUCER_SYSTEM.includes(k), `system prompt has ${k}`);
 assert.ok(!PRODUCER_SYSTEM.includes("Ping Pong Delay / Echo at"), "no nonexistent device recipe left");
+
+// v7: stems, music analysis, processing, mastering, loops, restyle, Gemini ears
+const addRefBefore = calls.filter((c) => c[0] === "addRef").length;
+const st = JSON.parse(await T("separate_stems").run({ which: "ref#1" }));
+assert.equal(st.stems.length, 4); assert.equal(st.stems[0].stem, "drums"); assert.match(st.stems[0].name, /^drums of loop$/); assert.match(st.stems[0].ref, /^ref#\d+$/);
+assert.equal(calls.filter((c) => c[0] === "addRef").length - addRefBefore, 4, "one addRef per stem");
+const vocalsRef = st.stems.find((x) => x.stem === "vocals").ref;
+// the new ref is addressable by later tools in the same turn
+ctx.analyze = async (p) => { calls.push(["analyze", p]); return { durationSeconds: 31, loudness: { integratedLufs: -16 }, ratings: { loudness: { level: "medium", value: -16, unit: "LUFS" } }, summary: "vocal stem" }; };
+const an3 = JSON.parse(await T("analyze_audio").run({ which: vocalsRef }));
+assert.equal(an3.ok, true); assert.equal(calls.filter((c) => c[0] === "analyze").at(-1)[1], "/out/stems/vocals.wav", "stem ref resolves");
+assert.equal(JSON.parse(await T("separate_stems").run({ which: "ref#99" })).ok, false);
+ctx.stems = async () => { throw new Error("demucs not installed / run tools/py/setup.sh"); };
+const stf = JSON.parse(await T("separate_stems").run({ which: "ref#1" })); assert.equal(stf.ok, false); assert.match(stf.error, /run tools\/py\/setup.sh/, "install message passes through");
+const am = JSON.parse(await T("analyze_music").run(sample.analyze_music));
+assert.equal(am.tempo, 93.2); assert.equal(am.beats, 60); assert.equal(am.downbeats, 15); assert.equal(am.onsets, 120); assert.equal(am.key, "F minor (conf 0.8)"); assert.equal(am.groove.swing, 0.2); assert.equal(am.groove.microtimingMs.length, 16); assert.equal(am.groove.velocityProfile[0], 1); assert.deepEqual(am.sections, ["0-15.5s", "15.5-31s"]); assert.equal(am.grooveStored, true);
+assert.equal(calls.filter((c) => c[0] === "setGroove").length, 1);
+ctx.analyzeMusic = async () => { throw new Error("librosa not installed / run tools/py/setup.sh"); };
+assert.equal(JSON.parse(await T("analyze_music").run(sample.analyze_music)).ok, false);
+const pa = JSON.parse(await T("process_audio").run(sample.process_audio));
+assert.equal(pa.samplePath, "/out/vox-proc.wav"); assert.equal(pa.peakDbfs, -1); assert.deepEqual(pa.chain, ["highpass", "compressor"]);
+assert.deepEqual(calls.filter((c) => c[0] === "processAudio").at(-1).slice(1, 2), ["/out/vox.wav"]);
+assert.throws(() => T("process_audio").parse({ ...sample.process_audio, chain: [] }), "empty chain rejected");
+assert.throws(() => T("process_audio").parse({ ...sample.process_audio, chain: [{ type: "flanger" }] }), "unknown type rejected");
+assert.throws(() => T("process_audio").parse({ ...sample.process_audio, chain: Array(9).fill({ type: "gain", db: -1 }) }), "9 effects rejected");
+ctx.processAudio = async () => { throw new Error("pedalboard not installed / run tools/py/setup.sh"); };
+assert.equal(JSON.parse(await T("process_audio").run(sample.process_audio)).ok, false);
+const mp = JSON.parse(await T("master_preview").run({})); assert.equal(mp.target, -12); assert.equal(mp.lufs, -11.9); assert.equal(mp.path, "/out/master.wav");
+assert.throws(() => T("master_preview").parse({ lufs: -3 }), "lufs -3 rejected");
+ctx.masterAudio = async () => { throw new Error("no render yet"); };
+assert.equal(JSON.parse(await T("master_preview").run({ lufs: -14 })).ok, false);
+const gl = JSON.parse(await T("generate_loop").run(sample.generate_loop));
+assert.equal(gl.loop.path, "/out/loop.wav"); assert.equal(gl.kitCount, 3); assert.equal(gl.kit[1].kind, "snare"); assert.equal(gl.kit[1].samplePath, "/out/s.wav"); assert.equal(gl.kit[1].time, 0.7);
+assert.equal(JSON.parse(await T("generate_loop").run({ ...sample.generate_loop, kind: "texture" })).kitCount, 0);
+assert.throws(() => T("generate_loop").parse({ ...sample.generate_loop, bars: 9 }), "bars 9 rejected");
+assert.throws(() => T("generate_loop").parse({ ...sample.generate_loop, kind: "vocals" }), "bad kind rejected");
+ctx.generateLoop = async () => { throw new Error("Stability 429"); };
+assert.equal(JSON.parse(await T("generate_loop").run(sample.generate_loop)).ok, false);
+const rsm = JSON.parse(await T("restyle_mix").run(sample.restyle_mix)); assert.equal(rsm.samplePath, "/out/restyle.wav"); assert.equal(rsm.durationSeconds, 7.7);
+assert.throws(() => T("restyle_mix").parse({ prompt: "x tape", strength: 0.9 }), "strength 0.9 rejected");
+assert.throws(() => T("restyle_mix").parse({ prompt: "x tape", strength: 0.1 }), "strength 0.1 rejected");
+ctx.restyleMix = async () => { throw new Error("nothing built yet"); };
+assert.equal(JSON.parse(await T("restyle_mix").run(sample.restyle_mix)).ok, false);
+const dna = JSON.parse(await T("production_dna").run(sample.production_dna));
+assert.equal(dna.dna.drums.kick, "round dusty kick, soft attack"); assert.equal(dna.dna.key, "F minor"); assert.equal(dna.dna.expensive.length, 3);
+assert.equal(calls.filter((c) => c[0] === "productionDna").at(-1)[1], "/tmp/ref1.wav");
+assert.equal(JSON.parse(await T("production_dna").run({ which: "ref#99" })).ok, false);
+ctx.productionDna = async () => { throw new Error("GEMINI_API_KEY not set"); };
+assert.equal(JSON.parse(await T("production_dna").run(sample.production_dna)).ok, false);
+const cq = JSON.parse(await T("critique_mix").run(sample.critique_mix));
+assert.equal(calls.filter((c) => c[0] === "critiqueMix").at(-1)[1], "/tmp/ref1.wav"); assert.match(cq.critique.topFixes[0].how, /highpass 60 Hz/);
+await T("critique_mix").run({}); assert.equal(calls.filter((c) => c[0] === "critiqueMix").at(-1)[1], undefined, "no reference -> undefined");
+ctx.critiqueMix = async () => { throw new Error("nothing built yet"); };
+assert.equal(JSON.parse(await T("critique_mix").run({})).ok, false);
+const lb = JSON.parse(await T("label_pieces").run(sample.label_pieces)); assert.equal(lb.count, 2); assert.equal(lb.labels[0].label, "vowel"); assert.equal(lb.labels[1].usableAs, "perc");
+assert.throws(() => T("label_pieces").parse({ paths: Array(13).fill("/out/p.wav") }), "13 paths rejected");
+assert.throws(() => T("label_pieces").parse({ paths: [] }), "0 paths rejected");
+ctx.labelPieces = async () => { throw new Error("GEMINI_API_KEY not set"); };
+assert.equal(JSON.parse(await T("label_pieces").run(sample.label_pieces)).ok, false);
+// transcribe: local first, MuScriptor fallback
+const trl = JSON.parse(await T("transcribe_audio").run({ which: "ref#1" }));
+assert.equal(trl.engine, "basic-pitch (local)"); assert.equal(trl.noteCount, 1); assert.equal(calls.filter((c) => c[0] === "transcribeLocal").length >= 1, true);
+ctx.transcribeLocal = async () => { throw new Error("basic-pitch not installed / run tools/py/setup.sh"); };
+ctx.transcribe = async () => ({ notes: [{ pitch: 60, startBeats: 0, durationBeats: 0.5, velocity: 100 }, { pitch: 64, startBeats: 0.5, durationBeats: 0.5, velocity: 100 }], bars: 1, bpm: 120, tracks: ["piano"], summary: "piano" });
+const trm = JSON.parse(await T("transcribe_audio").run({ which: "ref#1" }));
+assert.equal(trm.engine, "muscriptor"); assert.equal(trm.noteCount, 2); assert.match(trm.localFallbackReason, /not installed/);
+// useGroove passthrough
+await T("build_drum_layer").run(T("build_drum_layer").parse({ ...sample.build_drum_layer, useGroove: true }));
+assert.equal(calls.filter((c) => c[0] === "buildLane").at(-1)[1].useGroove, true);
+await T("update_layer").run(T("update_layer").parse({ ...sample.update_layer, useGroove: true }));
+assert.equal(calls.filter((c) => c[0] === "updateLayer").at(-1)[1].useGroove, true);
+for (const k of ["TOOL ROLES", "SAMPLING WORKFLOW", "separate_stems", "analyze_music", "production_dna", "critique_mix", "label_pieces", "generate_loop", "restyle_mix", "process_audio", "master_preview", "useGroove:true", "run tools/py/setup.sh", "never guess what audio sounds like"]) assert.ok(PRODUCER_SYSTEM.includes(k), `system prompt has ${k}`);
 
 // persistent attachments: note lists all, marks new vs earlier
 const fc = { beta: { messages: { toolRunner(params) { return { params, pushMessages() {}, async *[Symbol.asyncIterator]() { yield { role: "assistant", stop_reason: "end_turn", content: [] }; } }; } } } };
