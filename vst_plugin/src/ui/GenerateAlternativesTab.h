@@ -41,7 +41,7 @@ private:
     TextButton  generateButton;
     ResultBox   analysisResult;
     Component   altContainer;
-    Array<std::unique_ptr<AlternativeRow>> altRows;
+    Array<std::unique_ptr<GenAltRow>> altRows;
 
     void rebuildAltRows ();
     void updateStatus ();

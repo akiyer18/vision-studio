@@ -44,6 +44,8 @@ private:
 
     void updateStatus ();
 
+    void changeListenerCallback (ChangeBroadcaster*) override;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CreateFromScratchTab)
 };
 

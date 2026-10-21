@@ -69,5 +69,5 @@ jobs:
           name: ADE-Hack-macOS-AU-VST3
           path: |
             vst_plugin/build/ADEHack_artefacts/Release/AU/ADE Hack.component/**
-            vst_plugin/build/ADEHack_artefacts/Release/VST3/ADE Hack.vst3/**
+            vst_plugin/build/ADEHack_artefacts/Release/VST3/ADE Hack.vst3.macOS/**
           retention-days: 7
