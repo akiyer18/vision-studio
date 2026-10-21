@@ -381,21 +381,21 @@ app.post('/api/live/build', async (req, res) => {
         const sample = drums.lanes.find((l) => l.instrument === lane.instrument)?.samplePath;
         const t = await step(`create ${label} track`, { cmd: 'create_midi_track', name: label, index: -1 });
         nb.tracks[lane.instrument] = { index: t.index, name: label };
-        if (sample) await softStep(`load ${label} sound`, { cmd: 'load_sample', path: await toSlot(sample, lane.instrument, 'Snare'), track: t.index }, true);
-        await step(`${label} clip`, { cmd: 'create_clip', track: t.index, slot: 0, length: drums.pattern.bars * 4, notes: patternToLiveNotes({ ...drums.pattern, lanes: [lane] }, 'single'), fire: true, name: label, show: false });
+        if (sample) await softStep(`load ${label} sound`, { cmd: 'load_sample', path: await toSlot(sample, lane.instrument, 'Snare'), track: t.name ?? t.index }, true);
+        await step(`${label} clip`, { cmd: 'create_clip', track: t.name ?? t.index, slot: 0, length: drums.pattern.bars * 4, notes: patternToLiveNotes({ ...drums.pattern, lanes: [lane] }, 'single'), fire: true, name: label, show: false });
       }
     } else if (drums?.pattern?.lanes) {
       const t = await step('create Drums track', { cmd: 'create_midi_track', name: 'Drums', index: -1 });
       nb.tracks.drums = { index: t.index, name: 'Drums' };
-      if (drums.samplePath) await softStep('load drum sample', { cmd: 'load_sample', path: await toSlot(drums.samplePath, drums.role || '', 'Snare'), track: t.index }, true);
-      await step('drums clip', { cmd: 'create_clip', track: t.index, slot: 0, length: drums.pattern.bars * 4, notes: patternToLiveNotes(drums.pattern, drums.mapping || 'single'), fire: true, name: 'Drums', show: false });
+      if (drums.samplePath) await softStep('load drum sample', { cmd: 'load_sample', path: await toSlot(drums.samplePath, drums.role || '', 'Snare'), track: t.name ?? t.index }, true);
+      await step('drums clip', { cmd: 'create_clip', track: t.name ?? t.index, slot: 0, length: drums.pattern.bars * 4, notes: patternToLiveNotes(drums.pattern, drums.mapping || 'single'), fire: true, name: 'Drums', show: false });
     }
     if (synth?.notes?.length) {
       const synthName = (synth.role || 'Saw').replace(/^./, (c) => c.toUpperCase());
       const t = await step(`create ${synthName} track`, { cmd: 'create_midi_track', name: synthName, index: -1 });
       nb.tracks.synth = { index: t.index, name: synthName };
-      if (synth.samplePath) await softStep(`load ${synthName} sound`, { cmd: 'load_sample', path: await toSlot(synth.samplePath, synth.role || 'synth', 'Synth'), track: t.index }, true);
-      await step(`${synthName} clip`, { cmd: 'create_clip', track: t.index, slot: 0, length: melodyBars(synth.notes, synth.bars) * 4, notes: melodyToLiveNotes(synth.notes), fire: true, name: synthName });
+      if (synth.samplePath) await softStep(`load ${synthName} sound`, { cmd: 'load_sample', path: await toSlot(synth.samplePath, synth.role || 'synth', 'Synth'), track: t.name ?? t.index }, true);
+      await step(`${synthName} clip`, { cmd: 'create_clip', track: t.name ?? t.index, slot: 0, length: melodyBars(synth.notes, synth.bars) * 4, notes: melodyToLiveNotes(synth.notes), fire: true, name: synthName });
     }
     Object.assign(lastBuild, nb);
     await send({ cmd: 'show_view', view: 'Session' });
@@ -688,7 +688,7 @@ function makeCtx(emit) {
         const send = await liveClient();
         const t = await trackByName(send, name); if (!t) throw new Error(`no track named ${name}`);
         const slotPath = await toSlot(samplePath, role || name, 'Snare');
-        const r = okOrThrow(await sendWithRetry(send, { cmd: 'load_sample', path: slotPath, track: t.index }), 'load_sample');
+        const r = okOrThrow(await sendWithRetry(send, { cmd: 'load_sample', path: slotPath, track: t.name ?? t.index }), 'load_sample');
         rememberSound(t.name, samplePath, slotPath, role || name);
         return { track: t, replaced: r.replaced, devices: r.devices };
       },
