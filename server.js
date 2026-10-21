@@ -464,7 +464,7 @@ app.post('/api/tweak', async (req, res) => {
 // ================= v3: the producer agent (Claude with tools) =================
 const STATE_FILE = path.join(TMP, 'chat-state.json');
 const chat = { history: [], recordings: { refs: [] } };   // attachments persist for the whole session (and across restarts)
-try { const st = JSON.parse(await fs.readFile(STATE_FILE, 'utf8')); chat.history = st.history || []; chat.recordings = st.recordings || { refs: [] }; if (st.samples) lastBuild.samples = st.samples; if (st.tracks) lastBuild.tracks = st.tracks; if (st.bpm) lastBuild.bpm = st.bpm; if (st.clips) lastBuild.clips = st.clips; if (st.soundHistory) lastBuild.soundHistory = st.soundHistory; if (st.groove) lastBuild.groove = st.groove; if (st.lastRender) lastBuild.lastRender = st.lastRender; chat.promptHash = st.promptHash; } catch {}
+try { const st = JSON.parse(await fs.readFile(STATE_FILE, 'utf8')); chat.history = st.history || []; chat.recordings = st.recordings || { refs: [] }; if (st.samples) lastBuild.samples = st.samples; if (st.tracks) lastBuild.tracks = st.tracks; if (st.bpm) lastBuild.bpm = st.bpm; if (st.clips) lastBuild.clips = st.clips; if (st.explanations) lastBuild.explanations = st.explanations; if (st.soundHistory) lastBuild.soundHistory = st.soundHistory; if (st.groove) lastBuild.groove = st.groove; if (st.lastRender) lastBuild.lastRender = st.lastRender; chat.promptHash = st.promptHash; } catch {}
 lastBuild.samples ||= {};   // track name (lower) -> { samplePath, slotPath, role }
 // Thinking blocks are bound to the system prompt + tool list that produced them; after we change either, replaying them is a 400.
 import { createHash } from 'node:crypto';
@@ -490,7 +490,7 @@ function safeHistory(h, max = 60) {   // cut only at a plain user text message s
   while (i < h.length && !(h[i].role === 'user' && typeof h[i].content === 'string')) i++;
   return i < h.length ? h.slice(i) : [];
 }
-async function saveChat() { try { await fs.writeFile(STATE_FILE, JSON.stringify({ history: safeHistory(chat.history), recordings: chat.recordings, samples: lastBuild.samples, soundHistory: lastBuild.soundHistory, tracks: lastBuild.tracks, bpm: lastBuild.bpm, clips: lastBuild.clips, groove: lastBuild.groove || null, lastRender: lastBuild.lastRender || null, promptHash: chat.promptHash })); } catch (e) { console.warn('[state]', e.message); } }
+async function saveChat() { try { await fs.writeFile(STATE_FILE, JSON.stringify({ history: safeHistory(chat.history), recordings: chat.recordings, explanations: lastBuild.explanations || {}, samples: lastBuild.samples, soundHistory: lastBuild.soundHistory, tracks: lastBuild.tracks, bpm: lastBuild.bpm, clips: lastBuild.clips, groove: lastBuild.groove || null, lastRender: lastBuild.lastRender || null, promptHash: chat.promptHash })); } catch (e) { console.warn('[state]', e.message); } }
 lastBuild.soundHistory ||= {};   // track -> previous sounds (newest last), so a change is always undoable
 function rememberSound(trackName, samplePath, slotPath, role) {
   reservedSlots.delete(path.basename(slotPath || ''));
@@ -570,13 +570,20 @@ function makeCtx(emit) {
   const okOrThrow = (r, what) => { if (!r?.ok) throw new Error(`${what}: ${r?.error || 'failed'}`); return r; };
   return {
     emit,
-    async synth({ prompt, role = 'sound', kind, source, audioPath, offsetSeconds, lengthSeconds, oneshotSeconds, strength }) {
+    async synth({ prompt, role = 'sound', kind, source, audioPath, offsetSeconds, lengthSeconds, oneshotSeconds, strength, variations = 1 }) {
       if (!kind) kind = TONAL.has(String(role).toLowerCase()) ? 'tone' : 'drum';
       const useAudio = Boolean(audioPath) && source !== 'text';
-      const out = await synthesize({ prompt, name: role, kind: kind === 'tone' ? 'tone' : undefined, mode: useAudio ? 'oneshot' : 'text', audioPath: useAudio ? audioPath : undefined, offsetSeconds, oneshotSeconds: oneshotSeconds || lengthSeconds, strength: strength ?? 0.7 });
-      const one = out.files.find((f) => f.kind === 'oneshot') || out.files[0];
-      const audio = await import('./lib/audio.js');
-      return { path: one.path, name: one.name, url: one.url, durationSeconds: await audio.durationSeconds(one.path), peakDb: await audio.peakDb(one.path), seed: out.seed };
+      const n = clamp(Number(variations) || 1, 1, 3);
+      const one = async (label) => {
+        const out = await synthesize({ prompt, name: n > 1 ? `${role}-${label}` : role, kind: kind === 'tone' ? 'tone' : undefined, mode: useAudio ? 'oneshot' : 'text', audioPath: useAudio ? audioPath : undefined, offsetSeconds, oneshotSeconds: oneshotSeconds || lengthSeconds, strength: strength ?? 0.7 });
+        const f = out.files.find((x) => x.kind === 'oneshot') || out.files[0];
+        const audio = await import('./lib/audio.js');
+        return { path: f.path, name: f.name, url: f.url, durationSeconds: await audio.durationSeconds(f.path), peakDb: await audio.peakDb(f.path), seed: out.seed, label };
+      };
+      if (n === 1) return one('A');
+      const variants = await Promise.all(['A', 'B', 'C'].slice(0, n).map(one));
+      emit({ type: 'variations', group: `${role}-${Date.now()}`, role, items: variants.map((v) => ({ path: v.path, url: v.url, label: v.label, seed: v.seed })) });
+      return { variants, ...variants[0], note: `${n} variations (A/B/C); first returned as default` };
     },
     writePattern: async (o) => describeToPattern(o),
     async slice(refPath, { startSeconds = 0, lengthSeconds = 0.35, name = 'chop', fadeMs = 5 } = {}) {
@@ -621,6 +628,78 @@ function makeCtx(emit) {
         out.note = 'kit sliced from one loop: shared room/compression/character';
       }
       return out;
+    },
+    // ---- v9: hear and read the producer's own session ----
+    async captureLive({ bars = 4, scene } = {}) {
+      const cap = await import('./lib/capture.js');
+      if (!cap.captureAvailable()) throw new Error('Live audio capture not built: run `bash tools/capture/build.sh` (needs Xcode command line tools), then grant System Audio Recording to the terminal app in System Settings > Privacy & Security');
+      const send = await liveClient();
+      const bpm = lastBuild.bpm || Number((await send({ cmd: 'ping' }))?.tempo) || 120;
+      const seconds = Math.ceil(clamp(Number(bars) || 4, 1, 16) * 4 * 60 / bpm) + 1;
+      if (scene != null) await send({ cmd: 'play_scene_for', index: Number(scene), seconds: seconds + 1 });
+      else await send({ cmd: 'play_for', seconds: seconds + 1 });
+      await new Promise((r) => setTimeout(r, 400));   // let Live's launch quantization land
+      const outPath = path.join(OUT_DIR, `live-capture-${Date.now()}.wav`);
+      const r = await cap.captureLive({ seconds, outPath });
+      const out = { path: r.path, url: `/out/${encodeURIComponent(path.basename(r.path))}`, bars, seconds, silent: Boolean(r.silent), peakDbfs: r.peakDbfs };
+      if (!r.silent) { try { out.profile = await (await import('./lib/analyze.js')).analyzeAudio(r.path); } catch (e) { out.profileError = e.message; } }
+      lastBuild.lastCapture = r.path;
+      return out;
+    },
+    async critiqueCapture(p, refPath) {
+      if (!audioPathOk(p)) throw new Error('critique: path outside project audio');
+      if (refPath && !audioPathOk(refPath)) throw new Error('critique: reference path outside project audio');
+      return (await import('./lib/ears.js')).critiqueMix(p, refPath);
+    },
+    async importSample({ path: src, track, name, toneFix = {}, mode = 'oneshot' }) {
+      if (!audioPathOk(src)) throw new Error('import: path outside project audio');
+      let cur = src; const chain = [];
+      const hasFix = toneFix && Object.values(toneFix).some((v) => v != null && v !== false);
+      if (hasFix) {
+        const py = await import('./lib/pytools.js');
+        if (py.pyAvailable()) {
+          if (toneFix.highpassHz) chain.push({ type: 'highpass', hz: Number(toneFix.highpassHz) });
+          if (toneFix.lowpassHz) chain.push({ type: 'lowpass', hz: Number(toneFix.lowpassHz) });
+          if (toneFix.compress) chain.push({ type: 'compressor', threshold_db: -18, ratio: 3, attack_ms: 8, release_ms: 120 });
+          if (toneFix.gainDb) chain.push({ type: 'gain', db: Number(toneFix.gainDb) });
+          const r = await this.processAudio(cur, chain, name || 'imported');
+          cur = r.path;
+        } else {
+          const r = await this.shapeSample({ path: cur, highpassHz: toneFix.highpassHz, lowpassHz: toneFix.lowpassHz, gainDb: toneFix.gainDb, name: name || 'imported' });
+          chain.push('shape_sample (pytools not installed)'); cur = r.path;
+        }
+      } else if (!insideOut(cur)) { const f = await publish(await fs.readFile(cur), name || 'imported', '.wav', mode === 'loop' ? 'loop' : 'oneshot'); cur = f.path; }
+      const trackName = track || name || 'Sample';
+      const r = mode === 'loop' ? await this.live.buildLoopLayer({ name: trackName, samplePath: cur, bars: 2 }) : await this.live.loadSample({ name: trackName, samplePath: cur, role: 'perc' }).catch(async () => { const t = await ensureTrack(await liveClient(), trackName); return this.live.loadSample({ name: t.name, samplePath: cur, role: 'perc' }); });
+      return { path: cur, url: `/out/${encodeURIComponent(path.basename(cur))}`, track: trackName, chain, mode, live: r };
+    },
+    async restyleAudio({ path: src, prompt, strength = 0.5 }) {
+      if (!audioPathOk(src)) throw new Error('restyle: path outside project audio');
+      const audio = await import('./lib/audio.js');
+      const dur = await audio.durationSeconds(src);
+      const input = path.join(TMP, `restyle-ref-${Date.now()}.wav`);
+      if (dur < 6) await makeLoopInput(src, input); else await ffmpeg(['-i', src, '-t', '60', '-ac', '2', '-ar', '44100', input]);
+      const result = await audioToAudio({ wavPath: input, prompt: `TrackType: Music, ${String(prompt).trim().replace(/^(TrackType|Genre|Format):[^,]+,\s*/i, '')}`, strength: clamp(Number(strength), 0.3, 0.8), duration: Math.min(Math.max(6, Math.ceil(Math.min(dur, 60))), 60), model: LOOP_MODEL });
+      const f = await publish(result.buffer, 'alternative', '.wav', 'loop');
+      return { path: f.path, url: f.url, name: f.name, strength, basedOn: path.basename(src) };
+    },
+    async explain({ path: p, brief, choices = [], steps = {}, level = 'intermediate' }) {
+      lastBuild.explanations ||= {};
+      const key = p || `turn-${Date.now()}`;
+      const rec = { path: p || null, brief, choices, steps, level, at: Date.now() };
+      lastBuild.explanations[key] = rec;
+      emit({ type: 'explanation', ...rec });
+      await saveChat();
+      return { stored: key };
+    },
+    async genreGuide({ genre }) {
+      const Anthropic = (await import('@anthropic-ai/sdk')).default;
+      const client = new Anthropic();
+      const r = await client.messages.create({ model: 'claude-opus-5-5', max_tokens: 1200, output_config: { effort: 'low' },
+        system: 'You write short, factual genre guides for music producers. Be concrete. If unsure about a name or date, leave it out rather than guess.',
+        messages: [{ role: 'user', content: `Genre: ${genre}. Give: 5 lines of history (places, decades, scenes), 5 artists or tracks to study with one phrase each on why, 3 production hallmarks (drums, bass, space). End with the line: "From model knowledge; verify names before quoting."` }] });
+      const text = r.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+      return { genre, text, source: process.env.SOUNDCHARTS_API_KEY ? 'claude (Soundcharts lookup not implemented yet)' : 'claude model knowledge' };
     },
     async restyleMix({ prompt, strength = 0.45, bars }) {
       const r = await this.render({ bars });
@@ -927,6 +1006,8 @@ function makeCtx(emit) {
         rememberClip(t.name, { notes: [{ pitch: 60, startBeats: 0, durationBeats: bars * 4, velocity: 100 }], bars });
         return { track: t, loaded: Boolean(load?.ok), simpler: simp?.ok ? simp.done : simp?.error, clip: clip.mode, bars };
       },
+      describeSet: async () => okOrThrow(await (await liveClient())({ cmd: 'describe_set' }), 'describe_set'),
+      async getClipNotes({ track, slot = 0 }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'get_clip_notes', track: t.name, slot: Number(slot) || 0 }), 'get_clip_notes'); },
       setTrackColor: async ({ track, colorIndex, color_index }) => { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'set_track_color', track: t.name, color_index: Number(colorIndex ?? color_index) }), 'set_track_color'); },
       captureMidi: async () => okOrThrow(await (await liveClient())({ cmd: 'capture_midi' }), 'capture_midi'),
       clipEdit: async ({ track, slot = 0, ...ops }) => { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'clip_edit', track: t.name, slot: Number(slot) || 0, ...ops }), 'clip_edit'); },
@@ -981,6 +1062,7 @@ app.post('/api/refine', async (req, res) => {
     res.json(await ctx.refineSound({ path: String(p), intent: String(intent), currentPrompt: currentPrompt || intent, role: role || 'drum', rounds: rounds || 2, track }));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+app.get('/api/explanations', (_req, res) => res.json(lastBuild.explanations || {}));
 app.post('/api/render', async (req, res) => {
   try { const ctx = makeCtx(() => {}); const r = await ctx.render({ bars: req.body?.bars }); res.json(r); }
   catch (e) { res.status(500).json({ error: e.message }); }

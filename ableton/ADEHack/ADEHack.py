@@ -10,7 +10,7 @@ import socket
 import Live
 from _Framework.ControlSurface import ControlSurface
 
-VERSION = '5.3'
+VERSION = '5.4'
 HOST = '127.0.0.1'
 PORT = 9004
 GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 42,
@@ -18,7 +18,7 @@ GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 4
                  'crash': 49, 'perc': 54}
 WOULD_BLOCK = (errno.EAGAIN, errno.EWOULDBLOCK, errno.EINPROGRESS)
 PENDING = object()  # returned by a command that will reply later via schedule_message
-COMMANDS = ['arrangement_record', 'browse', 'capture_midi', 'clip_edit', 'create_clip', 'create_midi_track', 'create_scene', 'delete_device', 'delete_track', 'duplicate_clip', 'duplicate_scene', 'duplicate_track', 'fire_scene', 'focus_clip', 'list_devices', 'list_scenes', 'list_tracks', 'load_device', 'load_sample', 'ping', 'play', 'rename_scene', 'rename_track', 'sample_info', 'select_track', 'set_device_param', 'set_mixer', 'set_send', 'set_simpler', 'set_tempo', 'set_track_color', 'show_view', 'stop', 'stop_clip', 'transport_setup', 'version']
+COMMANDS = ['arrangement_record', 'browse', 'capture_midi', 'clip_edit', 'create_clip', 'create_midi_track', 'create_scene', 'delete_device', 'delete_track', 'describe_set', 'duplicate_clip', 'duplicate_scene', 'duplicate_track', 'fire_scene', 'focus_clip', 'get_clip_notes', 'list_devices', 'list_scenes', 'list_tracks', 'load_device', 'load_sample', 'ping', 'play', 'play_for', 'play_scene_for', 'rename_scene', 'rename_track', 'sample_info', 'select_track', 'set_device_param', 'set_mixer', 'set_send', 'set_simpler', 'set_tempo', 'set_track_color', 'show_view', 'stop', 'stop_clip', 'transport_setup', 'version']
 LOAD_RETRY_TICKS = 3   # ~0.3 s between browser re-scans
 LOAD_RETRY_MAX = 8     # ~2.4 s total before replying not found
 
@@ -36,6 +36,7 @@ class ADEHack(ControlSurface):
         self._ramp = None
         self._ramp_id = 0
         self._seq_id = 0
+        self._play_id = 0
         with self.component_guard():
             try:
                 self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -152,6 +153,14 @@ class ADEHack(ControlSurface):
                 return self._cmd_load_device(msg)
             if cmd == 'set_send':
                 return self._cmd_set_send(msg)
+            if cmd == 'describe_set':
+                return self._cmd_describe_set(msg)
+            if cmd == 'get_clip_notes':
+                return self._cmd_get_clip_notes(msg)
+            if cmd == 'play_for':
+                return self._cmd_play_for(msg, False)
+            if cmd == 'play_scene_for':
+                return self._cmd_play_for(msg, True)
             if cmd == 'set_simpler':
                 return self._cmd_set_simpler(msg)
             if cmd == 'sample_info':
@@ -986,6 +995,203 @@ class ADEHack(ControlSurface):
         return {'ok': not errors or bool(done), 'track': track.name,
                 'device': {'index': index, 'name': dev.name, 'class_name': getattr(dev, 'class_name', '')},
                 'done': done, 'errors': errors, 'state': self._simpler_state(dev)}
+
+    # ------------------------------------------------------- v5.4: read the set
+    NOTE_PREVIEW = 16
+    NOTE_CAP = 2000
+    CLIP_SLOT_CAP = 16
+
+    def _clip_notes(self, clip, cap):
+        """Live 10: Clip.get_notes(from_time, from_pitch, time_span, pitch_span) ->
+        ((pitch, time, duration, velocity, muted), ...)."""
+        try:
+            length = float(clip.length)
+        except Exception:
+            length = 0.0
+        span = max(length, float(getattr(clip, 'loop_end', 0) or 0), 1.0) + 1.0
+        try:
+            raw = clip.get_notes(0.0, 0, span, 128)
+        except Exception as e:
+            self.log_message('ADEHack: get_notes failed: %r' % (e,))
+            return [], 0, length
+        notes = []
+        for n in raw:
+            if len(notes) >= cap:
+                break
+            try:
+                notes.append({'pitch': int(n[0]), 'start': round(float(n[1]), 4), 'duration': round(float(n[2]), 4),
+                              'velocity': int(n[3]), 'mute': bool(n[4]) if len(n) > 4 else False})
+            except Exception:
+                continue
+        notes.sort(key=lambda x: (x['start'], x['pitch']))
+        return notes, len(raw), length
+
+    def _describe_clip(self, slot_index, slot):
+        clip = slot.clip
+        info = {'slot': slot_index}
+        for attr, key in (('name', 'name'), ('length', 'length'), ('is_playing', 'is_playing'),
+                          ('is_triggered', 'is_triggered'), ('looping', 'looping'), ('color_index', 'color_index')):
+            try:
+                v = getattr(clip, attr)
+                info[key] = v if isinstance(v, (bool, float)) else (u'%s' % (v,) if key == 'name' else int(v))
+            except Exception:
+                pass
+        is_midi = bool(getattr(clip, 'is_midi_clip', True))
+        info['is_audio'] = not is_midi
+        if is_midi:
+            notes, total, _ = self._clip_notes(clip, self.NOTE_PREVIEW)
+            info['note_count'] = total
+            info['notes_preview'] = notes
+        else:
+            try:
+                info['file_path'] = u'%s' % (clip.file_path,)
+            except Exception:
+                info['file_path'] = None
+            for attr in ('warping', 'gain'):
+                try:
+                    info[attr] = getattr(clip, attr)
+                except Exception:
+                    pass
+        return info
+
+    def _describe_track(self, i, t, sel):
+        info = {'index': i, 'name': t.name, 'is_midi': bool(t.has_midi_input), 'selected': t == sel}
+        try:
+            info['color_index'] = int(t.color_index)
+        except Exception:
+            pass
+        try:
+            info['is_group'] = bool(getattr(t, 'is_foldable', False))
+            info['group_track'] = t.group_track.name if getattr(t, 'is_grouped', False) and t.group_track else None
+        except Exception:
+            pass
+        try:
+            mixer = self._mixer_state(t)
+            try:
+                mixer['sends'] = [{'index': k, 'name': sp.name, 'level': float(sp.value)}
+                                  for k, sp in enumerate(t.mixer_device.sends)]
+            except Exception:
+                mixer['sends'] = []
+            info['mixer'] = mixer
+        except Exception as e:
+            info['mixer_error'] = '%r' % (e,)
+        devices = []
+        try:
+            for k, d in enumerate(t.devices):
+                dev = {'index': k, 'name': d.name, 'class_name': getattr(d, 'class_name', ''),
+                       'type': int(getattr(d, 'type', 0) or 0)}
+                try:
+                    dev['is_active'] = bool(d.is_active)
+                except Exception:
+                    pass
+                if dev['class_name'] in self.SIMPLER_CLASSES:
+                    try:
+                        dev['sample'] = u'%s' % (d.sample.file_path,) if d.sample is not None else None
+                    except Exception:
+                        pass
+                devices.append(dev)
+        except Exception as e:
+            info['devices_error'] = '%r' % (e,)
+        info['devices'] = devices
+        info['has_sound'] = any(d['type'] == 1 or d['class_name'] in self.SIMPLER_CLASSES
+                                or d['class_name'] in self.INSTRUMENT_CLASSES for d in devices) or not info['is_midi']
+        clips = []
+        try:
+            for k, slot in enumerate(t.clip_slots):
+                if slot.has_clip:
+                    clips.append(self._describe_clip(k, slot))
+                    if len(clips) >= self.CLIP_SLOT_CAP:
+                        break
+        except Exception as e:
+            info['clips_error'] = '%r' % (e,)
+        info['clips'] = clips
+        return info
+
+    def _cmd_describe_set(self, msg):
+        song = self.song()
+        sel = song.view.selected_track
+        out = {'ok': True, 'version': VERSION, 'tempo': float(song.tempo), 'is_playing': bool(song.is_playing)}
+        try:
+            out['loop'] = {'on': bool(song.loop), 'start': float(song.loop_start), 'length': float(song.loop_length)}
+        except Exception:
+            pass
+        try:
+            out['signature'] = '%d/%d' % (int(song.signature_numerator), int(song.signature_denominator))
+        except Exception:
+            pass
+        try:
+            out['current_song_time'] = float(song.current_song_time)
+        except Exception:
+            pass
+        scenes = list(song.scenes)
+        out['scenes'] = [{'index': k, 'name': sc.name} for k, sc in enumerate(scenes)]
+        try:
+            ss = song.view.selected_scene
+            out['selected_scene'] = {'index': scenes.index(ss), 'name': ss.name}
+        except Exception:
+            out['selected_scene'] = None
+        out['selected_track'] = {'index': self._index_of(sel), 'name': sel.name}
+        tracks = []
+        for i, t in enumerate(song.tracks):
+            try:
+                tracks.append(self._describe_track(i, t, sel))
+            except Exception as e:
+                tracks.append({'index': i, 'name': getattr(t, 'name', '?'), 'error': '%r' % (e,)})
+        out['tracks'] = tracks
+        try:
+            out['returns'] = [{'index': k, 'name': r.name, 'volume': float(r.mixer_device.volume.value)}
+                              for k, r in enumerate(song.return_tracks)]
+        except Exception:
+            out['returns'] = []
+        try:
+            out['master'] = {'volume': float(song.master_track.mixer_device.volume.value)}
+        except Exception:
+            out['master'] = None
+        try:
+            out['transport'] = self._transport_state()
+        except Exception:
+            pass
+        return out
+
+    def _cmd_get_clip_notes(self, msg):
+        track = self._track(msg.get('track', 'selected'))
+        slot_index = int(msg.get('slot', 0))
+        slot = track.clip_slots[slot_index]
+        if not slot.has_clip:
+            return {'ok': False, 'error': 'no clip in %s slot %d' % (track.name, slot_index)}
+        clip = slot.clip
+        if not getattr(clip, 'is_midi_clip', True):
+            return {'ok': False, 'error': 'slot %d on %s holds an audio clip' % (slot_index, track.name)}
+        notes, total, length = self._clip_notes(clip, self.NOTE_CAP)
+        return {'ok': True, 'track': track.name, 'slot': slot_index, 'name': u'%s' % (clip.name,),
+                'length': length, 'note_count': total, 'truncated': total > len(notes), 'notes': notes}
+
+    def _cmd_play_for(self, msg, scene):
+        song = self.song()
+        seconds = max(0.1, float(msg.get('seconds', 8)))
+        self._play_id += 1          # cancels any pending timed stop
+        play_id = self._play_id
+        reply = {'ok': True, 'stops_in_seconds': seconds}
+        if scene:
+            scenes = list(song.scenes)
+            index = int(msg.get('index', 0))
+            if index < 0 or index >= len(scenes):
+                return {'ok': False, 'error': 'scene index %d out of range (0..%d)' % (index, len(scenes) - 1)}
+            scenes[index].fire()
+            reply['scene'] = {'index': index, 'name': scenes[index].name}
+        else:
+            song.start_playing()
+        self.schedule_message(max(1, int(round(seconds * 10.0))), lambda: self._timed_stop(play_id))
+        return reply
+
+    def _timed_stop(self, play_id):
+        if play_id != self._play_id:
+            return
+        try:
+            self.song().stop_playing()
+            self.log_message('ADEHack: timed playback stopped')
+        except Exception as e:
+            self.log_message('ADEHack: timed stop failed: %r' % (e,))
 
     def _cmd_set_send(self, msg):
         track = self._track(msg.get('track', 'selected'))
