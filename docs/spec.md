@@ -256,3 +256,55 @@ On any Bedrock error or timeout, including a missing model id, extraction falls 
 Trace lines include "Claude read your idea", "Claude polished the drums prompt", "Kept your mood: joyful", and "Replaced the guessed mood peaceful with longing: …".
 
 Tests stub the Bedrock client. The live test is marked `bedrock` and runs only when `RUN_BEDROCK=1`.
+
+## 11. Functionality
+
+Vision Studio is a producer's translator. The producer describes what they hear, in words, with their voice, or with an instrument. The product makes that sound, explains how it got there, and teaches them to make it themselves in Logic. Text and sound can arrive in the same turn. "Here's my beatbox, make it a dusty lo-fi kit" is the headline example.
+
+Three rooms, one verb each.
+
+| Room | Verb | Bring | Get |
+| --- | --- | --- | --- |
+| Create | Make something new | Text, a sound (hum, beatbox, an instrument, a loop), or both | Layers or one specific sound, plus how it was made |
+| Analyse | Improve a track | A track or a bounce from the DAW | Feedback, alternatives, a comparison of what changed, and a genre guide |
+| Tweak | Reshape a sample | One sample | New variations of that sample, and similar samples to explore |
+
+Create:
+
+1. Bring the idea. Type, record, drop a file, or combine them.
+2. Choose layers or one specific sound. Layers are drums, chords, bass, melody, texture, all separately, or a mix.
+3. The agent asks only what is missing, at the producer's level. Every question can be answered, decided, skipped, or skipped entirely.
+4. Hear three variations. Pick one, or ask for another take.
+5. Learn from the result: how it was made, and how to make it in Logic.
+
+One specific sound is a sample-library request, such as "a snappy EDM snare" or "a warm 808". It is defined by genre, duration, mood, and brightness. Brightness is how much high-frequency content the sound has.
+
+Analyse:
+
+1. Upload a track, or a bounce from Logic.
+2. The report gives the basics and feedback. Basics are tempo, key, energy, brightness, how busy the rhythm is, and which instruments are present. Feedback is in producer terms and stays on instruments, rhythm, and arrangement.
+3. Alternatives are two or three versions of the track. Each one follows a single suggestion, such as warmer, more swing, or a lo-fi version.
+4. Comparison plays the original and each alternative side by side, and says what changed and why.
+5. The genre guide names the detected genre, gives a short factual history, and lists artists and tracks to study. History stays short and factual.
+
+Tweak:
+
+1. Drop one sample.
+2. Describe the change, such as "brighter", "punchier", or "more vinyl", or use a quick chip.
+3. Set how different the result should be, from a subtle change to a new sound.
+4. Hear three variations. Each one explains what changed.
+5. See similar sounds to explore next.
+
+Level is Beginner, Producer, or Pro. It changes three things: how many questions are asked and how they are worded, how deep the explanations go, and which controls are visible. The same result is explained more simply at Beginner and more technically at Pro.
+
+Explain runs in every room. Every result has a "How this was made" panel: the brief, the choices, and the reasons. Every alternative says what changed. Every created sound has "Make it in Logic" steps that recreate it with Logic's own instruments and plugins. Those steps come from the brief and the prompt. Explanation depth follows the level.
+
+Hackathon scope:
+
+| Room | Demo |
+| --- | --- |
+| Create | Live, including one specific sound and Make it in Logic |
+| Analyse | Live if time allows: the report, one or two alternatives, the explanation, and the genre card |
+| Tweak | Marked Soon in the sidebar, and named as the next step in the pitch |
+
+Analyse and Tweak share one path: audio in, guided variations out. Pitch line: "Hum it, describe it, or bring your track. Vision Studio makes the sound, explains how, and teaches you to make it yourself."
