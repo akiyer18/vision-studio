@@ -370,6 +370,7 @@ app.post('/api/live/build', async (req, res) => {
     }
     Object.assign(lastBuild, nb);
     await send({ cmd: 'show_view', view: 'Session' });
+    await send({ cmd: 'show_view', view: 'Detail/Clip' });
     res.json({ ok: true, steps, tracks: lastBuild.tracks });
   } catch (e) { res.status(500).json({ error: e.message, steps }); }
 });
@@ -377,7 +378,7 @@ app.post('/api/live/build', async (req, res) => {
 // ---- live tweaking: replace clips / samples / tempo in place while Live plays ----
 app.get('/api/live/state', (_req, res) => res.json(lastBuild));
 app.post('/api/live/show', async (_req, res) => {
-  try { const send = await liveClient(); res.json(await send({ cmd: 'show_view', view: 'Session' })); }
+  try { const send = await liveClient(); const r = await send({ cmd: 'show_view', view: 'Session' }); await send({ cmd: 'show_view', view: 'Detail/Clip' }); res.json(r); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/live/tempo', async (req, res) => {
@@ -482,7 +483,7 @@ function makeCtx(emit) {
     live: {
       setTempo: async (bpm) => { const send = await liveClient(); const r = okOrThrow(await send({ cmd: 'set_tempo', bpm }), 'set_tempo'); lastBuild.bpm = bpm; return r; },
       listTracks: async () => okOrThrow(await (await liveClient())({ cmd: 'list_tracks' }), 'list_tracks'),
-      show: async () => (await liveClient())({ cmd: 'show_view', view: 'Session' }),
+      show: async () => { const send = await liveClient(); const r = await send({ cmd: 'show_view', view: 'Session' }); await send({ cmd: 'show_view', view: 'Detail/Clip' }); return r; },
       play: async () => (await liveClient())({ cmd: 'play' }),
       stop: async () => (await liveClient())({ cmd: 'stop' }),
       deleteTrack: async (name) => { const send = await liveClient(); const t = await trackByName(send, name); if (!t) throw new Error(`no track named ${name}`); const r = okOrThrow(await send({ cmd: 'delete_track', track: t.index }), 'delete_track'); for (const k of Object.keys(lastBuild.tracks)) if (lastBuild.tracks[k].name === t.name) delete lastBuild.tracks[k]; return r; },

@@ -129,6 +129,10 @@ class ADEHack(ControlSurface):
                 name = msg.get('view', 'Session')
                 ok = self._show_view(name)
                 return {'ok': ok, 'view': name} if ok else {'ok': False, 'error': 'show_view(%r) failed' % (name,)}
+            if cmd == 'focus_clip':
+                return self._cmd_focus_clip(msg)
+            if cmd == 'arrangement_record':
+                return self._cmd_arrangement_record(msg)
             if cmd == 'play':
                 self.song().start_playing()
                 return {'ok': True, 'playing': True}
@@ -335,13 +339,8 @@ class ADEHack(ControlSurface):
         # already playing (it would retrigger from 0 at the next quantum).
         if msg.get('fire') and not getattr(slot, 'is_playing', False):
             slot.fire()
-        # Make the new clip visible: Live often sits in Arrangement view.
-        try:
-            self.song().view.highlighted_clip_slot = slot
-        except Exception as e:
-            self.log_message('ADEHack: highlighted_clip_slot failed: %r' % (e,))
         if msg.get('show', True):
-            self._show_view('Session')
+            self._focus_clip(slot, clip)
         return {'ok': True, 'track': track.name, 'slot': int(slot_index), 'notes': len(tup),
                 'mode': mode, 'playing': bool(getattr(slot, 'is_playing', False))}
 
@@ -355,6 +354,63 @@ class ADEHack(ControlSurface):
                 return
             except Exception as e:
                 self.log_message('ADEHack: clip length order %r failed: %r' % (order, e))
+
+    def _focus_clip(self, slot, clip):
+        """Bring a clip on screen: Session view with its slot highlighted, the clip
+        editor (Detail/Clip) showing it, scrolled to its loop so the notes are visible."""
+        done = []
+        for label, fn in (
+                ('highlighted_clip_slot', lambda: setattr(self.song().view, 'highlighted_clip_slot', slot)),
+                ('detail_clip', lambda: setattr(self.song().view, 'detail_clip', clip)),
+                ('Session', lambda: self._show_view('Session') or None),
+                ('Detail/Clip', lambda: self._show_view('Detail/Clip') or None),
+                ('show_loop', lambda: clip.view.show_loop())):
+            try:
+                fn()
+                done.append(label)
+            except Exception as e:
+                self.log_message('ADEHack: focus %s failed: %r' % (label, e))
+        return done
+
+    def _cmd_focus_clip(self, msg):
+        track = self._track(msg.get('track', 'selected'))
+        slot_index = msg.get('slot')
+        if slot_index is None:  # first slot holding a clip
+            slot_index = 0
+            for i, s in enumerate(track.clip_slots):
+                if s.has_clip:
+                    slot_index = i
+                    break
+        slot = track.clip_slots[int(slot_index)]
+        if not slot.has_clip:
+            return {'ok': False, 'error': 'no clip in %s slot %d' % (track.name, int(slot_index))}
+        return {'ok': True, 'track': track.name, 'slot': int(slot_index),
+                'focused': self._focus_clip(slot, slot.clip)}
+
+    def _cmd_arrangement_record(self, msg):
+        song = self.song()
+        bars = msg.get('bars')
+        if msg.get('stop'):
+            song.record_mode = False
+            song.stop_playing()
+            return {'ok': True, 'recording': False}
+        song.record_mode = True
+        song.start_playing()
+        reply = {'ok': True, 'recording': True, 'tempo': song.tempo}
+        if bars:
+            seconds = float(bars) * 4.0 * 60.0 / float(song.tempo)
+            ticks = max(1, int(round(seconds * 10.0)))  # ~100 ms per tick
+            self.schedule_message(ticks, self._stop_recording)
+            reply['stops_in_seconds'] = seconds
+        return reply
+
+    def _stop_recording(self):
+        try:
+            self.song().record_mode = False
+            self.song().stop_playing()
+            self.log_message('ADEHack: arrangement recording stopped')
+        except Exception as e:
+            self.log_message('ADEHack: stop recording failed: %r' % (e,))
 
     def _show_view(self, name):
         try:

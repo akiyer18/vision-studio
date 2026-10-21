@@ -5,11 +5,12 @@ Test: `printf '{"cmd":"ping"}\n' | nc 127.0.0.1 9004` (or `node ableton/client.j
 
 Commands: `ping`, `set_tempo {bpm}`, `list_tracks`, `select_track {track:int|name}`, `create_midi_track {name?, index=-1}`,
 `create_clip {track:"selected"|int|name, slot?, length, notes|pattern, mapping, singleNote, name?, fire?}` (an existing MIDI clip in the slot is updated in place via `select_all_notes()+replace_selected_notes()` so a playing clip
-stays in sync; pass recreate:true to delete+create instead; fire is skipped if the slot is already playing; highlights it and switches to Session view unless show:false),
+stays in sync; pass recreate:true to delete+create instead; fire is skipped if the slot is already playing; then focuses it like focus_clip unless show:false),
 `load_sample {path, track?:int|name, mode:"replace"|"append"}` (selects track first; replace = hot-swap the track's existing
 instrument via `browser.hotswap_target = device` so `load_item` swaps the sample instead of adding a second Simpler, falling back to `track.delete_device`; re-scans browser roots user_folders > current_project > user_library > samples
 every ~0.3 s for up to ~2.4 s via schedule_message before replying not found — freshly written wavs take a moment to index; use a client timeout >= 5 s),
-`show_view {view:"Session"|"Arranger"|"Detail/Clip"|"Detail/DeviceChain"}`, `play`, `stop`,
+`focus_clip {track, slot?}` (highlight slot, detail_clip, Session + Detail/Clip views, clip.view.show_loop()),
+`arrangement_record {bars?, stop?}` (record_mode + start_playing; auto-stops after bars via schedule_message), `show_view {view:"Session"|"Arranger"|"Detail/Clip"|"Detail/DeviceChain"}`, `play`, `stop`,
 `list_devices {track}`, `delete_track {track}`, `rename_track {track,name}`,
 `browse {root?}` (debug: top-level names under each browser root).
 Replies: one JSON line, `{"ok":true,...}` or `{"ok":false,"error":"..."}`.

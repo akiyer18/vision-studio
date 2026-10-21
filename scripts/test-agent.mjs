@@ -32,7 +32,7 @@ const ctx = {
   },
 };
 
-const tools = makeTools(ctx, { beat: "/tmp/fake.wav" });
+const tools = makeTools(ctx, { beat: "/tmp/fake.wav", refs: [{ name: "loop.wav", path: "/tmp/ref1.wav" }, { name: "kick.wav", path: "/tmp/ref2.wav" }] });
 const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "judge_sound", "show_live", "play", "stop"];
 assert.deepEqual(tools.map((t) => t.name), expected, "tool names");
 for (const t of tools) {
@@ -93,6 +93,27 @@ assert.equal(ss.parse({ role: "pad", prompt: "evolving pad, single sustained not
 assert.throws(() => ss.parse({ role: "pad", prompt: "pad", lengthSeconds: 25 }), "lengthSeconds 25 rejected");
 await ss.run(ss.parse({ role: "pad", prompt: "evolving pad, single sustained note, no drums", lengthSeconds: 12 }));
 assert.equal(calls.filter((c) => c[0] === "synth").at(-1)[1].oneshotSeconds, 12, "lengthSeconds forwarded");
+
+// reference files
+const ar = tools.find((t) => t.name === "analyze_recording");
+const rb = JSON.parse(await ar.run(ar.parse({ which: "ref#1", as: "beat" })));
+assert.equal(rb.ok, true); assert.equal(calls.filter((c) => c[0] === "beatboxToPattern").at(-1)[1], "/tmp/ref1.wav", "ref analyzed as beat");
+const rh = JSON.parse(await ar.run(ar.parse({ which: "ref#2", as: "hum", bpm: 100 })));
+assert.equal(rh.ok, true); assert.equal(calls.filter((c) => c[0] === "humToNotes").at(-1)[1], "/tmp/ref2.wav", "ref analyzed as hum");
+const rd = JSON.parse(await ar.run(ar.parse({ which: "ref#1" })));   // default as beat
+assert.equal(rd.ok, true); assert.ok("firstOnsetSeconds" in rd, "ref default analyzed as beat");
+const rbad = JSON.parse(await ar.run(ar.parse({ which: "ref#9", as: "beat" })));
+assert.equal(rbad.ok, false); assert.match(rbad.error, /no ref#9 .*2 reference files/);
+assert.throws(() => ar.parse({ which: "loop.wav" }), "which must be beat|hum|ref#N");
+const ss0 = tools.find((t) => t.name === "synthesize_sound");
+const rs = JSON.parse(await ss0.run(ss0.parse({ role: "kick", prompt: "kick like the reference, dry one-shot", source: "ref#1", offsetSeconds: 0.5 })));
+assert.equal(rs.ok, true);
+const rsc = calls.filter((c) => c[0] === "synth").at(-1)[1];
+assert.equal(rsc.audioPath, "/tmp/ref1.wav"); assert.equal(rsc.offsetSeconds, 0.5); assert.equal(rsc.strength, 0.6, "ref strength default 0.6");
+assert.equal(JSON.parse(await ss0.run(ss0.parse({ role: "kick", prompt: "x kick, dry one-shot", source: "ref#9" }))).ok, false, "bad ref in synth -> ok:false");
+const h = (await runProducer({ history: [], userText: "make it like this", recordings: { refs: [{ name: "loop.wav", path: "/tmp/ref1.wav" }] }, ctx, client: { beta: { messages: { toolRunner(params) { return { params, pushMessages() {}, async *[Symbol.asyncIterator]() { yield { role: "assistant", stop_reason: "end_turn", content: [] }; } }; } } } } })).history;
+assert.match(h[0].content, /ref#1 "loop.wav" \(path: \/tmp\/ref1.wav\)/); assert.match(h[0].content, /analyzed, imitated/);
+assert.ok(PRODUCER_SYSTEM.includes("REFERENCE FILES") && PRODUCER_SYSTEM.includes("ref#N"));
 
 // failures become ok:false strings, never throws
 ctx.live.setTempo = async () => { throw new Error("Live not reachable"); };
