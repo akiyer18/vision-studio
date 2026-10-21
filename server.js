@@ -251,13 +251,19 @@ const melodyToLiveNotes = (notes) => notes.map((n) => ({ pitch: n.pitch, start: 
 const melodyBars = (notes, bars) => bars || Math.max(1, Math.ceil(Math.max(0, ...notes.map((n) => n.startBeats + n.durationBeats)) / 4));
 
 // ---- Send straight into Ableton via the ADEHack remote script (ableton/client.js, TCP 9004) ----
+// Live's remote script handles one command at a time on a 100 ms tick; parallel tool calls would flood it, so serialize.
+let liveQueue = Promise.resolve();
 async function liveClient() {
   let sendToLive;
   try { ({ sendToLive } = await import('./ableton/client.js')); }
   catch { throw new Error('ableton/client.js missing - run ableton/install.sh'); }
-  return async (cmd) => {
-    try { return await sendToLive(cmd, { timeoutMs: cmd.cmd === 'load_sample' ? 8000 : 4000 }); }
-    catch (e) { throw new Error(`${e.message} Fix: fully quit and relaunch Live 10, then Preferences > Link/MIDI > Control Surface = "ADEHack".`); }
+  return (cmd) => {
+    const run = liveQueue.then(async () => {
+      try { return await sendToLive(cmd, { timeoutMs: /load_sample|load_to_pad|load_device|describe_set|browse/.test(cmd.cmd) ? 20000 : 12000 }); }
+      catch (e) { throw new Error(`${e.message} Fix: fully quit and relaunch Live 10, then Preferences > Link/MIDI > Control Surface = "ADEHack".`); }
+    });
+    liveQueue = run.catch(() => {});
+    return run;
   };
 }
 
@@ -408,6 +414,34 @@ app.post('/api/live/build', async (req, res) => {
 
 // ---- live tweaking: replace clips / samples / tempo in place while Live plays ----
 app.get('/api/live/state', (_req, res) => res.json(lastBuild));
+// ---- existing project: read the open set, listen to what is playing, propose production moves ----
+app.post('/api/project/scan', async (req, res) => {
+  try {
+    const bars = clamp(Number(req.body?.bars) || 8, 2, 16);
+    const send = await liveClient();
+    const set = await send({ cmd: 'describe_set' });
+    if (!set?.ok) throw new Error(set?.error || 'describe_set failed');
+    const tracks = (set.tracks || []).map((t) => ({ index: t.index, name: t.name, kind: t.is_midi ? 'midi' : 'audio', devices: (t.devices || []).map((d) => d.name || d.class_name).filter(Boolean).slice(0, 4), clips: Array.isArray(t.clips) ? t.clips.filter((c) => c && (c.name != null || c.has_clip)).length : (t.clip_count ?? undefined), muted: t.mute ?? t.muted ?? undefined, arrangementClips: t.arrangement_clips ?? undefined }));
+    const setNames = new Set((set.tracks || []).map((t) => t.name));
+    const ours = Object.values(lastBuild.tracks || {}).map((t) => t.name);
+    if (ours.length && !ours.every((n) => setNames.has(n))) {   // a different set is open: everything we remembered belongs to the old one
+      lastBuild.tracks = {}; lastBuild.samples = {}; lastBuild.groove = null; lastBuild.melody = null; lastBuild.lastCapture = null; lastBuild.genreTarget = null;
+      chat.history = []; await saveChat().catch(() => {});
+    }
+    lastBuild.bpm = Math.round(Number(set.tempo) || 0) || lastBuild.bpm;
+    let genreTarget = null;   // never judge a new project against a style left over from another one; the user picks it per scan
+    if (req.body?.genre) { try { const k = await import('./lib/knowledge.js'); const slug = k.matchGenre(String(req.body.genre)); const bp = slug && k.getBlueprint(slug); if (bp?.summary) { genreTarget = `${bp.title}: ${bp.summary}`; lastBuild.genreTarget = genreTarget; } } catch {} }
+    const ctx = makeCtx(() => {});
+    let capture = null, critique = null, captureError = null;
+    try { capture = await ctx.captureLive({ bars }); } catch (e) { captureError = e.message; }
+    let arrangement = null; try { arrangement = await send({ cmd: 'arrangement_info' }); } catch {}
+    if (capture && !capture.silent) { try { critique = await ctx.critiqueCapture(capture.path, null, { genreTarget, hints: `The Live set is at ${Math.round(Number(set.tempo))} BPM and its tracks are named: ${tracks.map((t) => t.name).join(', ')}.` }); } catch (e) { critique = { error: e.message }; } }
+    const project = { scannedAt: Date.now(), tempo: Number(set.tempo), signature: set.signature, loop: set.loop, position: set.current_song_time, arrangementBars: arrangement?.bars ?? null, selectedTrack: set.selected_track?.name, scenes: (set.scenes || []).length, tracks, capture: capture ? { url: capture.url, path: capture.path, seconds: capture.seconds, silent: capture.silent, profile: capture.profile } : null, captureError, critique, genreTarget, toldAgent: false };
+    lastBuild.project = project;
+    res.json({ ok: true, project });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 app.post('/api/live/show', async (_req, res) => {
   try { const send = await liveClient(); const r = await send({ cmd: 'show_view', view: 'Session' }); await send({ cmd: 'show_view', view: 'Detail/Clip' }); res.json(r); }
   catch (e) { res.status(500).json({ error: e.message }); }
@@ -463,8 +497,8 @@ app.post('/api/tweak', async (req, res) => {
 
 // ================= v3: the producer agent (Claude with tools) =================
 const STATE_FILE = path.join(TMP, 'chat-state.json');
-const chat = { history: [], recordings: { refs: [] } };   // attachments persist for the whole session (and across restarts)
-try { const st = JSON.parse(await fs.readFile(STATE_FILE, 'utf8')); chat.history = st.history || []; chat.recordings = st.recordings || { refs: [] }; if (st.samples) lastBuild.samples = st.samples; if (st.tracks) lastBuild.tracks = st.tracks; if (st.bpm) lastBuild.bpm = st.bpm; if (st.clips) lastBuild.clips = st.clips; if (st.soundHistory) lastBuild.soundHistory = st.soundHistory; if (st.groove) lastBuild.groove = st.groove; if (st.lastRender) lastBuild.lastRender = st.lastRender; chat.promptHash = st.promptHash; } catch {}
+const chat = { history: [], recordings: { refs: [] }, settings: { arrangementMode: true, arrangementBars: 8 } };   // attachments + settings persist (and across restarts)
+try { const st = JSON.parse(await fs.readFile(STATE_FILE, 'utf8')); chat.history = st.history || []; chat.recordings = st.recordings || { refs: [] }; if (st.settings) chat.settings = { ...chat.settings, ...st.settings }; if (st.genreTarget) lastBuild.genreTarget = st.genreTarget; if (st.samples) lastBuild.samples = st.samples; if (st.tracks) lastBuild.tracks = st.tracks; if (st.bpm) lastBuild.bpm = st.bpm; if (st.clips) lastBuild.clips = st.clips; if (st.explanations) lastBuild.explanations = st.explanations; if (st.soundHistory) lastBuild.soundHistory = st.soundHistory; if (st.groove) lastBuild.groove = st.groove; if (st.lastRender) lastBuild.lastRender = st.lastRender; chat.promptHash = st.promptHash; } catch {}
 lastBuild.samples ||= {};   // track name (lower) -> { samplePath, slotPath, role }
 // Thinking blocks are bound to the system prompt + tool list that produced them; after we change either, replaying them is a 400.
 import { createHash } from 'node:crypto';
@@ -490,7 +524,7 @@ function safeHistory(h, max = 60) {   // cut only at a plain user text message s
   while (i < h.length && !(h[i].role === 'user' && typeof h[i].content === 'string')) i++;
   return i < h.length ? h.slice(i) : [];
 }
-async function saveChat() { try { await fs.writeFile(STATE_FILE, JSON.stringify({ history: safeHistory(chat.history), recordings: chat.recordings, samples: lastBuild.samples, soundHistory: lastBuild.soundHistory, tracks: lastBuild.tracks, bpm: lastBuild.bpm, clips: lastBuild.clips, groove: lastBuild.groove || null, lastRender: lastBuild.lastRender || null, promptHash: chat.promptHash })); } catch (e) { console.warn('[state]', e.message); } }
+async function saveChat() { try { await fs.writeFile(STATE_FILE, JSON.stringify({ history: safeHistory(chat.history), recordings: chat.recordings, settings: chat.settings, genreTarget: lastBuild.genreTarget || null, explanations: lastBuild.explanations || {}, samples: lastBuild.samples, soundHistory: lastBuild.soundHistory, tracks: lastBuild.tracks, bpm: lastBuild.bpm, clips: lastBuild.clips, groove: lastBuild.groove || null, lastRender: lastBuild.lastRender || null, promptHash: chat.promptHash })); } catch (e) { console.warn('[state]', e.message); } }
 lastBuild.soundHistory ||= {};   // track -> previous sounds (newest last), so a change is always undoable
 function rememberSound(trackName, samplePath, slotPath, role) {
   reservedSlots.delete(path.basename(slotPath || ''));
@@ -570,13 +604,20 @@ function makeCtx(emit) {
   const okOrThrow = (r, what) => { if (!r?.ok) throw new Error(`${what}: ${r?.error || 'failed'}`); return r; };
   return {
     emit,
-    async synth({ prompt, role = 'sound', kind, source, audioPath, offsetSeconds, lengthSeconds, oneshotSeconds, strength }) {
+    async synth({ prompt, role = 'sound', kind, source, audioPath, offsetSeconds, lengthSeconds, oneshotSeconds, strength, variations = 1 }) {
       if (!kind) kind = TONAL.has(String(role).toLowerCase()) ? 'tone' : 'drum';
       const useAudio = Boolean(audioPath) && source !== 'text';
-      const out = await synthesize({ prompt, name: role, kind: kind === 'tone' ? 'tone' : undefined, mode: useAudio ? 'oneshot' : 'text', audioPath: useAudio ? audioPath : undefined, offsetSeconds, oneshotSeconds: oneshotSeconds || lengthSeconds, strength: strength ?? 0.7 });
-      const one = out.files.find((f) => f.kind === 'oneshot') || out.files[0];
-      const audio = await import('./lib/audio.js');
-      return { path: one.path, name: one.name, url: one.url, durationSeconds: await audio.durationSeconds(one.path), peakDb: await audio.peakDb(one.path), seed: out.seed };
+      const n = clamp(Number(variations) || 1, 1, 3);
+      const one = async (label) => {
+        const out = await synthesize({ prompt, name: n > 1 ? `${role}-${label}` : role, kind: kind === 'tone' ? 'tone' : undefined, mode: useAudio ? 'oneshot' : 'text', audioPath: useAudio ? audioPath : undefined, offsetSeconds, oneshotSeconds: oneshotSeconds || lengthSeconds, strength: strength ?? 0.7 });
+        const f = out.files.find((x) => x.kind === 'oneshot') || out.files[0];
+        const audio = await import('./lib/audio.js');
+        return { path: f.path, name: f.name, url: f.url, durationSeconds: await audio.durationSeconds(f.path), peakDb: await audio.peakDb(f.path), seed: out.seed, label };
+      };
+      if (n === 1) return one('A');
+      const variants = await Promise.all(['A', 'B', 'C'].slice(0, n).map(one));
+      emit({ type: 'variations', group: `${role}-${Date.now()}`, role, items: variants.map((v) => ({ path: v.path, url: v.url, label: v.label, seed: v.seed })) });
+      return { variants, ...variants[0], note: `${n} variations (A/B/C); first returned as default` };
     },
     writePattern: async (o) => describeToPattern(o),
     async slice(refPath, { startSeconds = 0, lengthSeconds = 0.35, name = 'chop', fadeMs = 5 } = {}) {
@@ -622,6 +663,313 @@ function makeCtx(emit) {
       }
       return out;
     },
+    // ---- v9: hear and read the producer's own session ----
+    async captureLive({ bars = 4, scene } = {}) {
+      const cap = await import('./lib/capture.js');
+      if (!cap.captureAvailable()) throw new Error('Live audio capture not built: run `bash tools/capture/build.sh` (needs Xcode command line tools), then grant System Audio Recording to the terminal app in System Settings > Privacy & Security');
+      const send = await liveClient();
+      const bpm = Number((await send({ cmd: 'ping' }))?.tempo) || lastBuild.bpm || 120;   // the set's tempo is authoritative
+      const seconds = Math.ceil(clamp(Number(bars) || 4, 1, 16) * 4 * 60 / bpm) + 1;
+      const barSec = 4 * 60 / bpm;
+      const total = seconds + Math.ceil(barSec) + 2;   // pre-roll: launch quantization can delay the start up to a bar
+      if (scene != null) await send({ cmd: 'play_scene_for', index: Number(scene), seconds: total });
+      else await send({ cmd: 'play_for', seconds: total });
+      for (let i = 0; i < 20; i++) { const st = await send({ cmd: 'ping' }); if (st?.is_playing !== false) break; await new Promise((r) => setTimeout(r, 150)); }
+      const rawPath = path.join(TMP, `live-capture-raw-${Date.now()}.wav`);
+      const r = await cap.captureLive({ seconds: total - 1, outPath: rawPath });
+      const outPath = path.join(OUT_DIR, `live-capture-${Date.now()}.wav`);
+      // drop the leading silence (before the first downbeat) and keep exactly N bars
+      await ffmpeg(['-i', r.path, '-af', `silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05,atrim=0:${seconds - 1}`, '-ac', '2', '-ar', '44100', outPath]).catch(async () => fs.copyFile(r.path, outPath));
+      const audio = await import('./lib/audio.js');
+      const dur = await audio.durationSeconds(outPath).catch(() => 0);
+      // sounding time: a -37 dBFS blip in 20 s of silence is not a performance; Gemini will happily invent a track from it
+      let sounding = dur;
+      try {
+        const sd = await new Promise((resolve) => { execFileCb('ffmpeg', ['-hide_banner', '-nostdin', '-i', outPath, '-af', 'silencedetect=noise=-40dB:d=0.25', '-f', 'null', '-'], { maxBuffer: 4e6 }, (_e, _o, se) => resolve(String(se || ''))); });
+        let quiet = 0, start = null;
+        for (const m of sd.matchAll(/silence_(start|end): ([\d.]+)/g)) { if (m[1] === 'start') start = Number(m[2]); else if (start != null) { quiet += Number(m[2]) - start; start = null; } }
+        if (start != null) quiet += Math.max(0, dur - start);
+        sounding = Math.max(0, dur - quiet);
+      } catch {}
+      const silent = Boolean(r.silent) || dur < 0.5 || (r.peakDbfs != null && r.peakDbfs < -30) || sounding < Math.min(barSec, dur * 0.3);
+      const out = { path: outPath, url: `/out/${encodeURIComponent(path.basename(outPath))}`, bars, bpm, seconds: Number(dur.toFixed(2)), soundingSeconds: Number(sounding.toFixed(2)), silent, peakDbfs: r.peakDbfs, note: silent ? `Live produced (almost) no sound: peak ${r.peakDbfs != null ? r.peakDbfs.toFixed(1) + ' dBFS' : 'none'}, ${sounding.toFixed(1)} s sounding of ${dur.toFixed(1)} s. Check: is the playhead on a section with clips, are the audio files online (no orange missing clips), is Back to Arrangement lit, is Live's output device the one it plays through?` : 'leading silence trimmed to the first downbeat' };
+      if (!silent) { try { out.profile = await (await import('./lib/analyze.js')).analyzeAudio(outPath); } catch (e) { out.profileError = e.message; } }
+      lastBuild.lastCapture = outPath;
+      return out;
+    },
+    async critiqueCapture(p, refPath, opts = {}) {
+      if (!audioPathOk(p)) throw new Error('critique: path outside project audio');
+      if (refPath && !audioPathOk(refPath)) throw new Error('critique: reference path outside project audio');
+      return (await import('./lib/ears.js')).critiqueMix(p, refPath, { genreTarget: opts.genreTarget || lastBuild.genreTarget, mixDetail: Boolean(opts.mixDetail) || chat.room === 'analyse', hints: opts.hints });
+    },
+    async importSample({ path: src, track, name, toneFix = {}, mode = 'oneshot' }) {
+      if (!audioPathOk(src)) throw new Error('import: path outside project audio');
+      let cur = src; const chain = [];
+      const hasFix = toneFix && Object.values(toneFix).some((v) => v != null && v !== false);
+      if (hasFix) {
+        const py = await import('./lib/pytools.js');
+        if (py.pyAvailable()) {
+          if (toneFix.highpassHz) chain.push({ type: 'highpass', hz: Number(toneFix.highpassHz) });
+          if (toneFix.lowpassHz) chain.push({ type: 'lowpass', hz: Number(toneFix.lowpassHz) });
+          if (toneFix.compress) chain.push({ type: 'compressor', threshold_db: -18, ratio: 3, attack_ms: 8, release_ms: 120 });
+          if (toneFix.gainDb) chain.push({ type: 'gain', db: Number(toneFix.gainDb) });
+          const r = await this.processAudio(cur, chain, name || 'imported');
+          cur = r.path;
+        } else {
+          const r = await this.shapeSample({ path: cur, highpassHz: toneFix.highpassHz, lowpassHz: toneFix.lowpassHz, gainDb: toneFix.gainDb, name: name || 'imported' });
+          chain.push('shape_sample (pytools not installed)'); cur = r.path;
+        }
+      } else if (!insideOut(cur)) { const f = await publish(await fs.readFile(cur), name || 'imported', '.wav', mode === 'loop' ? 'loop' : 'oneshot'); cur = f.path; }
+      const trackName = track || name || 'Sample';
+      const r = mode === 'loop' ? await this.live.buildLoopLayer({ name: trackName, samplePath: cur, bars: 2 }) : await this.live.loadSample({ name: trackName, samplePath: cur, role: 'perc' }).catch(async () => { const t = await ensureTrack(await liveClient(), trackName); return this.live.loadSample({ name: t.name, samplePath: cur, role: 'perc' }); });
+      return { path: cur, url: `/out/${encodeURIComponent(path.basename(cur))}`, track: trackName, chain, mode, live: r };
+    },
+    async restyleAudio({ path: src, which, prompt, strength = 0.5 }) {
+      if (!src && which) {   // ref#N / beat / hum / absolute path
+        const m = String(which).match(/^ref#(\d+)$/i);
+        if (m) src = chat.recordings.refs[Number(m[1]) - 1]?.path;
+        else if (which === 'beat' || which === 'hum') src = chat.recordings[which];
+        else src = String(which);
+      }
+      if (!src || !audioPathOk(src)) throw new Error(`restyle: unknown or outside-project audio (${which || src})`);
+      const audio = await import('./lib/audio.js');
+      const dur = await audio.durationSeconds(src);
+      const input = path.join(TMP, `restyle-ref-${Date.now()}.wav`);
+      if (dur < 6) await makeLoopInput(src, input); else await ffmpeg(['-i', src, '-t', '60', '-ac', '2', '-ar', '44100', input]);
+      const result = await audioToAudio({ wavPath: input, prompt: `TrackType: Music, ${String(prompt).trim().replace(/^(TrackType|Genre|Format):[^,]+,\s*/i, '')}`, strength: clamp(Number(strength), 0.3, 0.8), duration: Math.min(Math.max(6, Math.ceil(Math.min(dur, 60))), 60), model: LOOP_MODEL });
+      const f = await publish(result.buffer, 'alternative', '.wav', 'loop');
+      return { path: f.path, url: f.url, name: f.name, strength, basedOn: path.basename(src) };
+    },
+    async explain({ path: p, brief, choices = [], steps = {}, level = 'intermediate' }) {
+      lastBuild.explanations ||= {};
+      const key = p || `turn-${Date.now()}`;
+      const rec = { path: p || null, brief, choices, steps, level, at: Date.now() };
+      lastBuild.explanations[key] = rec;
+      emit({ type: 'explanation', ...rec });
+      await saveChat();
+      return { stored: key };
+    },
+    async genreGuide({ genre }) {
+      const Anthropic = (await import('@anthropic-ai/sdk')).default;
+      const client = new Anthropic();
+      const r = await client.messages.create({ model: 'claude-opus-5-5', max_tokens: 1200, output_config: { effort: 'low' },
+        system: 'You write short, factual genre guides for music producers. Be concrete. If unsure about a name or date, leave it out rather than guess.',
+        messages: [{ role: 'user', content: `Genre: ${genre}. Give: 5 lines of history (places, decades, scenes), 5 artists or tracks to study with one phrase each on why, 3 production hallmarks (drums, bass, space). End with the line: "From model knowledge; verify names before quoting."` }] });
+      const text = r.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+      return { genre, text, source: process.env.SOUNDCHARTS_API_KEY ? 'claude (Soundcharts lookup not implemented yet)' : 'claude model knowledge' };
+    },
+    // Stability composes the rhythm: a genre loop -> hits -> MIDI pattern with the loop's own groove
+    async loopToPattern(loopPath, { bpm = lastBuild.bpm || 120, bars = 2 } = {}) {
+      if (!audioPathOk(loopPath)) throw new Error('loopToPattern: path outside project audio');
+      const { decodeMono16k } = await import('./lib/melody.js');
+      const { detectOnsets, onsetFeatures, classifyOnset } = await import('./lib/rhythm.js');
+      const x = await decodeMono16k(loopPath);
+      const onsets = detectOnsets(x);
+      if (!onsets.length) throw new Error('no hits detected in the loop');
+      const stepSec = 60 / bpm / 4, total = clamp(Number(bars), 1, 8) * 16;
+      // grid phase: the file rarely starts exactly on a 16th; estimate the common fractional offset of the strong hits and remove it
+      const strong = onsets.filter((o) => (o.flux || 0) >= 0.5 * Math.max(...onsets.map((q) => q.flux || 1)));
+      let sx = 0, sy = 0; for (const o of (strong.length >= 4 ? strong : onsets)) { const ph = ((o.time / stepSec) % 1) * 2 * Math.PI; sx += Math.cos(ph); sy += Math.sin(ph); }
+      let phase = Math.atan2(sy, sx) / (2 * Math.PI); if (phase < 0) phase += 1;            // 0..1 of a step
+      const phaseShift = phase > 0.5 ? phase - 1 : phase;                                     // -0.5..0.5 step
+      const lanes = {}; const micro = Array.from({ length: 16 }, () => []); const velProf = Array.from({ length: 16 }, () => []);
+      const maxFlux = Math.max(...onsets.map((o) => o.flux || 1));
+      for (const o of onsets) {
+        const f = onsetFeatures(x, o.sample);
+        let inst = classifyOnset(f);
+        if (inst === 'hat_closed' && f.rms > 0.12 && (f.centroid || 0) > 5000) inst = 'hat_open';
+        const stepF = o.time / stepSec - phaseShift; const step = Math.round(stepF);
+        if (step < 0) continue;
+        if (step >= total) continue;
+        const vel = clamp(Math.round(60 + 67 * ((o.flux || 1) / maxFlux)), 40, 127);
+        (lanes[inst] ||= new Map()).set(step, Math.max(vel, lanes[inst].get(step) || 0));
+        micro[step % 16].push((stepF - step) * stepSec * 1000); velProf[step % 16].push(vel / 127);
+      }
+      // align: Stability loops rarely start on the downbeat. Choose the rotation that puts snares/claps on the backbeat (steps 4, 12)
+      // and kicks on the downbeat (step 0); ties go to the smaller rotation.
+      const scoreFor = (off) => {
+        let sc = 0;
+        for (const [inst, m] of Object.entries(lanes)) for (const [st, v] of m) {
+          const r = ((st - off) % 16 + 16) % 16, w = v / 127;
+          if (inst === 'snare' || inst === 'clap') { if (r === 4 || r === 12) sc += 3 * w; else if (r === 0 || r === 8) sc -= 2 * w; }
+          if (inst === 'kick') { if (r === 0) sc += 2 * w; else if (r % 4 === 0) sc += 1 * w; else if (r % 2 === 1) sc -= 0.5 * w; }   // kicks belong on beats; off-16ths cost
+        }
+        return sc;
+      };
+      let offset = 0, bestScore = -Infinity;
+      for (let off = 0; off < 16; off++) { const sc = scoreFor(off); if (sc > bestScore + 1e-9) { bestScore = sc; offset = off; } }
+      if (offset) for (const m of Object.values(lanes)) { const rot = new Map(); for (const [st, v] of m) rot.set((st - offset + total) % total, v); m.clear(); for (const [st, v] of rot) m.set(st, v); }
+      const mean = (a) => (a.length ? a.reduce((p, c) => p + c, 0) / a.length : 0);
+      const microtiming = micro.map((a) => Number(mean(a).toFixed(1)));
+      const velocityProfile = velProf.map((a) => Number(mean(a).toFixed(2)));
+      const offbeats = [1, 3, 5, 7, 9, 11, 13, 15].map((i) => microtiming[i]).filter(Number.isFinite);
+      const swing = clamp(mean(offbeats) / (stepSec * 1000) * 2, 0, 1);
+      const pattern = { name: `loop rhythm ${Math.round(bpm)}`, bpm: Math.round(bpm), bars: clamp(Number(bars), 1, 8), stepsPerBar: 16, swing: Number(swing.toFixed(2)), lanes: Object.entries(lanes).map(([instrument, m]) => ({ instrument, steps: [...m.entries()].sort((a, b) => a[0] - b[0]).map(([step, velocity]) => ({ step, velocity })) })) };
+      const groove = { swing: pattern.swing, microtiming, velocityProfile, source: path.basename(loopPath) };
+      return { pattern, groove, onsetCount: onsets.length, alignedOffsetSteps: offset, gridPhaseMs: Number((phaseShift * stepSec * 1000).toFixed(1)) };
+    },
+    async generateRhythm({ prompt, genre, bpm = lastBuild.bpm || 120, bars = 2 }) {
+      let body = prompt;
+      if (!body && genre) { try { const bp = await this.genreBlueprint(genre); const k = await import('./lib/knowledge.js'); const lp = k.getLoopPrompts ? k.getLoopPrompts(bp.slug) : null; body = lp?.loops?.[0]?.replace('{bpm}', String(Math.round(bpm))) || `Genre: ${bp.title}, genre-true drum loop`; } catch { body = `${genre} drum loop`; } }
+      const loop = await this.generateLoop({ prompt: body || 'drum loop', bpm, bars, kind: 'drums' });
+      const r = await this.loopToPattern(loop.loop.path, { bpm, bars });
+      this.setGroove(r.groove);
+      return { ...loop, pattern: r.pattern, groove: r.groove, onsetCount: r.onsetCount, prompt: body };
+    },
+    async designKit({ genre, bpm = lastBuild.bpm || 120, bars = 2, candidates = 2 }) {
+      const ears = await import('./lib/ears.js');
+      let bp = null, prompts = [];
+      try { bp = await this.genreBlueprint(genre || lastBuild.genreTarget || ''); const k = await import('./lib/knowledge.js'); const lp = k.getLoopPrompts ? k.getLoopPrompts(bp.slug) : null; prompts = (lp?.loops || []).map((p) => p.replace('{bpm}', String(Math.round(bpm)))); } catch {}
+      if (!prompts.length) prompts = [`Genre: ${genre || 'hip hop'}, genre-true drum loop`, `Genre: ${genre || 'hip hop'}, classic era drum loop, authentic drum machine and sample character`];
+      const n = clamp(Number(candidates) || 2, 1, 3);
+      const target = bp ? `${bp.title}: ${bp.summary}` : (genre || '');
+      const cands = [];
+      for (let i = 0; i < n; i++) {
+        const body = prompts[i % prompts.length];
+        try {
+          const loop = await this.generateLoop({ prompt: body, bpm, bars, kind: 'drums' });
+          let judged = { verdict: null, score: null, why: 'ears unavailable' };
+          try {
+            const sc = await ears.scoreGenre(loop.loop.path, { genreTarget: target, scope: 'drums' });
+            judged = { verdict: sc.verdict, score: sc.overall, why: sc.why, dimensions: sc.dimensions, markersMissing: sc.markersMissing, fixPrompt: sc.fixPrompt };
+          } catch (e) { judged.why = `ears: ${e.message.slice(0, 120)}`; }
+          cands.push({ path: loop.loop.path, url: loop.loop.url, prompt: body, kit: loop.kit, ...judged });
+          if (judged.score >= 9) break;
+        } catch (e) { cands.push({ prompt: body, error: e.message }); }
+      }
+      const ok = cands.filter((c) => c.path);
+      if (!ok.length) throw new Error(`design_kit: no loop generated (${cands.map((c) => c.error).join('; ')})`);
+      // pairwise comparison is far more stable than absolute scores on the lite judge: let A/B decide when there are two
+      let best = ok[0], comparison = null;
+      if (ok.length >= 2) {
+        try { const cmp = await ears.compareAuthenticity(ok[0].path, ok[1].path, { genreTarget: target, scope: 'drums' }); best = cmp.winner === 'B' ? ok[1] : ok[0]; comparison = { winner: cmp.winner, confidence: cmp.confidence, why: cmp.why, provider: cmp.provider }; }
+        catch (e) { best = ok.sort((a, b) => (b.score ?? -1) - (a.score ?? -1))[0]; comparison = { error: e.message.slice(0, 120) }; }
+      }
+      const r = await this.loopToPattern(best.path, { bpm, bars });
+      this.setGroove(r.groove);
+      return { genre: bp?.title || genre, best: { path: best.path, url: best.url, prompt: best.prompt, verdict: best.verdict, score: best.score, why: best.why }, comparison, scoreNote: 'absolute scores from the lite judge vary ±2 between runs; the A/B comparison decided the pick', candidates: cands.map((c) => ({ url: c.url, verdict: c.verdict, score: c.score, why: c.why, error: c.error })), kit: best.kit, pattern: r.pattern, groove: r.groove };
+    },
+    // slice the best hit per drum class out of any drum audio (loop or Demucs drum stem)
+    async sliceKitFromAudio(srcPath, { name = 'kit' } = {}) {
+      if (!audioPathOk(srcPath)) throw new Error('slice kit: path outside project audio');
+      const { decodeMono16k } = await import('./lib/melody.js');
+      const { detectOnsets, onsetFeatures, classifyOnset } = await import('./lib/rhythm.js');
+      const x = await decodeMono16k(srcPath);
+      const onsets = detectOnsets(x);
+      const byKind = {};
+      for (const o of onsets) { const f = onsetFeatures(x, o.sample); let k = classifyOnset(f); if (k === 'hat_closed' && f.rms > 0.12 && (f.centroid || 0) > 5000) k = 'hat_open'; (byKind[k] ||= []).push({ ...o, rms: f.rms }); }
+      const kit = [];
+      for (const [k, list] of Object.entries(byKind)) {
+        const picks = list.sort((a, b) => b.rms - a.rms).slice(0, 2);
+        for (const [i, best] of picks.entries()) {
+          const len = k === 'kick' ? 0.6 : k === 'snare' ? 0.4 : k === 'hat_open' ? 0.5 : 0.15;
+          const piece = await this.slice(srcPath, { startSeconds: Math.max(0, best.time - 0.005), lengthSeconds: len, name: `${name}-${k}${i ? '-alt' : ''}` });
+          kit.push({ kind: k, alt: i > 0, samplePath: piece.path, path: piece.path, url: piece.url, time: Number(best.time.toFixed(3)) });
+        }
+      }
+      return { kit, classesFound: Object.keys(byKind), onsetCount: onsets.length };
+    },
+    // Compose a full genre-true track with Stable Audio 3, then deconstruct it into an editable Live session
+    async composeTrack({ genre, bpm, bars = 16, prompt, candidates = 1 }) {
+      const t0 = Date.now(); const timings = {};
+      const stage = (label, extra) => emit({ type: 'tool_done', name: 'compose_track', ok: true, summary: `compose: ${label}`, ...(extra ? { data: extra } : {}) });
+      const ears = await import('./lib/ears.js');
+      const py = await import('./lib/pytools.js');
+      if (!py.pyAvailable()) throw new Error('compose_track needs the open-source toolbelt (Demucs/basic-pitch): run bash tools/py/setup.sh');
+      let bp = null; try { bp = await this.genreBlueprint(genre || lastBuild.genreTarget || ''); } catch {}
+      bpm = clamp(Number(bpm) || (bp?.tempo ? Number(String(bp.tempo).match(/\d+/)?.[0]) : 0) || lastBuild.bpm || 92, 60, 180);
+      bars = clamp(Number(bars) || 16, 8, 32);
+      const seconds = clamp(Math.ceil(bars * 4 * 60 / bpm), 20, 180);
+      let body = prompt;
+      if (!body) {
+        try { const k = await import('./lib/knowledge.js'); const lp = bp && k.getLoopPrompts ? k.getLoopPrompts(bp.slug) : null; body = lp?.loops?.[0]?.replace('{bpm}', String(Math.round(bpm))); } catch {}
+        body = body || `${bp?.title || genre || 'hip hop'} beat, authentic drums and bass`;
+      }
+      const target = bp ? `${bp.title}: ${bp.summary}` : (genre || '');
+      // 1) compose candidates, judge
+      const cands = [];
+      for (let i = 0; i < clamp(Number(candidates) || 1, 1, 2); i++) {
+        stage(`composing ${bars} bars at ${Math.round(bpm)} BPM with Stable Audio 3${i ? ' (second candidate)' : ''}`);
+        const full = `TrackType: Music, ${bp ? `Genre: ${bp.title}, ` : ''}${body.replace(/^(TrackType|Genre|Format):[^,]+,\s*/i, '')}, full arrangement with intro, verse and hook, ${Math.round(bpm)} BPM`;
+        const res = await textToAudio({ prompt: full, duration: seconds, model: LOOP_MODEL });
+        const f = await publish(res.buffer, `${(bp?.slug || genre || 'track').replace(/[^a-z0-9]+/gi, '-')}-track`, '.wav', 'loop');
+        let judged = { verdict: null, score: null, why: 'ears unavailable' };
+        if (target) { stage('Gemini judging authenticity (strict rubric)'); try { const sc = await ears.scoreGenre(f.path, { genreTarget: target, scope: 'full' }); judged = { verdict: sc.verdict, score: sc.overall, why: sc.why, dimensions: sc.dimensions, markersMissing: sc.markersMissing, fixPrompt: sc.fixPrompt }; } catch (e) { judged.why = `ears: ${e.message.slice(0, 100)}`; } }
+        cands.push({ path: f.path, url: f.url, prompt: full, ...judged });
+        if (judged.verdict !== 'off') break;
+      }
+      const best = cands.sort((a, b) => (b.score ?? 5) - (a.score ?? 5))[0];
+      timings.compose = Date.now() - t0;
+      // 2) stems
+      stage('separating stems with Demucs (1-2 minutes)');
+      const t1 = Date.now();
+      const st = await py.stems(best.path, { outDir: path.join(TMP, `stems-${Date.now()}`) });
+      const stems = st.stems || st;
+      timings.stems = Date.now() - t1;
+      const stemRefs = {};
+      for (const [k, p] of Object.entries(stems)) if (p) stemRefs[k] = this.addRef(`${k} of ${path.basename(best.path)}`, p).name;
+      // 3) drums -> kit + pattern
+      stage('extracting the drum kit and MIDI groove from the drum stem');
+      const kitR = await this.sliceKitFromAudio(stems.drums, { name: `${bp?.slug || 'track'}` });
+      const rhythm = await this.loopToPattern(stems.drums, { bpm, bars });
+      this.setGroove(rhythm.groove);
+      // stems from generated tracks can be quiet: normalize before transcription
+      const norm = async (p) => { const out = path.join(TMP, `norm-${path.basename(p)}`); try { await ffmpeg(['-i', p, '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11', '-ar', '44100', out]); return out; } catch { return p; } };
+      const bassSrc = stems.bass ? await norm(stems.bass) : null, otherSrc = stems.other ? await norm(stems.other) : null;
+      const stemLevels = {};
+      try { const a = await import('./lib/analyze.js'); for (const [k, p] of Object.entries(stems)) if (p) { const pr = await a.analyzeAudio(p); stemLevels[k] = pr.loudness?.integratedLufs ?? null; } } catch {}
+      // 4) bass -> notes
+      stage('transcribing the bass line (basic-pitch)');
+      let bassNotes = [];
+      try {
+        const tr = await this.transcribeLocal(bassSrc, { onset: 0.35, frame: 0.25, minNoteMs: 70 });
+        const byOnset = new Map();
+        for (const n of tr.notes) { if (n.pitch < 28 || n.pitch > 55) continue; const k = Math.round(n.startBeats * 4); const prev = byOnset.get(k); if (!prev || n.pitch < prev.pitch) byOnset.set(k, n); }
+        bassNotes = [...byOnset.values()].map((n) => ({ pitch: n.pitch, startBeats: Math.round(n.startBeats * 4) / 4, durationBeats: Math.max(0.25, Math.round(n.durationBeats * 4) / 4), velocity: n.velocity })).sort((a, b) => a.startBeats - b.startBeats);
+      } catch (e) { stage(`bass transcription failed: ${e.message.slice(0, 80)}`); }
+      // 5) other -> keys
+      stage('transcribing chords and keys (basic-pitch)');
+      let keysNotes = [];
+      try {
+        const tr = await this.transcribeLocal(otherSrc, { onset: 0.4, frame: 0.25, minNoteMs: 100 });
+        const perStep = new Map();
+        for (const n of tr.notes) { if (n.pitch < 48 || n.pitch > 84) continue; const k = Math.round(n.startBeats * 2) / 2; const arr = perStep.get(k) || []; if (arr.length < 6) arr.push({ pitch: n.pitch, startBeats: k, durationBeats: Math.max(0.5, Math.round(n.durationBeats * 2) / 2), velocity: n.velocity }); perStep.set(k, arr); }
+        keysNotes = [...perStep.values()].flat().sort((a, b) => a.startBeats - b.startBeats);
+      } catch (e) { stage(`keys transcription failed: ${e.message.slice(0, 80)}`); }
+      // 6) sections -> A/B bar ranges
+      stage('reading the arrangement sections');
+      let sections = [];
+      try { const an = await py.analyzeMusic(best.path); sections = (an.sections || []).map((sc) => ({ startBar: Math.max(1, Math.floor(sc.start / (240 / bpm)) + 1), endBar: Math.min(bars, Math.ceil(sc.end / (240 / bpm))) })).filter((sc) => sc.endBar > sc.startBar); } catch {}
+      const A = { startBar: 1, endBar: Math.min(bars, 8) };
+      const later = sections.filter((sc) => sc.startBar > A.endBar).sort((a, b) => (b.endBar - b.startBar) - (a.endBar - a.startBar))[0];
+      const B = later ? { startBar: later.startBar, endBar: Math.min(bars, later.startBar + 7) } : { startBar: Math.min(bars, 9), endBar: Math.min(bars, 16) };
+      const sliceSteps = (lanes, range) => lanes.map((l) => ({ instrument: l.instrument, steps: l.steps.filter((x) => x.step >= (range.startBar - 1) * 16 && x.step < range.endBar * 16).map((x) => ({ step: x.step - (range.startBar - 1) * 16, velocity: x.velocity })) })).filter((l) => l.steps.length);
+      const sliceNotes = (notes, range) => notes.filter((n) => n.startBeats >= (range.startBar - 1) * 4 && n.startBeats < range.endBar * 4).map((n) => ({ ...n, startBeats: n.startBeats - (range.startBar - 1) * 4 }));
+      const barsA = A.endBar - A.startBar + 1, barsB = Math.max(1, B.endBar - B.startBar + 1);
+      // 7) build in Live — into NEW scenes, on the role tracks, never replacing the producer's sounds or presets
+      stage('building the session in Live');
+      const send = await liveClient();
+      await send({ cmd: 'set_tempo', bpm: Math.round(bpm) }); lastBuild.bpm = Math.round(bpm);
+      const label = (bp?.title || genre || 'Track').replace(/\s*\(.*\)\s*/, '').slice(0, 28);
+      const scA = await send({ cmd: 'create_scene', index: -1, name: `${label} A ${Math.round(bpm)} BPM` });
+      const scB = await send({ cmd: 'create_scene', index: -1, name: `${label} B ${Math.round(bpm)} BPM` });
+      const slotA = Number.isInteger(scA?.index) ? scA.index : 0, slotB = Number.isInteger(scB?.index) ? scB.index : slotA + 1;
+      const built = { scenes: { A: slotA, B: slotB } };
+      const kitMain = kitR.kit.filter((k) => !k.alt);
+      const patA = { ...rhythm.pattern, bars: barsA, lanes: sliceSteps(rhythm.pattern.lanes, A) };
+      const patB = { ...rhythm.pattern, bars: barsB, lanes: sliceSteps(rhythm.pattern.lanes, B) };
+      try { built.drums = await this.live.buildKit({ name: 'Drums', kit: kitMain, pattern: patA, bars: barsA, slot: slotA }); if (patB.lanes.length) { const map = built.drums.padMap || {}; const patBm = { ...patB, lanes: patB.lanes }; built.drumsB = await this.live.buildKit({ name: 'Drums', kit: kitMain.map((k) => ({ ...k, note: map[k.label || k.kind] })), pattern: patBm, bars: barsB, slot: slotB }); } } catch (e) { built.drums = { error: e.message }; }
+      const hasInstrument = async (track) => { try { const d = await this.live.listDevices({ track, params: false }); return (d.devices || []).some((x) => /simpler|sampler|instrument|rack|impulse/i.test(`${x.class_name} ${x.name}`)); } catch { return false; } };
+      const presetFor = async (role, fallbackQuery) => { try { const k = await import('./lib/knowledge.js'); const pr = bp && k.getPresets ? k.getPresets(bp.slug) : null; const list = pr?.[role] || pr?.[`${role}Presets`]; if (Array.isArray(list) && list.length) return list[0]; if (typeof list === 'string' && list) return list.split(/[,|/]/)[0].trim(); } catch {} return fallbackQuery; };
+      const builtTracks = ['Drums'];
+      if (bassNotes.length) { try { const nA = sliceNotes(bassNotes, A), nB = sliceNotes(bassNotes, B); const existed = await hasInstrument('Bass'); built.bass = await this.live.buildMelody({ name: 'Bass', notes: nA.length ? nA : bassNotes.slice(0, 16), bars: barsA, slot: slotA }); if (nB.length) await this.live.buildMelody({ name: 'Bass', notes: nB, bars: barsB, slot: slotB }); builtTracks.push('Bass'); if (!existed) { const preset = await presetFor('bass', 'Hip-Hop Sub Bass'); try { built.bass.preset = (await this.live.loadDevice({ track: 'Bass', name: preset })).device?.name || preset; } catch (e) { built.bass.presetError = e.message; } } else built.bass.preset = 'kept the existing instrument'; } catch (e) { built.bass = { error: e.message }; } }
+      if (keysNotes.length) { try { const nA = sliceNotes(keysNotes, A), nB = sliceNotes(keysNotes, B); const existed = await hasInstrument('Keys'); built.keys = await this.live.buildMelody({ name: 'Keys', notes: nA.length ? nA : keysNotes.slice(0, 24), bars: barsA, slot: slotA }); if (nB.length) await this.live.buildMelody({ name: 'Keys', notes: nB, bars: barsB, slot: slotB }); builtTracks.push('Keys'); if (!existed) { const preset = await presetFor('keys', 'Grand Piano'); try { built.keys.preset = (await this.live.loadDevice({ track: 'Keys', name: preset })).device?.name || preset; } catch (e) { built.keys.presetError = e.message; } } else built.keys.preset = 'kept the existing instrument'; } catch (e) { built.keys = { error: e.message }; } }
+      try { await this.live.mixBalance({ only: builtTracks }); } catch {}
+      try { await send({ cmd: 'fire_scene', index: slotA }); await send({ cmd: 'show_view', view: 'Session' }); } catch {}
+      built.stemLevelsLufs = stemLevels;
+      timings.total = Date.now() - t0;
+      return { track: { path: best.path, url: best.url, prompt: best.prompt }, verdict: best.verdict, score: best.score, why: best.why, styleRead: best.styleRead, candidates: cands.length, stems: stemRefs, kit: kitMain.map((k) => ({ kind: k.kind, samplePath: k.samplePath })), pattern: { bars, lanes: rhythm.pattern.lanes.map((l) => `${l.instrument}:${l.steps.length}`), swing: rhythm.pattern.swing }, bassNotes: bassNotes.length, keysNotes: keysNotes.length, sections, scenes: { A, B }, built, timings };
+    },
     async restyleMix({ prompt, strength = 0.45, bars }) {
       const r = await this.render({ bars });
       const input = path.join(TMP, `restyle-in-${Date.now()}.wav`);
@@ -666,11 +1014,18 @@ function makeCtx(emit) {
       lastBuild.soundHistory[key].pop();
       return { restored: path.basename(prev.samplePath), remainingUndos: hist.length, live: r };
     },
+    async genreBlueprint(genre) {
+      const k = await import('./lib/knowledge.js').catch(() => null);
+      if (!k) throw new Error('knowledge base not built yet (lib/knowledge.js)');
+      const slug = k.matchGenre(String(genre || ''));
+      if (!slug) throw new Error(`unknown genre "${genre}"; known: ${k.listGenres().join(', ')}`);
+      return k.getBlueprint(slug);
+    },
     productionDna: async (p) => { if (!audioPathOk(p)) throw new Error('dna: path outside project audio'); return (await import('./lib/ears.js')).productionDna(p); },
-    async critiqueMix(refPath) {
+    async critiqueMix(refPath, opts = {}) {
       const r = await this.render({});
       if (refPath && !audioPathOk(refPath)) throw new Error('critique: reference path outside project audio');
-      const c = await (await import('./lib/ears.js')).critiqueMix(r.path, refPath);
+      const c = await (await import('./lib/ears.js')).critiqueMix(r.path, refPath, { genreTarget: opts.genreTarget || lastBuild.genreTarget, mixDetail: Boolean(opts.mixDetail) || chat.room === 'analyse' });
       return { ...c, render: { url: r.url, profile: r.profile?.ratings } };
     },
     async labelPieces(paths) {
@@ -704,7 +1059,9 @@ function makeCtx(emit) {
       const audio = await import('./lib/audio.js');
       return { path: f.path, url: f.url, name: f.name, durationSeconds: await audio.durationSeconds(f.path) };
     },
-    async tuneSample({ path: src, semitones, targetMidi, targetNote, name = 'tuned' }) {
+    async tuneSample({ path: src, semitones, targetMidi, targetNote, name = 'tuned', preserveFormants, allowLarge = false, role = '' }) {
+      const vocal = /vox|vocal|chop|voice|adlib|ad-lib|hook/i.test(`${role} ${name} ${path.basename(String(src || ''))}`);
+      if (preserveFormants == null) preserveFormants = vocal;
       if (!audioPathOk(src)) throw new Error('tune: path outside project audio');
       const { analyzeAudio } = await import('./lib/analyze.js');
       let detected = null, applied = Number(semitones);
@@ -718,13 +1075,15 @@ function makeCtx(emit) {
         while (applied > 6) applied -= 12; while (applied < -6) applied += 12;   // nearest octave
       }
       applied = clamp(applied, -24, 24);
+      let note;
+      if (vocal && !allowLarge && Math.abs(applied) > 3) { note = `vocal shift limited to ±3 st (asked ${applied.toFixed(1)}); pass allowLarge to override`; applied = clamp(applied, -3, 3); }
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const out = path.join(TMP, `${id}-tune.wav`);
       const ratio = Math.pow(2, applied / 12);
-      try { await ffmpeg(['-i', src, '-af', `rubberband=pitch=${ratio.toFixed(5)}`, '-ac', '2', '-ar', '44100', out]); }
+      try { await ffmpeg(['-i', src, '-af', `rubberband=pitch=${ratio.toFixed(5)}${preserveFormants ? ':formant=preserved' : ''}`, '-ac', '2', '-ar', '44100', out]); }
       catch { await ffmpeg(['-i', src, '-af', `asetrate=44100*${ratio.toFixed(5)},aresample=44100`, '-ac', '2', '-ar', '44100', out]); }
       const f = await publish(await fs.readFile(out), name, '.wav', 'oneshot');
-      return { path: f.path, url: f.url, name: f.name, detectedMidi: detected, appliedSemitones: Number(applied.toFixed(2)) };
+      return { path: f.path, url: f.url, name: f.name, detectedMidi: detected, appliedSemitones: Number(applied.toFixed(2)), preserveFormants, ...(note ? { note } : {}) };
     },
     async layerSamples({ layers = [], name = 'layered' }) {
       if (layers.length < 2 || layers.length > 4) throw new Error('layer: give 2-4 layers');
@@ -871,7 +1230,7 @@ function makeCtx(emit) {
       },
       // ---- hands: devices, mixer, scenes, arrangement (ADEHack v4 protocol) ----
       async loadDevice({ track, name, device }) {
-        name = name || device; const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`);
+        name = name || device; const send = await liveClient(); const t = await ensureTrack(send, track);   // creates the MIDI track if it doesn't exist yet
         const existing = await send({ cmd: 'list_devices', track: t.name, params: true });
         const same = existing?.ok ? (existing.devices || []).find((d) => String(d.name).toLowerCase() === String(name).toLowerCase() || String(d.class_name || '').toLowerCase() === String(name).toLowerCase().replace(/\s+/g, '')) : null;
         if (same) return { ok: true, reused: true, track: t.name, device: { index: same.index, name: same.name, class_name: same.class_name }, params: same.params || [], note: `${same.name} already on ${t.name}; adjusting it instead of adding a second one` };
@@ -879,13 +1238,15 @@ function makeCtx(emit) {
       },
       async setSend({ track, send: sendId, level }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'set_send', track: t.name, send: sendId, level: clamp(Number(level), 0, 1) }), 'set_send'); },
       browse: async ({ root = 'sounds', query, depth = 2 } = {}) => okOrThrow(await (await liveClient())({ cmd: 'browse', root, ...(query ? { query } : {}), depth }), 'browse'),
-      async mixBalance({ template = 'drums-default', overrides = [] } = {}) {
+      async mixBalance({ template = 'drums-default', overrides = [], only = null } = {}) {
         const T = { kick: [0.85, 0], snare: [0.8, 0], clap: [0.74, 0.08], hat_closed: [0.62, 0.18], hat: [0.62, 0.18], hats: [0.62, 0.18], hat_open: [0.58, 0.22], rim: [0.55, -0.25], perc: [0.56, -0.3], tom: [0.66, -0.1], tom_low: [0.66, -0.1], tom_high: [0.64, 0.12], vox: [0.68, 0.1], 'vox chop': [0.68, 0.1], synth: [0.72, 0], bass: [0.72, 0], saw: [0.7, 0], pad: [0.6, 0], lead: [0.66, -0.05], keys: [0.66, 0.05], melody: [0.68, 0] };
         const send = await liveClient();
         const tracks = okOrThrow(await send({ cmd: 'list_tracks' }), 'list_tracks').tracks;
         const applied = [];
+        const onlySet = Array.isArray(only) && only.length ? new Set(only.map((n) => String(n).toLowerCase())) : null;
         for (const t of tracks) {
           const key = t.name.toLowerCase();
+          if (onlySet && !onlySet.has(key)) continue;
           const role = (lastBuild.samples[key]?.role || key).toLowerCase();
           const tpl = T[role] || T[key] || Object.entries(T).find(([k]) => key.includes(k) || role.includes(k))?.[1];
           if (!tpl) continue;
@@ -927,6 +1288,44 @@ function makeCtx(emit) {
         rememberClip(t.name, { notes: [{ pitch: 60, startBeats: 0, durationBeats: bars * 4, velocity: 100 }], bars });
         return { track: t, loaded: Boolean(load?.ok), simpler: simp?.ok ? simp.done : simp?.error, clip: clip.mode, bars };
       },
+      async loadToPad({ track, note, samplePath, label }) {
+        const send = await liveClient(); const t = await ensureTrack(send, track);
+        const slotPath = await toSlot(samplePath, label || 'perc', 'Perc');
+        const r = await send({ cmd: 'load_to_pad', track: t.name, note: Number(note), path: slotPath, ...(label ? { name: label } : {}) });
+        if (!r?.ok) throw new Error(r?.error || 'load_to_pad failed (needs ADEHack 5.6)');
+        rememberSound(`${t.name}#${note}`, samplePath, slotPath, label || 'pad');
+        return r;
+      },
+      // one Drum Rack track for the whole kit (fewer tracks); falls back to per-lane tracks on older scripts
+      async buildKit({ name = 'Drums', kit = [], pattern, bars, slot = 0 }) {
+        const send = await liveClient();
+        const GM = { kick: 36, snare: 38, clap: 39, rim: 37, hat_closed: 42, hat_open: 46, tom_low: 45, tom_high: 50, ride: 51, crash: 49, perc: 54 };
+        const b = bars || pattern?.bars || 2;
+        const probe = await send({ cmd: 'pad_info', track: 'nonexistent-probe' });
+        const hasPads = probe && !/unknown cmd/i.test(probe.error || '');
+        if (hasPads) {
+          const t = await ensureTrack(send, name);
+          // never overwrite a pad the producer already has: find occupied pads and place new sounds on free ones
+          const info = await send({ cmd: 'pad_info', track: t.name, all: false });
+          const occupied = new Set((info?.pads || []).filter((p) => p.has_chain).map((p) => p.note));
+          const noteFor = {};
+          let cursor = 36;
+          const freeNote = (preferred) => { if (preferred != null && !occupied.has(preferred)) { occupied.add(preferred); return preferred; } while (occupied.has(cursor) && cursor < 100) cursor++; const n = cursor; occupied.add(n); cursor++; return n; };
+          const pads = [];
+          for (const k of kit) { const key = k.label || k.kind; const note = freeNote(k.note ?? GM[k.kind]); noteFor[key] = note; if (k.kind) noteFor[k.kind] ??= note; try { await this.loadToPad({ track: t.name, note, samplePath: k.samplePath, label: key }); pads.push({ note, label: key }); } catch (e) { pads.push({ note, label: key, error: e.message }); } }
+          const notes = [];
+          for (const lane of pattern?.lanes || []) { const padNote = noteFor[lane.instrument] ?? noteFor[LANE_LABEL[lane.instrument]] ?? GM[lane.instrument] ?? 54; for (const st of lane.steps) notes.push({ pitch: padNote, start: st.step * 0.25 + (st.step % 2 ? (pattern.swing || 0) * 0.125 : 0), duration: 0.125, velocity: st.velocity }); }
+          const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.name, slot: Number(slot) || 0, length: b * 4, notes, fire: true, name, show: false }), 'create_clip');
+          lastBuild.tracks.drums = { index: t.index, name: t.name };
+          if (!Number(slot)) rememberClip(t.name, { notes: notes.map((n) => ({ pitch: n.pitch, startBeats: n.start, durationBeats: n.duration, velocity: n.velocity })), bars: b });
+          return { track: t, mode: 'drum_rack', pads, padMap: noteFor, notes: notes.length, clip: clip.mode, reusedExistingPads: occupied.size - pads.length };
+        }
+        const built = [];
+        for (const lane of pattern?.lanes || []) { const k = kit.find((x) => (x.label || x.kind) === lane.instrument || x.kind === lane.instrument); const label = LANE_LABEL[lane.instrument] || lane.instrument; built.push(await this.buildLane({ name: label, instrument: lane.instrument, samplePath: k?.samplePath, steps: lane.steps, bars: b, swing: pattern.swing || 0, slot, useGroove: true })); }
+        return { mode: 'per_lane_fallback', note: 'Drum Rack pad loading needs ADEHack 5.6; built one track per lane instead', tracks: built.map((x) => x.track?.name) };
+      },
+      describeSet: async () => okOrThrow(await (await liveClient())({ cmd: 'describe_set' }), 'describe_set'),
+      async getClipNotes({ track, slot = 0 }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'get_clip_notes', track: t.name, slot: Number(slot) || 0 }), 'get_clip_notes'); },
       setTrackColor: async ({ track, colorIndex, color_index }) => { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'set_track_color', track: t.name, color_index: Number(colorIndex ?? color_index) }), 'set_track_color'); },
       captureMidi: async () => okOrThrow(await (await liveClient())({ cmd: 'capture_midi' }), 'capture_midi'),
       clipEdit: async ({ track, slot = 0, ...ops }) => { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'clip_edit', track: t.name, slot: Number(slot) || 0, ...ops }), 'clip_edit'); },
@@ -981,6 +1380,52 @@ app.post('/api/refine', async (req, res) => {
     res.json(await ctx.refineSound({ path: String(p), intent: String(intent), currentPrompt: currentPrompt || intent, role: role || 'drum', rounds: rounds || 2, track }));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+app.get('/api/settings', (_req, res) => res.json(chat.settings));
+app.post('/api/settings', async (req, res) => { chat.settings = { ...chat.settings, ...(req.body || {}) }; await saveChat(); res.json(chat.settings); });
+app.get('/api/explanations', (_req, res) => res.json(lastBuild.explanations || {}));
+// ---- Prompt Lab: pick a genre, edit the Stability prompt + parameters, generate, get a strict rubric score, use as kit ----
+app.get('/api/knowledge', async (_req, res) => {
+  try { const k = await import('./lib/knowledge.js'); res.json({ genres: k.listGenres().map((g) => ({ slug: g.slug, title: g.title, tempo: g.tempo || null })) }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/knowledge/:slug', async (req, res) => {
+  try { const k = await import('./lib/knowledge.js'); const bp = k.getBlueprint(req.params.slug); const lp = k.getLoopPrompts ? k.getLoopPrompts(req.params.slug) : null; res.json({ ...bp, prompts: lp ? { loops: lp.loops, texture: lp.texture, oneshots: lp.oneshots } : null, presets: k.getPresets ? k.getPresets(req.params.slug) : null }); }
+  catch (e) { res.status(404).json({ error: e.message }); }
+});
+app.post('/api/lab/generate', async (req, res) => {
+  try {
+    const { prompt, model = LOOP_MODEL, bpm = 120, bars = 2, steps, cfgScale, seed, genre, kind = 'drums' } = req.body || {};
+    if (!prompt) throw new Error('prompt required');
+    const seconds = clamp(Math.ceil(clamp(Number(bars), 1, 16) * 4 * 60 / clamp(Number(bpm), 40, 300)) + 1, 6, 180);
+    const body = String(prompt).replace(/\{bpm\}/g, String(Math.round(bpm))).replace(/^(TrackType|Genre|Format):[^,]+,\s*/i, '');
+    const full = `TrackType: ${kind === 'music' ? 'Music' : 'Instrument'}, ${body}`;
+    const result = await textToAudio({ prompt: full, duration: seconds, model, ...(steps ? { steps: Number(steps) } : {}), ...(cfgScale ? { cfg_scale: Number(cfgScale) } : {}), ...(seed ? { seed: Number(seed) } : {}) });
+    const f = await publish(result.buffer, `lab-${(genre || kind).replace(/[^a-z0-9]+/gi, '-')}`, '.wav', 'loop');
+    let score = null;
+    if (genre) { try { const k = await import('./lib/knowledge.js'); const slug = k.matchGenre(genre) || genre; const bp = k.getBlueprint(slug); const markers = (bp.markdown.match(/^- .*$/gm) || []).filter((l) => /kick|snare|hat|bass|swing|clap|perc|chord/i.test(l)).slice(0, 10).map((l) => l.replace(/^- /, '').slice(0, 90)); score = await (await import('./lib/ears.js')).scoreGenre(f.path, { genreTarget: `${bp.title}: ${bp.summary}`, markers, scope: kind === 'music' ? 'full' : 'drums' }); } catch (e) { score = { error: e.message }; } }
+    res.json({ path: f.path, url: f.url, prompt: full, seed: result.seed, seconds, model, score });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/score', async (req, res) => {
+  try { const { path: p, genre } = req.body || {}; if (!audioPathOk(p)) throw new Error('path outside project audio'); const k = await import('./lib/knowledge.js'); const slug = k.matchGenre(genre || '') || genre; const bp = slug ? k.getBlueprint(slug) : null; res.json(await (await import('./lib/ears.js')).scoreGenre(p, { genreTarget: bp ? `${bp.title}: ${bp.summary}` : genre })); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/lab/use-kit', async (req, res) => {
+  try {
+    const { path: p, bpm = lastBuild.bpm || 120, bars = 2, name = 'Drums' } = req.body || {};
+    const ctx = makeCtx(() => {});
+    const kit = await ctx.sliceKitFromAudio(p, { name: 'lab' });
+    const r = await ctx.loopToPattern(p, { bpm, bars });
+    ctx.setGroove(r.groove);
+    lastBuild.bpm = Number(bpm);
+    const built = await ctx.live.buildKit({ name, kit: kit.kit.filter((k) => !k.alt), pattern: r.pattern, bars, slot: 0 });
+    res.json({ kit: kit.kit.map((k) => k.kind), pattern: r.pattern.lanes.map((l) => `${l.instrument}:${l.steps.length}`), built });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/loop-pattern', async (req, res) => {   // Stability loop (or any drum audio) -> MIDI pattern + groove
+  try { const ctx = makeCtx(() => {}); res.json(await ctx.loopToPattern(String(req.body?.path || ''), { bpm: Number(req.body?.bpm) || lastBuild.bpm || 120, bars: Number(req.body?.bars) || 2 })); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.post('/api/render', async (req, res) => {
   try { const ctx = makeCtx(() => {}); const r = await ctx.render({ bars: req.body?.bars }); res.json(r); }
   catch (e) { res.status(500).json({ error: e.message }); }
@@ -994,9 +1439,25 @@ app.post('/api/analyze', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// one producer turn at a time: two turns editing the same Live set and registry would interleave and confuse both
+let chatQueue = Promise.resolve();
+let chatBusy = false;
 app.post('/api/chat', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream'); res.setHeader('Cache-Control', 'no-cache'); res.setHeader('Connection', 'keep-alive'); res.flushHeaders();
   const emit = (e) => res.write(`data: ${JSON.stringify(e)}\n\n`);
+  if (chatBusy) emit({ type: 'tool_done', name: 'queue', ok: true, summary: 'another producer turn is still running; yours starts when it finishes' });
+  const myTurn = chatQueue.then(() => runChatTurn(req, res, emit));
+  chatQueue = myTurn.catch(() => {});
+  await myTurn;
+});
+const turns = { last: null };   // { id, status:'running'|'done'|'error', events:[], text, startedAt, endedAt }
+async function runChatTurn(req, res, emit0) {
+  chatBusy = true;
+  const turn = { id: `${Date.now()}`, status: 'running', events: [], text: '', startedAt: Date.now() };
+  turns.last = turn;
+  const emit = (e) => { turn.events.push(e); if (e.type === 'text') turn.text = e.text; try { emit0(e); } catch {} };
+  emit({ type: 'turn', id: turn.id });
+  const beat = setInterval(() => { try { res.write(': keepalive\n\n'); } catch {} }, 15000);   // SSE comment, keeps proxies/browsers from idling the stream
   try {
     const { text = '', beatId, humId, refIds = [], reset } = req.body || {};
     if (reset) { chat.history = []; chat.recordings = { refs: [] }; lastBuild.samples = {}; lastBuild.tracks = {}; await saveChat(); }
@@ -1011,22 +1472,52 @@ app.post('/api/chat', async (req, res) => {
     const missing = (Array.isArray(refIds) ? refIds.length : 0) + (beatId ? 1 : 0) + (humId ? 1 : 0) - refs.length - (beat ? 1 : 0) - (hum ? 1 : 0);
     if (missing) emit({ type: 'tool_done', name: 'attachments', ok: false, summary: `${missing} attachment(s) could not be found on the server, please re-attach` });
     const recordings = { ...chat.recordings, refs: chat.recordings.refs.length ? chat.recordings.refs : undefined, attachedThisTurn };
+    // style guidance: when the producer names a genre, hand Claude the blueprint summary up front
+    let userText = String(text);
+    try {
+      const k = await import('./lib/knowledge.js');
+      const explicit = userText.match(/\[genre:\s*([^\]]+)\]/i);
+      const slug = k.matchGenre(explicit ? explicit[1] : userText);
+      if (slug) { const bp = k.getBlueprint(slug); if (bp?.summary) { userText += `\n\n[genre blueprint: ${bp.title}] ${bp.summary}`; lastBuild.genreTarget = `${bp.title}: ${bp.summary}`; emit({ type: 'tool_done', name: 'style', ok: true, summary: `style guide loaded: ${bp.title}` }); } }
+    } catch {}
+    chat.room = (userText.match(/\[room:\s*(create|analyse|tweak)\]/i) || [])[1]?.toLowerCase() || 'create';
+    if (lastBuild.project && !lastBuild.project.toldAgent) {
+      const pj = lastBuild.project; const cr = pj.critique && !pj.critique.error ? pj.critique : null;
+      userText += `\n\n[existing project scan] The user has THEIR OWN set open in Live (${Math.round(pj.tempo)} BPM, ${pj.tracks.length} tracks: ${pj.tracks.map((t) => `${t.name}${t.devices?.length ? ' [' + t.devices.join(', ') + ']' : ''}`).join('; ').slice(0, 900)}). Work INSIDE this project: add to it, never delete or replace their material, match their tempo and key.${cr ? ` You already listened to ${pj.capture?.seconds || ''} s of it. Style read: ${cr.styleRead}. Drums: ${cr.drums}. Bass: ${cr.bass?.type} (${cr.bass?.suggestion}). Sound design: ${cr.soundDesign}. Suggested moves: ${(cr.moves || []).join(' | ')}.` : pj.capture?.silent ? ' The capture was silent (nothing was playing at the playhead); ask them to place the playhead on the section before you listen again.' : ''}${pj.capture?.path ? ` Capture file: ${pj.capture.path}` : ''}`;
+      pj.toldAgent = true;
+      emit({ type: 'tool_done', name: 'project', ok: true, summary: `working inside your set: ${pj.tracks.length} tracks, ${Math.round(pj.tempo)} BPM` });
+    }   // Analyse room = mix detail allowed in critiques
     let out;
-    try { out = await runProducer({ history: chat.history, userText: String(text), recordings, ctx: makeCtx(emit) }); }
+    try { out = await runProducer({ history: chat.history, userText, recordings, ctx: makeCtx(emit) }); }
     catch (e) {
-      if (/thinking/i.test(e?.message || '') && /signature|bound/i.test(e?.message || '')) { console.warn('[chat] thinking block rejected, stripping and retrying'); chat.history = stripThinking(chat.history); out = await runProducer({ history: chat.history, userText: String(text), recordings, ctx: makeCtx(emit) }); }
+      if (/thinking/i.test(e?.message || '') && /signature|bound/i.test(e?.message || '')) { console.warn('[chat] thinking block rejected, stripping and retrying'); chat.history = stripThinking(chat.history); out = await runProducer({ history: chat.history, userText, recordings, ctx: makeCtx(emit) }); }
       else throw e;
     }
     chat.history = out.history;
     await saveChat();
     emit({ type: 'text', text: out.text });
+    // Arrangement mode: Live 10 can't create arrangement clips via API, so record the playing scene onto the timeline after changes
+    const BUILD_TOOLS = /^(build_drum_layer|build_melody_layer|update_layer|import_sample|generate_loop|replace_sound|refine_sound|create_scene|fire_scene)$/;
+    const changed = turn.events.some((e) => e.type === 'tool' && BUILD_TOOLS.test(e.name));
+    if (chat.settings.arrangementMode && changed) {
+      try {
+        const send = await liveClient();
+        const bars = clamp(Number(chat.settings.arrangementBars) || 8, 1, 64);
+        emit({ type: 'tool', name: 'arrangement_mode', summary: `arrangement mode: recording ${bars} bars onto the timeline` });
+        const r = await send({ cmd: 'arrangement_record', scenes: [{ index: 0, bars }], at: 'end' });
+        emit({ type: 'tool_done', name: 'arrangement_mode', ok: Boolean(r?.ok), summary: r?.ok ? `laid out ${bars} bars in Arrangement (press Tab in Live)` : `arrangement recording failed: ${r?.error}` });
+      } catch (e) { emit({ type: 'tool_done', name: 'arrangement_mode', ok: false, summary: `arrangement mode: ${e.message}` }); }
+    }
+    turn.status = 'done';
     emit({ type: 'done', tracks: lastBuild.tracks });
   } catch (e) {
     console.error('[chat]', e);
+    turn.status = 'error';
     emit({ type: 'error', error: e.message });
-  }
+  } finally { chatBusy = false; turn.endedAt = Date.now(); clearInterval(beat); }
   res.end();
-});
+}
+app.get('/api/chat/last', (_req, res) => res.json(turns.last ? { ...turns.last, events: turns.last.events.slice(-200) } : { status: 'none' }));
 app.post('/api/chat/reset', async (_req, res) => { chat.history = []; chat.recordings = { refs: [] }; lastBuild.samples = {}; lastBuild.tracks = {}; await saveChat(); res.json({ ok: true }); });
 
 app.use((err, req, res, _next) => {   // multer limits, bad JSON, anything thrown synchronously -> JSON, not HTML
@@ -1035,8 +1526,11 @@ app.use((err, req, res, _next) => {   // multer limits, bad JSON, anything throw
   res.status(err.status || err.statusCode || 500).json({ error: err.message || 'server error' });
 });
 
-app.listen(PORT, () => {
+process.on('unhandledRejection', (e) => console.error('[unhandledRejection]', e?.message || e));
+process.on('uncaughtException', (e) => console.error('[uncaughtException]', e?.message || e));
+const server = app.listen(PORT, () => {
   console.log(`ADE Hack running at http://localhost:${PORT}`);
   console.log(`Ableton sees: ${OUT_DIR}`);
   console.log(`Stability key: ${hasKey(process.env.STABILITY_API_KEY) ? 'ok' : 'MISSING'} | Anthropic key: ${hasKey(process.env.ANTHROPIC_API_KEY) ? 'ok' : 'not set (rule-based patterns)'}`);
 });
+server.requestTimeout = 0; server.headersTimeout = 0; server.keepAliveTimeout = 65000; server.timeout = 0;   // producer turns can run for many minutes

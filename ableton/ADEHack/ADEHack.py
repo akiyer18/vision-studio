@@ -3,6 +3,7 @@
 # everything runs on Live's main thread via the ControlSurface timer.
 from __future__ import print_function, absolute_import
 import errno
+import math
 import json
 import os
 import socket
@@ -10,7 +11,7 @@ import socket
 import Live
 from _Framework.ControlSurface import ControlSurface
 
-VERSION = '5.3'
+VERSION = '5.6'
 HOST = '127.0.0.1'
 PORT = 9004
 GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 42,
@@ -18,7 +19,7 @@ GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 4
                  'crash': 49, 'perc': 54}
 WOULD_BLOCK = (errno.EAGAIN, errno.EWOULDBLOCK, errno.EINPROGRESS)
 PENDING = object()  # returned by a command that will reply later via schedule_message
-COMMANDS = ['arrangement_record', 'browse', 'capture_midi', 'clip_edit', 'create_clip', 'create_midi_track', 'create_scene', 'delete_device', 'delete_track', 'duplicate_clip', 'duplicate_scene', 'duplicate_track', 'fire_scene', 'focus_clip', 'list_devices', 'list_scenes', 'list_tracks', 'load_device', 'load_sample', 'ping', 'play', 'rename_scene', 'rename_track', 'sample_info', 'select_track', 'set_device_param', 'set_mixer', 'set_send', 'set_simpler', 'set_tempo', 'set_track_color', 'show_view', 'stop', 'stop_clip', 'transport_setup', 'version']
+COMMANDS = ['arrangement_info', 'arrangement_record', 'browse', 'capture_midi', 'clip_edit', 'create_clip', 'create_midi_track', 'create_scene', 'delete_device', 'delete_track', 'describe_set', 'duplicate_clip', 'duplicate_scene', 'duplicate_track', 'fire_scene', 'focus_clip', 'get_clip_notes', 'list_devices', 'list_scenes', 'list_tracks', 'load_device', 'load_sample', 'load_to_pad', 'pad_info', 'ping', 'play', 'play_for', 'play_scene_for', 'rename_scene', 'rename_track', 'sample_info', 'select_track', 'set_device_param', 'set_mixer', 'set_send', 'set_simpler', 'set_tempo', 'set_track_color', 'show_view', 'stop', 'stop_clip', 'transport_setup', 'version']
 LOAD_RETRY_TICKS = 3   # ~0.3 s between browser re-scans
 LOAD_RETRY_MAX = 8     # ~2.4 s total before replying not found
 
@@ -36,6 +37,8 @@ class ADEHack(ControlSurface):
         self._ramp = None
         self._ramp_id = 0
         self._seq_id = 0
+        self._play_id = 0
+        self._record_start = 0.0
         with self.component_guard():
             try:
                 self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -152,6 +155,20 @@ class ADEHack(ControlSurface):
                 return self._cmd_load_device(msg)
             if cmd == 'set_send':
                 return self._cmd_set_send(msg)
+            if cmd == 'load_to_pad':
+                return self._cmd_load_to_pad(msg)
+            if cmd == 'pad_info':
+                return self._cmd_pad_info(msg)
+            if cmd == 'arrangement_info':
+                return dict(self._arrangement_info(), ok=True)
+            if cmd == 'describe_set':
+                return self._cmd_describe_set(msg)
+            if cmd == 'get_clip_notes':
+                return self._cmd_get_clip_notes(msg)
+            if cmd == 'play_for':
+                return self._cmd_play_for(msg, False)
+            if cmd == 'play_scene_for':
+                return self._cmd_play_for(msg, True)
             if cmd == 'set_simpler':
                 return self._cmd_set_simpler(msg)
             if cmd == 'sample_info':
@@ -705,6 +722,12 @@ class ADEHack(ControlSurface):
         if msg.get('stop'):
             self._finish_recording('stopped by request')
             return {'ok': True, 'recording': False}
+        at_beats, from_bar = self._position_for_record(msg.get('at'))
+        self._record_start = at_beats
+        try:
+            song.loop = False   # a loop brace would wrap the recording back over itself
+        except Exception as e:
+            self.log_message('ADEHack: loop off failed: %r' % (e,))
         scenes = msg.get('scenes')
         if scenes:
             all_scenes = list(song.scenes)
@@ -721,6 +744,7 @@ class ADEHack(ControlSurface):
             song.record_mode = True
             self._run_sequence(seq_id, steps, 0, 0.0)
             return {'ok': True, 'recording': True, 'mode': 'scenes', 'tempo': float(song.tempo),
+                    'at_beats': at_beats, 'from_bar': from_bar,
                     'total_bars': total, 'steps_scheduled': len(steps),
                     'sequence': [dict(st, at_seconds=self._bars_seconds(sum(x['bars'] for x in steps[:i])))
                                  for i, st in enumerate(steps)],
@@ -728,12 +752,62 @@ class ADEHack(ControlSurface):
         bars = msg.get('bars')
         song.record_mode = True
         song.start_playing()
-        reply = {'ok': True, 'recording': True, 'mode': 'bars', 'tempo': float(song.tempo)}
+        reply = {'ok': True, 'recording': True, 'mode': 'bars', 'tempo': float(song.tempo),
+                 'at_beats': at_beats, 'from_bar': from_bar}
         if bars:
             seconds = self._bars_seconds(float(bars))
             self.schedule_message(max(1, int(round(seconds * 10.0))), lambda: self._seq_stop(seq_id))
             reply['stops_in_seconds'] = seconds
         return reply
+
+    def _beats_per_bar(self):
+        song = self.song()
+        try:
+            return 4.0 * float(song.signature_numerator) / float(song.signature_denominator)
+        except Exception:
+            return 4.0
+
+    def _arrangement_info(self):
+        song = self.song()
+        bpb = self._beats_per_bar()
+        info = {'beats_per_bar': bpb}
+        try:
+            last = float(song.last_event_time)
+        except Exception:
+            last = 0.0
+        info['last_event_time'] = last
+        info['bars'] = int(math.ceil(last / bpb - 1e-9)) if last > 0 else 0
+        try:
+            info['current_song_time'] = float(song.current_song_time)
+        except Exception:
+            pass
+        try:
+            info['loop'] = {'on': bool(song.loop), 'start': float(song.loop_start), 'length': float(song.loop_length)}
+        except Exception:
+            pass
+        info['is_playing'] = bool(song.is_playing)
+        return info
+
+    def _position_for_record(self, at):
+        """'end' = next bar boundary after the last arrangement event (0 if empty),
+        'start' = 0, number = beats, None = leave the playhead where it is."""
+        song = self.song()
+        bpb = self._beats_per_bar()
+        if at is None or at == '' or at == 'current':
+            try:
+                beats = float(song.current_song_time)
+            except Exception:
+                beats = 0.0
+        elif at == 'start':
+            beats = 0.0
+        elif at == 'end':
+            last = float(getattr(song, 'last_event_time', 0.0) or 0.0)
+            beats = 0.0 if last <= 0 else math.ceil(last / bpb - 1e-9) * bpb
+        else:
+            beats = max(0.0, float(at))
+        if at is not None and at != '' and at != 'current':
+            song.current_song_time = beats
+        return beats, int(beats // bpb) + 1
 
     def _bars_seconds(self, bars):
         return float(bars) * 4.0 * 60.0 / float(self.song().tempo)
@@ -768,6 +842,14 @@ class ADEHack(ControlSurface):
             song = self.song()
             song.record_mode = False
             song.stop_playing()
+            # leave the playhead parked at the end of what was just recorded, Arranger visible
+            try:
+                last = float(getattr(song, 'last_event_time', 0.0) or 0.0)
+                if last > 0:
+                    bpb = self._beats_per_bar()
+                    song.current_song_time = math.ceil(last / bpb - 1e-9) * bpb
+            except Exception as e:
+                self.log_message('ADEHack: park playhead failed: %r' % (e,))
             self._show_view('Arranger')
             self.log_message('ADEHack: arrangement recording finished (%s)' % (why,))
         except Exception as e:
@@ -986,6 +1068,361 @@ class ADEHack(ControlSurface):
         return {'ok': not errors or bool(done), 'track': track.name,
                 'device': {'index': index, 'name': dev.name, 'class_name': getattr(dev, 'class_name', '')},
                 'done': done, 'errors': errors, 'state': self._simpler_state(dev)}
+
+    # ------------------------------------------------------- v5.6: Drum Rack pads
+    def _drum_rack(self, track, spec=None):
+        if spec is not None:
+            return self._device(track, spec)
+        for i, d in enumerate(track.devices):
+            if getattr(d, 'class_name', '') == 'DrumGroupDevice' or getattr(d, 'can_have_drum_pads', False):
+                return i, d
+        return -1, None
+
+    def _ensure_drum_rack(self, track, browser):
+        index, rack = self._drum_rack(track)
+        if rack is not None:
+            return index, rack, False
+        item, root_name, searched, how = self._find_device_item(browser, 'Drum Rack')
+        if item is None:
+            raise ValueError('no Drum Rack in browser roots %r' % (searched,))
+        self.song().view.selected_track = track
+        before = len(list(track.devices))
+        browser.load_item(item)
+        devices = list(track.devices)
+        if len(devices) <= before:
+            raise ValueError('loading Drum Rack onto %r added no device' % (track.name,))
+        return len(devices) - 1, devices[-1], True
+
+    def _pad_state(self, pad):
+        info = {'note': int(pad.note), 'name': u'%s' % (pad.name,), 'has_chain': False, 'sample': None}
+        try:
+            info['mute'] = bool(pad.mute)
+            info['solo'] = bool(pad.solo)
+        except Exception:
+            pass
+        try:
+            chains = list(pad.chains)
+        except Exception:
+            chains = []
+        if chains:
+            info['has_chain'] = True
+            chain = chains[0]
+            info['chain_name'] = u'%s' % (chain.name,)
+            try:
+                devs = list(chain.devices)
+                info['chain_devices'] = [getattr(d, 'class_name', '') or d.name for d in devs]
+                for d in devs:
+                    if getattr(d, 'class_name', '') in self.SIMPLER_CLASSES:
+                        info['sample'] = u'%s' % (d.sample.file_path,) if d.sample is not None else None
+                        break
+            except Exception as e:
+                info['chain_error'] = '%r' % (e,)
+        return info
+
+    def _cmd_pad_info(self, msg):
+        track = self._track(msg.get('track', 'selected'))
+        index, rack = self._drum_rack(track, msg.get('device'))
+        if rack is None:
+            return {'ok': False, 'error': 'no Drum Rack on %r; devices: %r' % (track.name, [d.name for d in track.devices])}
+        pads = []
+        for pad in rack.drum_pads:
+            try:
+                st = self._pad_state(pad)
+            except Exception:
+                continue
+            if st['has_chain'] or msg.get('all'):
+                pads.append(st)
+        return {'ok': True, 'track': track.name, 'device_index': index, 'device': rack.name,
+                'pad_count': len(pads), 'pads': pads}
+
+    def _cmd_load_to_pad(self, msg):
+        """Load a sample into one Drum Rack pad. Route (what Push does in its PadHotswapping
+        mode): select the rack and the pad, set browser.hotswap_target = pad, load_item(sample).
+        Live then creates a Simpler chain in that pad (or replaces the pad's sample)."""
+        track = self._track(msg.get('track', 'selected'))
+        note = int(msg['note'])
+        if note < 0 or note > 127:
+            return {'ok': False, 'error': 'note %d out of range 0..127' % (note,)}
+        path = msg['path']
+        base = os.path.basename(path)
+        stem = os.path.splitext(base)[0]
+        browser = Live.Application.get_application().browser
+        # the sample item first, so a not-indexed file fails before we touch the set
+        item, searched = None, []
+        for root_name, root in self._roots(browser):
+            searched.append('%s:%s' % (root_name, getattr(root, 'name', '')))
+            item = self._find_item(root, (base, stem))
+            if item is not None:
+                break
+        if item is None:
+            return {'ok': False, 'error': 'not found in Live browser: %r; searched %r. '
+                    'Add the output folder via Places > "Add Folder..." in Live.' % (base, searched)}
+        song = self.song()
+        song.view.selected_track = track
+        rack_index, rack, created = self._ensure_drum_rack(track, browser)
+        pads = list(rack.drum_pads)
+        if note >= len(pads):
+            return {'ok': False, 'error': 'rack exposes %d pads, note %d not addressable' % (len(pads), note)}
+        pad = pads[note]
+        before = self._pad_state(pad)
+        observed = []
+        try:
+            song.view.select_device(rack)
+            observed.append('select_device ok')
+        except Exception as e:
+            observed.append('select_device failed: %r' % (e,))
+        try:
+            rack.view.selected_drum_pad = pad
+            observed.append('selected_drum_pad ok')
+        except Exception as e:
+            observed.append('selected_drum_pad failed: %r' % (e,))
+        route = None
+        hot = False
+        try:
+            browser.hotswap_target = pad
+            hot = browser.hotswap_target is not None
+            observed.append('hotswap_target=pad %s' % ('accepted' if hot else 'ignored'))
+        except Exception as e:
+            observed.append('hotswap_target=pad failed: %r' % (e,))
+        if not hot and before['has_chain']:
+            # fallback: hot-swap the pad's existing Simpler
+            try:
+                simpler = None
+                for d in pad.chains[0].devices:
+                    if getattr(d, 'class_name', '') in self.SIMPLER_CLASSES:
+                        simpler = d
+                        break
+                if simpler is not None:
+                    browser.hotswap_target = simpler
+                    hot = browser.hotswap_target is not None
+                    observed.append('hotswap_target=pad simpler %s' % ('accepted' if hot else 'ignored'))
+            except Exception as e:
+                observed.append('hotswap_target=simpler failed: %r' % (e,))
+        route = 'pad_hotswap' if hot else 'plain_load_item'
+        devices_before = len(list(track.devices))
+        try:
+            browser.load_item(item)
+            observed.append('load_item ok')
+        finally:
+            if hot:
+                try:
+                    browser.hotswap_target = None
+                except Exception as e:
+                    observed.append('leave hotswap failed: %r' % (e,))
+        after = self._pad_state(pad)
+        appended = len(list(track.devices)) - devices_before
+        if msg.get('name') and after['has_chain']:
+            try:
+                pad.chains[0].name = u'%s' % (msg['name'],)
+                after = self._pad_state(pad)
+            except Exception as e:
+                observed.append('chain rename failed: %r' % (e,))
+        landed = after['has_chain'] and (after.get('sample') or '').lower().endswith(stem.lower() + os.path.splitext(base)[1].lower()) \
+            or (after['has_chain'] and after.get('sample') != before.get('sample'))
+        reply = {'ok': bool(landed), 'track': track.name, 'note': note, 'route': route,
+                'device_index': rack_index, 'rack_created': created, 'pad': after,
+                'devices_appended_to_track': appended, 'observed': observed, 'item': item.name}
+        if not landed:
+            reply['error'] = ('sample did not land in pad %d (route %s); pad before=%r after=%r; '
+                              '%d device(s) appended to the track instead' % (note, route, before, after, appended))
+        return reply
+
+    # ------------------------------------------------------- v5.4: read the set
+    NOTE_PREVIEW = 16
+    NOTE_CAP = 2000
+    CLIP_SLOT_CAP = 16
+
+    def _clip_notes(self, clip, cap):
+        """Live 10: Clip.get_notes(from_time, from_pitch, time_span, pitch_span) ->
+        ((pitch, time, duration, velocity, muted), ...)."""
+        try:
+            length = float(clip.length)
+        except Exception:
+            length = 0.0
+        span = max(length, float(getattr(clip, 'loop_end', 0) or 0), 1.0) + 1.0
+        try:
+            raw = clip.get_notes(0.0, 0, span, 128)
+        except Exception as e:
+            self.log_message('ADEHack: get_notes failed: %r' % (e,))
+            return [], 0, length
+        notes = []
+        for n in raw:
+            if len(notes) >= cap:
+                break
+            try:
+                notes.append({'pitch': int(n[0]), 'start': round(float(n[1]), 4), 'duration': round(float(n[2]), 4),
+                              'velocity': int(n[3]), 'mute': bool(n[4]) if len(n) > 4 else False})
+            except Exception:
+                continue
+        notes.sort(key=lambda x: (x['start'], x['pitch']))
+        return notes, len(raw), length
+
+    def _describe_clip(self, slot_index, slot):
+        clip = slot.clip
+        info = {'slot': slot_index}
+        for attr, key in (('name', 'name'), ('length', 'length'), ('is_playing', 'is_playing'),
+                          ('is_triggered', 'is_triggered'), ('looping', 'looping'), ('color_index', 'color_index')):
+            try:
+                v = getattr(clip, attr)
+                info[key] = v if isinstance(v, (bool, float)) else (u'%s' % (v,) if key == 'name' else int(v))
+            except Exception:
+                pass
+        is_midi = bool(getattr(clip, 'is_midi_clip', True))
+        info['is_audio'] = not is_midi
+        if is_midi:
+            notes, total, _ = self._clip_notes(clip, self.NOTE_PREVIEW)
+            info['note_count'] = total
+            info['notes_preview'] = notes
+        else:
+            try:
+                info['file_path'] = u'%s' % (clip.file_path,)
+            except Exception:
+                info['file_path'] = None
+            for attr in ('warping', 'gain'):
+                try:
+                    info[attr] = getattr(clip, attr)
+                except Exception:
+                    pass
+        return info
+
+    def _describe_track(self, i, t, sel):
+        info = {'index': i, 'name': t.name, 'is_midi': bool(t.has_midi_input), 'selected': t == sel}
+        try:
+            info['color_index'] = int(t.color_index)
+        except Exception:
+            pass
+        try:
+            info['is_group'] = bool(getattr(t, 'is_foldable', False))
+            info['group_track'] = t.group_track.name if getattr(t, 'is_grouped', False) and t.group_track else None
+        except Exception:
+            pass
+        try:
+            mixer = self._mixer_state(t)
+            try:
+                mixer['sends'] = [{'index': k, 'name': sp.name, 'level': float(sp.value)}
+                                  for k, sp in enumerate(t.mixer_device.sends)]
+            except Exception:
+                mixer['sends'] = []
+            info['mixer'] = mixer
+        except Exception as e:
+            info['mixer_error'] = '%r' % (e,)
+        devices = []
+        try:
+            for k, d in enumerate(t.devices):
+                dev = {'index': k, 'name': d.name, 'class_name': getattr(d, 'class_name', ''),
+                       'type': int(getattr(d, 'type', 0) or 0)}
+                try:
+                    dev['is_active'] = bool(d.is_active)
+                except Exception:
+                    pass
+                if dev['class_name'] in self.SIMPLER_CLASSES:
+                    try:
+                        dev['sample'] = u'%s' % (d.sample.file_path,) if d.sample is not None else None
+                    except Exception:
+                        pass
+                devices.append(dev)
+        except Exception as e:
+            info['devices_error'] = '%r' % (e,)
+        info['devices'] = devices
+        info['has_sound'] = any(d['type'] == 1 or d['class_name'] in self.SIMPLER_CLASSES
+                                or d['class_name'] in self.INSTRUMENT_CLASSES for d in devices) or not info['is_midi']
+        clips = []
+        try:
+            for k, slot in enumerate(t.clip_slots):
+                if slot.has_clip:
+                    clips.append(self._describe_clip(k, slot))
+                    if len(clips) >= self.CLIP_SLOT_CAP:
+                        break
+        except Exception as e:
+            info['clips_error'] = '%r' % (e,)
+        info['clips'] = clips
+        return info
+
+    def _cmd_describe_set(self, msg):
+        song = self.song()
+        sel = song.view.selected_track
+        out = {'ok': True, 'version': VERSION, 'tempo': float(song.tempo), 'is_playing': bool(song.is_playing)}
+        try:
+            out['loop'] = {'on': bool(song.loop), 'start': float(song.loop_start), 'length': float(song.loop_length)}
+        except Exception:
+            pass
+        try:
+            out['signature'] = '%d/%d' % (int(song.signature_numerator), int(song.signature_denominator))
+        except Exception:
+            pass
+        try:
+            out['current_song_time'] = float(song.current_song_time)
+        except Exception:
+            pass
+        scenes = list(song.scenes)
+        out['scenes'] = [{'index': k, 'name': sc.name} for k, sc in enumerate(scenes)]
+        try:
+            ss = song.view.selected_scene
+            out['selected_scene'] = {'index': scenes.index(ss), 'name': ss.name}
+        except Exception:
+            out['selected_scene'] = None
+        out['selected_track'] = {'index': self._index_of(sel), 'name': sel.name}
+        tracks = []
+        for i, t in enumerate(song.tracks):
+            try:
+                tracks.append(self._describe_track(i, t, sel))
+            except Exception as e:
+                tracks.append({'index': i, 'name': getattr(t, 'name', '?'), 'error': '%r' % (e,)})
+        out['tracks'] = tracks
+        try:
+            out['returns'] = [{'index': k, 'name': r.name, 'volume': float(r.mixer_device.volume.value)}
+                              for k, r in enumerate(song.return_tracks)]
+        except Exception:
+            out['returns'] = []
+        try:
+            out['master'] = {'volume': float(song.master_track.mixer_device.volume.value)}
+        except Exception:
+            out['master'] = None
+        try:
+            out['transport'] = self._transport_state()
+        except Exception:
+            pass
+        return out
+
+    def _cmd_get_clip_notes(self, msg):
+        track = self._track(msg.get('track', 'selected'))
+        slot_index = int(msg.get('slot', 0))
+        slot = track.clip_slots[slot_index]
+        if not slot.has_clip:
+            return {'ok': False, 'error': 'no clip in %s slot %d' % (track.name, slot_index)}
+        clip = slot.clip
+        if not getattr(clip, 'is_midi_clip', True):
+            return {'ok': False, 'error': 'slot %d on %s holds an audio clip' % (slot_index, track.name)}
+        notes, total, length = self._clip_notes(clip, self.NOTE_CAP)
+        return {'ok': True, 'track': track.name, 'slot': slot_index, 'name': u'%s' % (clip.name,),
+                'length': length, 'note_count': total, 'truncated': total > len(notes), 'notes': notes}
+
+    def _cmd_play_for(self, msg, scene):
+        song = self.song()
+        seconds = max(0.1, float(msg.get('seconds', 8)))
+        self._play_id += 1          # cancels any pending timed stop
+        play_id = self._play_id
+        reply = {'ok': True, 'stops_in_seconds': seconds}
+        if scene:
+            scenes = list(song.scenes)
+            index = int(msg.get('index', 0))
+            if index < 0 or index >= len(scenes):
+                return {'ok': False, 'error': 'scene index %d out of range (0..%d)' % (index, len(scenes) - 1)}
+            scenes[index].fire()
+            reply['scene'] = {'index': index, 'name': scenes[index].name}
+        else:
+            song.start_playing()
+        self.schedule_message(max(1, int(round(seconds * 10.0))), lambda: self._timed_stop(play_id))
+        return reply
+
+    def _timed_stop(self, play_id):
+        if play_id != self._play_id:
+            return
+        try:
+            self.song().stop_playing()
+            self.log_message('ADEHack: timed playback stopped')
+        except Exception as e:
+            self.log_message('ADEHack: timed stop failed: %r' % (e,))
 
     def _cmd_set_send(self, msg):
         track = self._track(msg.get('track', 'selected'))

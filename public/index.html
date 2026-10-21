@@ -63,6 +63,17 @@
   .msg .tools li.ok::before { content:'✓'; color:var(--accent2); }
   .msg .tools li.bad::before { content:'✗'; color:var(--danger); }
   .composer { display:flex; gap:10px; align-items:flex-end; margin-top:12px; }
+  .rooms { display:flex; gap:6px; margin:4px 0 10px; }
+  .room { padding:7px 14px; border-radius:999px; border:1px solid var(--line); background:#1b1e25; cursor:pointer; font-size:13px; color:var(--muted); }
+  .room.on { background:var(--accent); border-color:var(--accent); color:#111; font-weight:600; }
+  .room small { display:block; font-size:10px; font-weight:400; opacity:.8; }
+  details.explain { margin-top:8px; border:1px solid var(--line); border-radius:8px; background:#0b0c0f; font-size:13px; }
+  details.explain summary { cursor:pointer; padding:6px 10px; color:var(--accent2); }
+  details.explain .body { padding:6px 12px 10px; color:var(--text); }
+  details.explain ol { margin:4px 0 6px 18px; padding:0; } details.explain li { margin:2px 0; }
+  .variants { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:8px; margin:8px 0; }
+  .variant { background:#0b0c0f; border:1px solid var(--line); border-radius:8px; padding:8px; }
+  .variant b { color:var(--accent); }
   .profile { display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:6px; margin:8px 0; }
   .profile .r { background:#13151a; border:1px solid var(--line); border-radius:8px; padding:6px 8px; font-size:12px; }
   .profile .r b { display:block; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
@@ -107,7 +118,19 @@
 <main>
   <section class="wide chat">
     <h2>Your producer</h2>
-    <div class="sub">Talk to it like a collaborator with Ableton open. Type, beatbox, hum, or attach audio files as references ("make the kick like this"). It plans, synthesizes every sound with Stability AI, lays the layers into Live itself, and tells you what to try next.</div>
+    <div class="sub">Your producer, with Ableton open. Type, beatbox, hum, or attach audio. It hears your set, builds in Live, and explains what it did.</div>
+    <div id="c-project" class="file" style="font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <button class="primary" id="pj-scan" title="Reads your open Live set, plays 8 bars from the playhead, listens, and proposes production moves">🎛 Work on my Live project</button>
+      <span id="pj-hint">Open your set, put the playhead on the section you are stuck on, then press this. Nothing is changed until you say so.</span>
+      <select id="pj-genre" title="Optional: judge against a style" style="width:auto;font-size:12px"><option value="">style: as it sounds</option></select>
+    </div>
+    <div id="pj-card" class="file" style="display:none;font-size:12px"></div>
+    <div id="c-session" class="file" style="display:none;font-size:12px;color:var(--muted)"></div>
+    <div class="rooms" id="c-rooms">
+      <span class="room on" data-room="create">Create<small>make something new</small></span>
+      <span class="room" data-room="analyse">Analyse<small>improve a track</small></span>
+      <span class="room" data-room="tweak">Tweak<small>reshape a sample</small></span>
+    </div>
     <div class="log" id="c-log"></div>
     <div class="chips" id="c-chips">
       <span class="chip">Start a dark techno beat at 128, kick first</span>
@@ -118,7 +141,13 @@
     </div>
     <div class="composer">
       <textarea id="c-text" placeholder="e.g. let's build a lo-fi beat around my beatbox, 88 bpm"></textarea>
-      <select id="c-density" title="How many layers the producer builds by default" style="width:auto;align-self:stretch">
+      <select id="c-level" title="How deep the explanations go" style="width:auto;align-self:stretch;font-size:12px">
+        <option value="beginner">Beginner</option>
+        <option value="intermediate" selected>Intermediate</option>
+        <option value="pro">Pro</option>
+      </select>
+      <input type="range" id="c-strength" min="0.3" max="0.8" step="0.05" value="0.5" title="Tweak: how different (subtle → new sound)" style="display:none;width:120px;align-self:center" />
+      <select id="c-density" title="How many layers the producer builds by default" style="width:auto;align-self:stretch;font-size:12px">
         <option value="minimal">Minimal (3 layers)</option>
         <option value="standard" selected>Standard (4–5)</option>
         <option value="rich">Rich (up to 7)</option>
@@ -132,10 +161,37 @@
       <input type="file" id="c-file" accept="audio/*,video/*,.wav,.mp3,.mpeg,.mpg,.mp4,.mov,.m4a,.aac,.aif,.aiff,.flac,.ogg,.wma,.webm" multiple style="display:none" />
       <button id="c-show">Show in Live</button>
       <button id="c-arrange" title="Record the playing Session clips onto the Arrangement timeline">Lay out in Arrangement (8 bars)</button>
+      <button id="c-listen" title="Capture 4 bars of what Live is actually playing and have the producer hear it">🎧 Listen to Live</button>
+      <label class="inline" style="gap:6px;cursor:pointer" title="After every change, record the new material onto the Arrangement timeline (Live 10 cannot write arrangement clips directly)"><input type="checkbox" id="c-arrmode" /> Arrangement mode</label>
       <button id="c-reset" title="Forget the conversation (Live tracks stay)">New session</button>
     </div>
     <div class="chips" id="c-refs"></div>
   </section>
+  <details class="wide" id="tools"><summary>Tools: Prompt Lab · one-button build · advanced controls</summary>
+  <details class="wide" id="lab" style="margin-top:8px"><summary>Prompt Lab: pick a genre, edit the Stability prompt and parameters, generate, get a strict authenticity score, use it as a kit</summary>
+  <section class="wide">
+    <div class="row3">
+      <div><label>Genre blueprint</label><select id="l-genre"></select></div>
+      <div><label>Model</label><select id="l-model"><option value="stable-audio-3">Stable Audio 3 (async, best for loops)</option><option value="stable-audio-2.5">Stable Audio 2.5 (fast)</option></select></div>
+      <div><label>Kind</label><select id="l-kind"><option value="drums">Drum loop (TrackType: Instrument)</option><option value="texture">Texture (Instrument)</option><option value="music">Full mix (TrackType: Music)</option></select></div>
+    </div>
+    <label>Prompt body (the server adds the TrackType tag; {bpm} is replaced)</label>
+    <textarea id="l-prompt" style="min-height:64px"></textarea>
+    <div class="chips" id="l-presets"></div>
+    <div class="row3">
+      <div><label>BPM</label><input type="text" id="l-bpm" value="122" /></div>
+      <div><label>Bars</label><input type="text" id="l-bars" value="2" /></div>
+      <div><label>Steps (2.5: 4–8 · 3: 4–8)</label><input type="text" id="l-steps" value="8" /></div>
+    </div>
+    <div class="row3">
+      <div><label>CFG scale (1–25, default 1)</label><input type="text" id="l-cfg" value="1" /></div>
+      <div><label>Seed (0 = random)</label><input type="text" id="l-seed" value="0" /></div>
+      <div><label>&nbsp;</label><button class="primary" id="l-go" style="width:100%">Generate + score</button></div>
+    </div>
+    <div class="status" id="l-status"></div>
+    <div class="results" id="l-results"></div>
+  </section>
+  </details>
   <details class="wide" id="quick"><summary>One-button build (no conversation): describe or record, press once)</summary>
   <section class="wide easy">
     <h2>What's in your head?</h2>
@@ -256,6 +312,7 @@
     <div class="steps" id="b-steps"></div>
   </section>
   </div></details>
+  </details>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -270,15 +327,24 @@ let pattern = null, playing = null;
 const ctx = new (window.AudioContext || window.webkitAudioContext)();
 
 // ---------- health ----------
-fetch('/api/health').then(r => r.json()).then(h => {
+function renderHealth(h) {
+  document.querySelectorAll('.badge.dyn').forEach(el => el.remove());
   $('b-stab').textContent = 'Stability ' + (h.stabilityKey ? 'key ok' : 'key missing');
   $('b-stab').className = 'badge ' + (h.stabilityKey ? 'ok' : 'bad');
   $('b-claude').textContent = h.anthropicKey ? 'Claude patterns' : 'Rule-based patterns';
   $('b-claude').className = 'badge ' + (h.anthropicKey ? 'ok' : '');
-  if (h.live) { const lv = document.createElement('span'); lv.className = 'badge ' + (!h.live.reachable ? 'bad' : h.live.restartNeeded ? '' : 'ok'); lv.textContent = !h.live.reachable ? 'Live: not connected' : h.live.restartNeeded ? `Live: restart to load script v${h.live.installed}` : `Live script v${h.live.running}`; lv.title = 'Ableton remote script status'; $('b-dir').before(lv); }
-  const ears = document.createElement('span'); ears.className = 'badge ' + (h.ears ? 'ok' : ''); ears.textContent = h.ears ? 'Ears: ' + ((h.earsProviders && h.earsProviders.length) ? h.earsProviders.map(p => p === 'flamingo' ? 'Music Flamingo' : 'Gemini').join(' + ') : 'quota exhausted') : 'Ears off (add HF_TOKEN or GEMINI_API_KEY)'; $('b-claude').after(ears);
+  if (h.live) { const lv = document.createElement('span'); lv.className = 'badge dyn ' + (!h.live.reachable ? 'bad' : h.live.restartNeeded ? '' : 'ok'); lv.textContent = !h.live.reachable ? 'Live: not connected' : h.live.restartNeeded ? `Live: restart to load script v${h.live.installed}` : `Live script v${h.live.running}`; lv.title = 'Ableton remote script status'; $('b-dir').before(lv); }
+  const ears = document.createElement('span'); ears.className = 'badge dyn ' + (h.ears ? 'ok' : ''); ears.textContent = h.ears ? 'Ears: ' + ((h.earsProviders && h.earsProviders.length) ? h.earsProviders.map(p => p === 'flamingo' ? 'Music Flamingo' : 'Gemini').join(' + ') : 'quota exhausted') : 'Ears off (add HF_TOKEN or GEMINI_API_KEY)'; $('b-claude').after(ears);
   $('b-dir').title = h.outDir; $('b-dir').textContent = '📁 ' + h.outDir.split('/').slice(-2).join('/');
-});
+}
+async function pollHealth() { try { renderHealth(await (await fetch('/api/health')).json()); } catch {} try { renderSession(await (await fetch('/api/live/state')).json()); } catch {} }
+function renderSession(st) {
+  const el = $('c-session'); if (!el) return;
+  const tracks = Object.values(st.tracks || {}).map(t => t.name); const sounds = Object.keys(st.samples || {}).length;
+  if (!tracks.length && !sounds) { el.style.display = 'none'; return; }
+  el.style.display = ''; el.innerHTML = `<b style="color:var(--text)">Session as the producer sees it</b> · ${st.bpm ? st.bpm + ' BPM · ' : ''}${tracks.length} tracks it built${tracks.length ? ': ' + tracks.join(', ') : ''}${st.genreTarget ? ' · style: ' + st.genreTarget.split(':')[0] : ''}${st.groove ? ' · groove template loaded' : ''}`;
+}
+pollHealth(); setInterval(pollHealth, 15000);   // the Live badge self-corrects after a Live or server restart
 INSTR.forEach(i => { const o = document.createElement('option'); o.value = i; o.textContent = i.replace('_',' '); $('p-lane').appendChild(o); });
 $('p-lane').value = 'snare';
 $('s-strength').oninput = () => $('s-strength-v').textContent = Number($('s-strength').value).toFixed(2);
@@ -727,21 +793,88 @@ async function uploadBlob(b, infoId, label) {
 }
 makeRecorder('c-beat', 'c-beat-info', async b => { beatBlob = b; beatUpload = await uploadBlob(b, 'c-beat-info', 'beat'); });
 makeRecorder('c-hum', 'c-hum-info', async b => { melBlob = b; humUpload = await uploadBlob(b, 'c-hum-info', 'melody'); });
+let currentRoom = 'create';
+const ROOM_HINTS = {
+  create: { ph: "e.g. let's build a lo-fi beat around my beatbox, 88 bpm", chips: ['Start a dark techno beat at 128, kick first', 'Add a snare on 2 and 4 and crisp 16th hats', 'Give me a hypnotic saw arp in F minor', 'The kick is too soft, make it punchier', 'Half time, more swing'] },
+  analyse: { ph: 'Attach a track or a bounce, then: analyse it and give me producer feedback, two alternatives and a genre guide', chips: ["I'm stuck on this section of my project, listen and propose one move", 'Analyse the attached track: report, feedback, two alternatives, compare', 'What do you think of my beat? Listen to 8 bars', 'Make a warmer alternative of the attached track'] },
+  tweak: { ph: 'Attach one sample, then: brighter / punchier / more vinyl / darker…', chips: ['Make this sample punchier, 3 variations', 'More vinyl and dust, keep the transient', 'Fix the highs and lows of this sample and put it on a track', 'Similar sounds I should explore'] },
+};
+function setRoom(r) {
+  currentRoom = r;
+  document.querySelectorAll('#c-rooms .room').forEach(el => el.classList.toggle('on', el.dataset.room === r));
+  $('c-text').placeholder = ROOM_HINTS[r].ph;
+  $('c-strength').style.display = r === 'tweak' ? '' : 'none';
+  $('c-chips').innerHTML = ''; ROOM_HINTS[r].chips.forEach(c => { const sp = document.createElement('span'); sp.className = 'chip'; sp.textContent = c; sp.onclick = () => { $('c-text').value = c; $('c-text').focus(); }; $('c-chips').appendChild(sp); });
+}
+document.querySelectorAll('#c-rooms .room').forEach(el => el.onclick = () => setRoom(el.dataset.room));
+// ---------- existing project ----------
+fetch('/api/knowledge').then(r => r.json()).then(j => { (j.genres || j || []).forEach(g => { const o = document.createElement('option'); o.value = g.slug || g; o.textContent = g.title || g; $('pj-genre').appendChild(o); }); }).catch(() => {});
+function renderProject(pj) {
+  const card = $('pj-card'); card.style.display = '';
+  const cr = pj.critique && !pj.critique.error ? pj.critique : null;
+  const tracks = pj.tracks.map(t => `<span class="chip" style="cursor:default">${t.name}${t.devices && t.devices.length ? ` <small style="color:var(--muted)">${t.devices.slice(0,2).join(', ')}</small>` : ''}</span>`).join('');
+  let heard = '';
+  if (cr) heard = `<div style="margin-top:6px"><b>What I heard:</b> ${cr.styleRead || ''}${cr.styleAccuracy && cr.styleAccuracy.verdict ? ` <span style="color:var(--muted)">(${cr.styleAccuracy.target || 'style'}: ${cr.styleAccuracy.verdict})</span>` : ''}</div>
+    <div style="color:var(--muted);margin-top:4px">Drums: ${cr.drums || '–'}<br>Bass: ${cr.bass && cr.bass.present === false ? 'none yet · ' : ''}${cr.bass && cr.bass.suggestion ? cr.bass.suggestion : (cr.bass && cr.bass.type) || '–'}<br>Groove: ${cr.groove || '–'}</div>`;
+  else if (pj.capture && pj.capture.silent) heard = `<div style="margin-top:6px;color:var(--warn,#d9822b)">Live played (almost) nothing during the ${pj.capture.seconds} s I listened${pj.capture.peakDbfs != null ? ` (peak ${Number(pj.capture.peakDbfs).toFixed(0)} dBFS)` : ''}. Check in Live: the playhead sits on a section with clips${pj.arrangementBars ? ` (your arrangement is ${pj.arrangementBars} bars long)` : ''}, no clips are orange/missing, "Back to Arrangement" is not lit, and Live's output device is the one you hear. Then press listen again.</div>`;
+  else if (pj.captureError) heard = `<div style="margin-top:6px;color:var(--muted)">Could not listen: ${pj.captureError}. I can still work from the set structure.</div>`;
+  else if (pj.critique && pj.critique.error) heard = `<div style="margin-top:6px;color:var(--muted)">Listened, but the critique failed: ${pj.critique.error}</div>`;
+  card.innerHTML = `<b style="color:var(--text)">Your project</b> · ${Math.round(pj.tempo)} BPM${pj.signature ? ' · ' + pj.signature : ''} · ${pj.tracks.length} tracks${pj.capture && !pj.capture.silent ? ` · <a href="${pj.capture.url}" target="_blank">hear the ${pj.capture.seconds} s I captured</a>` : ''}
+    <div class="chips" style="margin-top:6px">${tracks}</div>${heard}
+    ${cr && cr.moves && cr.moves.length ? `<div style="margin-top:8px"><b>Moves you can ask for</b> <span style="color:var(--muted)">(click one; I build it next to your tracks, nothing of yours is touched)</span></div><div class="chips" id="pj-moves"></div>` : ''}
+    <div class="chips" style="margin-top:6px"><span class="chip" id="pj-again">🎧 listen again</span><span class="chip" id="pj-ask">what would you change first?</span></div>`;
+  if (cr && cr.moves) cr.moves.forEach(m => { const sp = document.createElement('span'); sp.className = 'chip'; sp.textContent = m; sp.onclick = () => { $('c-text').value = `In my project: ${m}. Add it next to my tracks at my tempo and key; do not change what I already have.`; sendChat(); }; $('pj-moves').appendChild(sp); });
+  $('pj-again').onclick = () => scanProject();
+  $('pj-ask').onclick = () => { $('c-text').value = 'You heard my project. What is the one production move you would make first, and why? Propose, do not build yet.'; sendChat(); };
+}
+async function scanProject() {
+  const b = $('pj-scan'); b.disabled = true; $('pj-hint').textContent = 'reading your set and listening to 8 bars from the playhead…';
+  try { const r = await postJson('/api/project/scan', { bars: 8, genre: $('pj-genre').value || undefined }); if (!r.ok) throw new Error(r.error); renderProject(r.project); $('pj-hint').textContent = 'scanned · the producer now works inside this set'; }
+  catch (e) { $('pj-hint').textContent = 'scan failed: ' + e.message; }
+  b.disabled = false;
+}
+$('pj-scan').onclick = scanProject;
+$('c-listen').onclick = () => { $('c-text').value = 'Listen to 4 bars of my set and tell me what you hear and what you would change. Do not build anything yet.'; sendChat(); };
+function explainPanel(ex) {
+  const d = document.createElement('details'); d.className = 'explain';
+  d.innerHTML = `<summary>How this was made${ex.level ? ` · ${ex.level}` : ''}</summary><div class="body">
+    ${ex.brief ? `<div><b>Brief:</b> ${ex.brief}</div>` : ''}
+    ${(ex.choices || []).length ? `<div style="margin-top:6px"><b>Choices</b><ol>${ex.choices.map(c => `<li>${typeof c === 'string' ? c : `${c.what}${c.why ? ` — <span style="color:var(--muted)">${c.why}</span>` : ''}`}</li>`).join('')}</ol></div>` : ''}
+    ${ex.steps && ex.steps.ableton && ex.steps.ableton.length ? `<div><b>Make it in Ableton</b><ol>${ex.steps.ableton.map(x => `<li>${x}</li>`).join('')}</ol></div>` : ''}
+    ${ex.steps && ex.steps.logic && ex.steps.logic.length ? `<div><b>Make it in Logic</b><ol>${ex.steps.logic.map(x => `<li>${x}</li>`).join('')}</ol></div>` : ''}
+  </div>`;
+  return d;
+}
+function variantsPanel(ev) {
+  const w = document.createElement('div'); w.className = 'variants';
+  (ev.items || []).forEach(v => {
+    const d = document.createElement('div'); d.className = 'variant';
+    d.innerHTML = `<b>${v.label}</b> <span style="color:var(--muted);font-size:12px">${ev.role || ''}${v.match != null ? ` · ${v.match}/10` : ''}</span><audio controls src="${v.url}" style="width:100%;margin-top:4px"></audio><button style="margin-top:6px" title="Load this variation into the matching track in Live">use ${v.label}</button>`;
+    d.querySelector('button').onclick = async () => { const r = await postJson('/api/live/sample', { path: v.path, instrument: ev.role, role: ev.role }).catch(() => ({ ok: false })); if (!r.ok) { const r2 = await postJson('/api/live/sample', { path: v.path, role: ev.role }); if (!r2.ok) alert(r2.error); } };
+    w.appendChild(d);
+  });
+  return w;
+}
+fetch('/api/settings').then(r => r.json()).then(s => { $('c-arrmode').checked = !!s.arrangementMode; }).catch(() => {});
+$('c-arrmode').onchange = async () => { const s = await postJson('/api/settings', { arrangementMode: $('c-arrmode').checked }); addBot(s.arrangementMode ? 'Arrangement mode on: after each change I record the new material onto the timeline at the end of what is there. Session keeps the loops.' : 'Arrangement mode off.'); };
 $('c-show').onclick = () => postJson('/api/live/show', {});
 $('c-arrange').onclick = async () => { $('c-arrange').disabled = true; const r = await postJson('/api/live/arrange', { bars: 8 }); addBot(r.ok ? `Recording the playing clips into the Arrangement for 8 bars. Press Tab in Live to watch the timeline fill; it stops by itself.` : 'Could not start arrangement recording: ' + r.error); $('c-arrange').disabled = false; };
 function profileCard(profile, title) {
   if (!profile || !profile.ratings) return null;
-  const wrap = document.createElement('div');
-  wrap.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-top:6px">${title || 'Technical profile'}${profile.durationSeconds ? ` · ${Number(profile.durationSeconds).toFixed(2)} s` : ''}</div>`;
-  const g = document.createElement('div'); g.className = 'profile';
-  for (const [k, r] of Object.entries(profile.ratings)) {
+  const wrap = document.createElement('details'); wrap.className = 'explain';
+  wrap.innerHTML = `<summary style="color:var(--muted)">measurements${title ? ` · ${title}` : ''}${profile.durationSeconds ? ` · ${Number(profile.durationSeconds).toFixed(1)} s` : ''}</summary>`;
+  const g = document.createElement('div'); g.className = 'profile'; g.style.padding = '6px 10px';
+  for (const [k, r0] of Object.entries(profile.ratings)) {
+    // ratings arrive either as {level, value, unit} or as compact strings like "high (17.3 dB crest)"
+    let level, text;
+    if (r0 && typeof r0 === 'object') { level = r0.level; const v = r0.value != null ? Number(r0.value) : null; text = (v != null ? v.toFixed(Math.abs(v) >= 100 ? 0 : 1) : '') + (r0.unit ? ' ' + r0.unit : ''); }
+    else { const m = String(r0).match(/^(low|medium|high)\s*\(?([^)]*)\)?/i); level = m ? m[1].toLowerCase() : 'medium'; text = m ? m[2] : String(r0); }
     const d = document.createElement('div'); d.className = 'r';
-    const v = r.value != null ? Number(r.value) : null;
-    d.innerHTML = `<b>${k.replace(/([A-Z])/g, ' $1')}</b><span class="lvl-${r.level}">${r.level}</span> <span class="num">${v != null ? v.toFixed(Math.abs(v) >= 100 ? 0 : 1) : ''}${r.unit ? ' ' + r.unit : ''}</span>`;
+    d.innerHTML = `<b>${k.replace(/([A-Z])/g, ' $1')}</b><span class="lvl-${level}">${level}</span> <span class="num">${text || ''}</span>`;
     g.appendChild(d);
   }
   wrap.appendChild(g);
-  if (profile.summary) { const p = document.createElement('div'); p.style.cssText = 'font-size:13px;color:var(--muted)'; p.textContent = profile.summary; wrap.appendChild(p); }
+  if (profile.summary) { const p = document.createElement('div'); p.style.cssText = 'font-size:12px;color:var(--muted);padding:0 10px 8px'; p.textContent = profile.summary; wrap.appendChild(p); }
   return wrap;
 }
 $('c-reset').onclick = async () => { await postJson('/api/chat/reset', {}); $('c-log').innerHTML = ''; addBot('New session. Live keeps whatever is already there.'); };
@@ -754,13 +887,13 @@ async function sendChat() {
   const text = $('c-text').value.trim();
   if (chatBusy || (!text && !beatUpload && !humUpload && !refUploads.length)) return;
   chatBusy = true; $('c-send').disabled = true; $('c-text').value = '';
-  const density = $('c-density').value;
+  const density = $('c-density').value, level = $('c-level').value, room = currentRoom, strength = $('c-strength').value;
   addMsg('user', text + (beatUpload ? ' 🎙 beat' : '') + (humUpload ? ' 🎙 melody' : '') + refUploads.map(r => ` 🎧 ${r.name}`).join('') + (density !== 'standard' ? ` · ${density}` : ''));
   const bot = addBot(''); const tools = document.createElement('ul'); tools.className = 'tools'; bot.appendChild(tools);
   const body = document.createElement('div'); bot.appendChild(body); body.textContent = 'thinking…';
   const live = new Map();
   try {
-    const r = await fetch('/api/chat', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ text: (density !== 'standard' ? `[density: ${density}] ` : '') + text, beatId: beatUpload, humId: humUpload, refIds: refUploads.map(x => x.id) }) });
+    const r = await fetch('/api/chat', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ text: (room !== 'create' ? `[room: ${room}] ` : '') + (level !== 'intermediate' ? `[level: ${level}] ` : '') + (room === 'tweak' ? `[strength: ${strength}] ` : '') + (density !== 'standard' ? `[density: ${density}] ` : '') + text, beatId: beatUpload, humId: humUpload, refIds: refUploads.map(x => x.id) }) });
     beatUpload = humUpload = null; refUploads = []; $('c-refs').innerHTML = ''; $('c-beat-info').textContent = 'attach a beat'; $('c-hum-info').textContent = 'attach a melody'; $('c-beat').textContent = '● Beatbox'; $('c-hum').textContent = '● Hum';
     const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
     while (true) {
@@ -777,15 +910,72 @@ async function sendChat() {
           if (prof) { const card = profileCard(prof, ev.name === 'render_preview' ? 'Preview render (no Live effects)' : 'Technical profile'); if (card) bot.insertBefore(card, body); }
           if (ev.name === 'render_preview' && ev.data && ev.data.url) { const a = document.createElement('audio'); a.controls = true; a.src = ev.data.url; a.style.width = '100%'; bot.insertBefore(a, body); }
         }
+        else if (ev.type === 'explanation') { bot.insertBefore(explainPanel(ev), body); }
+        else if (ev.type === 'variations') { bot.insertBefore(variantsPanel(ev), body); }
         else if (ev.type === 'text') { body.textContent = ev.text || ''; }
         else if (ev.type === 'error') { body.textContent = 'Error: ' + ev.error; body.style.color = 'var(--danger)'; }
         else if (ev.type === 'done') { if (!body.textContent) body.textContent = 'Done.'; }
         $('c-log').scrollTop = 1e9;
       }
     }
-  } catch (e) { body.textContent = 'Error: ' + e.message; }
+  } catch (e) {
+    // connection dropped (server restart, sleep, long silence): recover the finished turn from the server instead of showing a dead error
+    body.textContent = 'Connection dropped, recovering the answer…';
+    const recovered = await recoverLastTurn(tools, body, live);
+    if (!recovered) { body.textContent = 'Error: ' + e.message + ' (the server may have restarted; your request may still have completed in Live)'; body.style.color = 'var(--danger)'; }
+  }
   chatBusy = false; $('c-send').disabled = false; $('c-text').focus();
 }
+async function recoverLastTurn(tools, body) {
+  for (let i = 0; i < 40; i++) {           // up to ~6 minutes
+    await new Promise(r => setTimeout(r, i < 5 ? 3000 : 10000));
+    let t; try { t = await (await fetch('/api/chat/last')).json(); } catch { continue; }
+    if (!t || t.status === 'none') return false;
+    tools.innerHTML = '';
+    for (const ev of t.events) {
+      if (ev.type === 'tool') { const li = document.createElement('li'); li.textContent = ev.summary || ev.name; li.dataset.name = ev.name; tools.appendChild(li); }
+      else if (ev.type === 'tool_done') { const li = [...tools.children].reverse().find(l => l.dataset.name === ev.name && !l.className); if (li) { li.className = ev.ok === false ? 'bad' : 'ok'; if (ev.summary) li.textContent = ev.summary; } }
+    }
+    if (t.status === 'running') { body.textContent = `Still working… (${Math.round((Date.now() - t.startedAt) / 1000)} s)`; continue; }
+    body.textContent = t.status === 'error' ? 'Error: ' + ((t.events.find(e => e.type === 'error') || {}).error || 'unknown') : (t.text || 'Done.');
+    return true;
+  }
+  return false;
+}
+// ---------- Prompt Lab ----------
+(async () => {
+  try {
+    const k = await (await fetch('/api/knowledge')).json();
+    for (const g of k.genres) { const o = document.createElement('option'); o.value = g.slug; o.textContent = g.title.slice(0, 48); $('l-genre').appendChild(o); }
+    $('l-genre').value = k.genres.find(g => g.slug === 'deep-house') ? 'deep-house' : k.genres[0].slug;
+    await loadLabGenre();
+  } catch (e) { $('l-status').textContent = 'knowledge base not available: ' + e.message; }
+})();
+async function loadLabGenre() {
+  const bp = await (await fetch('/api/knowledge/' + $('l-genre').value)).json();
+  const tempo = (bp.tempo || '').match(/\d+/); if (tempo) $('l-bpm').value = tempo[0];
+  $('l-presets').innerHTML = '';
+  const bodies = bp.prompts ? [...bp.prompts.loops, bp.prompts.texture].filter(Boolean) : [];
+  bodies.forEach((b, i) => { const c = document.createElement('span'); c.className = 'chip'; c.textContent = (i < 3 ? `loop ${i + 1}: ` : 'texture: ') + b.slice(0, 70) + '…'; c.title = b; c.onclick = () => { $('l-prompt').value = b; $('l-kind').value = i < 3 ? 'drums' : 'texture'; }; $('l-presets').appendChild(c); });
+  if (bodies[0]) $('l-prompt').value = bodies[0];
+}
+$('l-genre').onchange = loadLabGenre;
+$('l-go').onclick = async () => {
+  $('l-go').disabled = true; setStatus('l-status', 'Generating with Stability, then Gemini scores it against the blueprint… (20–60 s)');
+  const body = { prompt: $('l-prompt').value, model: $('l-model').value, kind: $('l-kind').value, bpm: Number($('l-bpm').value), bars: Number($('l-bars').value), steps: Number($('l-steps').value) || undefined, cfgScale: Number($('l-cfg').value) || undefined, seed: Number($('l-seed').value) || undefined, genre: $('l-genre').value };
+  const r = await postJson('/api/lab/generate', body);
+  $('l-go').disabled = false;
+  if (!r.ok) return setStatus('l-status', r.error, true);
+  const sc = r.score || {};
+  const dims = sc.dimensions ? Object.entries(sc.dimensions).map(([k, v]) => `${k} ${v}`).join(' · ') : '';
+  setStatus('l-status', sc.overall != null ? `Authenticity ${sc.overall}/10 · ${sc.verdict}${sc.spread != null ? ` · judge spread ±${sc.spread}` : ''}${/lite/.test(sc.provider || '') ? ' · lite judge (indicative, not precise)' : ''}` : (sc.error ? 'score failed: ' + sc.error : 'generated'));
+  const card = fileCard({ name: r.url.split('/').pop(), url: r.url, path: r.path, kind: 'loop' }, `<div class="path" style="white-space:pre-wrap">${dims}\n${sc.why || ''}${(sc.markersMissing || []).length ? '\nmissing: ' + sc.markersMissing.join('; ') : ''}${sc.fixPrompt ? '\nsuggested prompt: ' + sc.fixPrompt : ''}\nseed ${r.seed} · ${r.prompt}</div>`);
+  const use = document.createElement('button'); use.textContent = '→ Live as kit'; use.title = 'slice this loop into a Drum Rack and play its groove';
+  use.onclick = async () => { use.disabled = true; use.textContent = 'building…'; const u = await postJson('/api/lab/use-kit', { path: r.path, bpm: body.bpm, bars: body.bars }); use.textContent = u.ok ? '✓ in Live' : '→ Live as kit'; if (!u.ok) setStatus('l-status', u.error, true); use.disabled = false; };
+  const tryFix = document.createElement('button'); tryFix.textContent = 'use suggested prompt'; tryFix.style.display = sc.fixPrompt ? '' : 'none'; tryFix.onclick = () => { $('l-prompt').value = sc.fixPrompt; };
+  card.querySelector('.top span:last-child').append(use, tryFix);
+  $('l-results').prepend(card);
+};
 addBot('Hi. Tell me what you hear, or beatbox a beat and hum a melody, and I\'ll build it in Live layer by layer. I\'ll tell you what I did and what to try next.');
 </script>
 </body>

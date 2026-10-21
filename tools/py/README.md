@@ -26,3 +26,10 @@ the CLI `adetools.py` prints exactly one JSON object per command.
 | ffmpeg (system) | LGPL/GPL build-dependent |
 
 Model weights: demucs `htdemucs` (MIT, downloaded on setup), basic-pitch ICASSP 2022 model (Apache-2.0, bundled).
+
+## Known quirks on this machine (Intel Mac, Python 3.11)
+- `librosa.onset.onset_detect` segfaults inside numba (llvmlite 0.43 wheel); `analyze` uses its own numpy peak picker instead. `beat_track`, `chroma_cqt` and `segment.agglomerative` work.
+- `basic-pitch` runs on the ONNX backend (no TensorFlow); its progress prints are redirected to stderr so stdout stays JSON.
+- pedalboard's `Limiter` normalizes towards its ceiling, so `master` trims the output back to the target LUFS afterwards.
+- demucs `htdemucs` on CPU: about 1.4x real time for a 10 s file with `--segment 7` (4 stems).
+- Pins: torch 2.2.2 (last macOS x86_64 wheels), numba 0.60 / llvmlite 0.43, numpy < 2, demucs 4.0.1 (4.1 needs the Rust `sphn` build), setuptools < 81 (resampy imports pkg_resources).

@@ -8,6 +8,9 @@
   master     --in f --out f [--lufs -12]
 """
 import argparse, json, os, sys, time, warnings
+# numba/llvmlite 0.43 mis-tunes for this Intel Mac and segfaults in librosa's peak_pick gufunc;
+# 'generic' codegen is safe everywhere (must be set before numba is imported).
+os.environ.setdefault("NUMBA_CPU_NAME", "generic")
 warnings.filterwarnings("ignore")
 os.environ.setdefault("OMP_NUM_THREADS", "4")
 
@@ -75,6 +78,26 @@ def estimate_key(chroma_mean):
     margin = float(scores[0] - scores[1]) if len(scores) > 1 else 0.0
     return {"tonic": NOTE_NAMES[best[1]], "mode": best[2], "confidence": round(max(0.0, min(1.0, margin * 5)), 3), "correlation": round(best[0], 3)}
 
+def pick_peaks(env, sr=22050, hop=512, min_gap_ms=50.0, pre_ms=200.0, post_ms=200.0, delta_ratio=0.07):
+    """Adaptive-threshold peak picking without numba: local max over +-1 frame, above moving mean + delta, min gap."""
+    import numpy as np
+    env = np.asarray(env, dtype=float)
+    n = len(env)
+    if n < 3: return np.array([], dtype=int)
+    frame_ms = 1000.0 * hop / sr
+    pre = max(1, int(pre_ms / frame_ms)); post = max(1, int(post_ms / frame_ms)); gap = max(1, int(min_gap_ms / frame_ms))
+    delta = delta_ratio * (env.max() if env.max() > 0 else 1.0)
+    peaks = []; last = -gap - 1
+    for i in range(1, n - 1):
+        if env[i] < env[i - 1] or env[i] < env[i + 1]: continue
+        lo = max(0, i - pre); hi = min(n, i + post + 1)
+        if env[i] < env[lo:hi].mean() + delta: continue
+        if i - last < gap:
+            if env[i] > env[peaks[-1]]: peaks[-1] = i; last = i
+            continue
+        peaks.append(i); last = i
+    return np.array(peaks, dtype=int)
+
 def cmd_analyze(a):
     import numpy as np, librosa
     y, sr = load_mono(a.inp)
@@ -100,11 +123,10 @@ def cmd_analyze(a):
         res["key"] = estimate_key(chroma.mean(axis=1))
     except Exception as e:
         log("key failed:", e); res["key"] = None; chroma = None
-    # onsets with strengths
-    on_frames = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr, hop_length=hop, backtrack=True, units="frames")
-    peak_frames = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr, hop_length=hop, backtrack=False, units="frames")
-    times = librosa.frames_to_time(on_frames, sr=sr, hop_length=hop)
-    pk = onset_env[np.clip(peak_frames, 0, len(onset_env) - 1)] if len(peak_frames) == len(on_frames) else onset_env[np.clip(on_frames, 0, len(onset_env) - 1)]
+    # onsets with strengths: numpy peak picking on the onset envelope (librosa.onset.onset_detect segfaults in numba on this Mac)
+    peak_frames = pick_peaks(onset_env, sr=sr, hop=hop)
+    times = librosa.frames_to_time(peak_frames, sr=sr, hop_length=hop)
+    pk = onset_env[np.clip(peak_frames, 0, len(onset_env) - 1)]
     mx = float(pk.max()) if len(pk) else 1.0
     onsets = [{"time": round(float(t), 4), "strength": round(float(s / (mx or 1.0)), 3)} for t, s in zip(times, pk)]
     res["onsets"] = onsets
@@ -158,7 +180,9 @@ def cmd_transcribe(a):
     from basic_pitch.inference import predict
     from basic_pitch import ICASSP_2022_MODEL_PATH
     t0 = time.time()
-    model_output, midi_data, note_events = predict(a.inp, ICASSP_2022_MODEL_PATH, onset_threshold=a.onset, frame_threshold=a.frame, minimum_note_length=a.min_note_ms, minimum_frequency=None, maximum_frequency=None, melodia_trick=True)
+    import contextlib
+    with contextlib.redirect_stdout(sys.stderr):   # basic-pitch prints progress/debug lines to stdout; keep stdout JSON-only
+        model_output, midi_data, note_events = predict(a.inp, ICASSP_2022_MODEL_PATH, onset_threshold=a.onset, frame_threshold=a.frame, minimum_note_length=a.min_note_ms, minimum_frequency=None, maximum_frequency=None, melodia_trick=True)
     notes = []
     for ev in note_events:  # (start_s, end_s, pitch_midi, amplitude, pitch_bends)
         start, end, pitch, amp = float(ev[0]), float(ev[1]), int(ev[2]), float(ev[3])
@@ -236,15 +260,21 @@ def cmd_master(a):
     gain = (a.lufs - lufs_mid) if np.isfinite(lufs_mid) else 0.0
     gain = float(max(-24.0, min(24.0, gain)))
     y = pb.Pedalboard([pb.Gain(gain_db=gain), pb.Limiter(threshold_db=-1.0, release_ms=80)])(y, sr)
+    # pedalboard's Limiter (JUCE) normalizes towards its ceiling, i.e. it adds gain; trim back to the target
     lufs_out = integrated_lufs(y, sr)
+    trim = 0.0
+    if np.isfinite(lufs_out) and lufs_out > a.lufs + 0.3:
+        trim = float(max(-24.0, a.lufs - lufs_out))
+        y = pb.Pedalboard([pb.Gain(gain_db=trim)])(y, sr)
+        lufs_out = integrated_lufs(y, sr)
     write_audio(a.out, y, sr)
-    out({"ok": True, "out": a.out, "targetLufs": a.lufs, "lufsIn": None if not np.isfinite(lufs_in) else round(lufs_in, 2), "lufs": None if not np.isfinite(lufs_out) else round(lufs_out, 2), "gainDb": round(gain, 2), "peakDbfs": peak_dbfs(y), "sampleRate": sr})
+    out({"ok": True, "out": a.out, "targetLufs": a.lufs, "lufsIn": None if not np.isfinite(lufs_in) else round(lufs_in, 2), "lufs": None if not np.isfinite(lufs_out) else round(lufs_out, 2), "gainDb": round(gain + trim, 2), "peakDbfs": peak_dbfs(y), "sampleRate": sr})
 
 def cmd_versions(a):
-    import importlib
+    from importlib import metadata
     v = {}
-    for p in ["numpy", "librosa", "torch", "demucs", "basic_pitch", "pedalboard", "soundfile", "pyloudnorm"]:
-        try: v[p] = importlib.import_module(p).__version__
+    for p in ["numpy", "librosa", "torch", "demucs", "basic-pitch", "pedalboard", "soundfile", "pyloudnorm", "onnxruntime", "numba", "llvmlite"]:
+        try: v[p] = metadata.version(p)
         except Exception as e: v[p] = f"ERROR {e}"
     out({"ok": True, "python": sys.version.split()[0], "versions": v})
 
