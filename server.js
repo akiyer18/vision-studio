@@ -60,47 +60,50 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+const TONAL = new Set(['synth', 'saw', 'bass', 'pad', 'lead', 'pluck', 'keys', 'melody', 'rhodes', 'piano', 'chords', 'tone']);
+// The whole sound pipeline as a function: (recording?) -> Stability -> one-shot + full file in the Ableton folder.
+async function synthesize({ prompt = '', mode = 'oneshot', kind, name = 'sound', audioPath, offsetSeconds, strength = 0.7, model = 'stable-audio-2.5', oneshotSeconds }) {
+  if (!hasKey(process.env.STABILITY_API_KEY)) throw new Error('STABILITY_API_KEY is not set in .env');
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  if (!audioPath) mode = 'text';
+  if (!kind) kind = TONAL.has(String(name).toLowerCase()) ? 'tone' : undefined;
+  const files = [];
+  let result;
+  if (mode === 'text') {
+    result = await textToAudio({ prompt: buildPrompt(prompt, 'oneshot', kind), duration: 6, model });
+  } else {
+    const raw = path.join(TMP, `${id}-raw.wav`);
+    const input = path.join(TMP, `${id}-input.wav`);
+    await toWav(audioPath, raw);
+    const offset = Number(offsetSeconds);
+    if (Number.isFinite(offset) && offset > 0) {
+      const cut = path.join(TMP, `${id}-cut.wav`);
+      await ffmpeg(['-ss', String(Math.max(0, offset - 0.015)), '-i', raw, '-t', '1.2', cut]);
+      await fs.rename(cut, raw);
+    }
+    if (mode === 'loop') await makeLoopInput(raw, input);
+    else await makeOneShotLoop(raw, input);
+    files.push(await publish(await fs.readFile(raw), `${name}-hum`, '.wav', 'raw'));
+    result = await audioToAudio({ wavPath: input, prompt: buildPrompt(prompt, mode, kind), strength: clamp(Number(strength), 0.01, 1) || 0.7, duration: 6, model });
+  }
+  const gen = path.join(TMP, `${id}-gen.wav`);
+  await fs.writeFile(gen, result.buffer);
+  if (mode !== 'loop') {
+    const one = path.join(TMP, `${id}-oneshot.wav`);
+    const norm = path.join(TMP, `${id}-oneshot-norm.wav`);
+    await sliceFirstHit(gen, one, { seconds: clamp(Number(oneshotSeconds), 0.2, 6) || (kind === 'tone' ? 2.5 : 1.0) });
+    await normalize(one, norm);
+    files.unshift(await publish(await fs.readFile(norm), name, '.wav', 'oneshot'));
+  }
+  files.push(await publish(result.buffer, `${name}-full`, '.wav', 'loop'));
+  return { files, seed: result.seed, mode };
+}
+
 app.post('/api/synth', upload.single('audio'), async (req, res) => {
-  const id = Date.now();
   try {
-    if (!hasKey(process.env.STABILITY_API_KEY)) throw new Error('STABILITY_API_KEY is not set in .env');
-    const { prompt = '', name = 'sound' } = req.body;
-    let mode = req.body.mode || 'oneshot';
-    if (!req.file) mode = 'text';
-    const strength = clamp(parseFloat(req.body.strength), 0.01, 1) || 0.7;
-    const model = req.body.model || 'stable-audio-2.5';
-    const files = [];
-    let result;
-
-    if (mode === 'text') {
-      result = await textToAudio({ prompt: buildPrompt(prompt, req.body.mode, req.body.kind), duration: 6, model });
-    } else {
-      const raw = path.join(TMP, `${id}-raw.wav`);
-      const input = path.join(TMP, `${id}-input.wav`);
-      await toWav(req.file.path, raw);
-      const offset = Number(req.body.offsetSeconds);
-      if (Number.isFinite(offset) && offset > 0) {   // cut the hit at a given onset (per-lane sounds from one beatbox take)
-        const cut = path.join(TMP, `${id}-cut.wav`);
-        await ffmpeg(['-ss', String(Math.max(0, offset - 0.015)), '-i', raw, '-t', '1.2', cut]);
-        await fs.rename(cut, raw);
-      }
-      if (mode === 'loop') await makeLoopInput(raw, input);
-      else await makeOneShotLoop(raw, input);
-      files.push(await publish(await fs.readFile(raw), `${name}-hum`, '.wav', 'raw'));
-      result = await audioToAudio({ wavPath: input, prompt: buildPrompt(prompt, mode, req.body.kind), strength, duration: 6, model });
-    }
-
-    const gen = path.join(TMP, `${id}-gen.wav`);
-    await fs.writeFile(gen, result.buffer);
-    if (mode !== 'loop') {
-      const one = path.join(TMP, `${id}-oneshot.wav`);
-      const norm = path.join(TMP, `${id}-oneshot-norm.wav`);
-      await sliceFirstHit(gen, one, { seconds: clamp(Number(req.body.oneshotSeconds), 0.2, 6) || 1.0 });
-      await normalize(one, norm);
-      files.unshift(await publish(await fs.readFile(norm), name, '.wav', 'oneshot'));
-    }
-    files.push(await publish(result.buffer, `${name}-full`, '.wav', 'loop'));
-    res.json({ files, seed: result.seed, mode });
+    const { prompt = '', name = 'sound', kind, mode = 'oneshot', model, strength, oneshotSeconds, offsetSeconds } = req.body;
+    const out = await synthesize({ prompt, name, kind, mode, model: model || 'stable-audio-2.5', strength: parseFloat(strength), oneshotSeconds, offsetSeconds, audioPath: req.file?.path });
+    res.json(out);
   } catch (e) {
     console.error('[synth]', e);
     res.status(500).json({ error: e.message });
@@ -422,6 +425,120 @@ app.post('/api/tweak', async (req, res) => {
     res.json(await applyTweak({ text: String(text), state }));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// ================= v3: the producer agent (Claude with tools) =================
+const chat = { history: [] };
+const uploads = new Map();   // id -> wav path (this process only)
+
+app.post('/api/upload', upload.single('audio'), async (req, res) => {
+  try {
+    if (!req.file) throw new Error('no audio');
+    const id = `${Date.now()}`;
+    const wav = path.join(TMP, `${id}-upload.wav`);
+    await toWav(req.file.path, wav);
+    uploads.set(id, wav);
+    res.json({ id, seconds: await (await import('./lib/audio.js')).durationSeconds(wav) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+  finally { if (req.file) fs.unlink(req.file.path).catch(() => {}); }
+});
+
+async function trackByName(send, name) {
+  const r = await send({ cmd: 'list_tracks' });
+  if (!r?.ok) throw new Error(r?.error || 'list_tracks failed');
+  const want = String(name).toLowerCase();
+  return r.tracks.find((t) => t.name.toLowerCase() === want) || null;
+}
+async function ensureTrack(send, name) {
+  const existing = await trackByName(send, name);
+  if (existing) return { index: existing.index, name: existing.name, created: false };
+  const c = await send({ cmd: 'create_midi_track', name, index: -1 });
+  if (!c?.ok) throw new Error(c?.error || 'create_midi_track failed');
+  return { index: c.index, name: c.name || name, created: true };
+}
+const stepsToNotes = (steps, swing = 0) => steps.map((s) => ({ pitch: 60, start: s.step * 0.25 + (s.step % 2 ? swing * 0.125 : 0), duration: 0.125, velocity: s.velocity }));
+
+function makeCtx(emit) {
+  const okOrThrow = (r, what) => { if (!r?.ok) throw new Error(`${what}: ${r?.error || 'failed'}`); return r; };
+  return {
+    emit,
+    async synth({ prompt, role = 'sound', kind, source, audioPath, offsetSeconds, lengthSeconds, oneshotSeconds, strength }) {
+      if (!kind) kind = TONAL.has(String(role).toLowerCase()) ? 'tone' : 'drum';
+      const useAudio = Boolean(audioPath) && source !== 'text';
+      const out = await synthesize({ prompt, name: role, kind: kind === 'tone' ? 'tone' : undefined, mode: useAudio ? 'oneshot' : 'text', audioPath: useAudio ? audioPath : undefined, offsetSeconds, oneshotSeconds: oneshotSeconds || lengthSeconds, strength: strength ?? 0.7 });
+      const one = out.files.find((f) => f.kind === 'oneshot') || out.files[0];
+      const audio = await import('./lib/audio.js');
+      return { path: one.path, name: one.name, url: one.url, durationSeconds: await audio.durationSeconds(one.path), peakDb: await audio.peakDb(one.path), seed: out.seed };
+    },
+    writePattern: async (o) => describeToPattern(o),
+    writeMelody: async (o) => { const { describeToMelody } = await import('./lib/melody.js'); const r = await describeToMelody(o); return { notes: r.notes, bars: r.bars, key: r.key, source: r.source }; },
+    beatboxToPattern: async (p, o) => (await import('./lib/rhythm.js')).beatboxToPattern(p, o),
+    humToNotes: async (p, o) => (await import('./lib/melody.js')).humToNotes(p, o),
+    live: {
+      setTempo: async (bpm) => { const send = await liveClient(); const r = okOrThrow(await send({ cmd: 'set_tempo', bpm }), 'set_tempo'); lastBuild.bpm = bpm; return r; },
+      listTracks: async () => okOrThrow(await (await liveClient())({ cmd: 'list_tracks' }), 'list_tracks'),
+      show: async () => (await liveClient())({ cmd: 'show_view', view: 'Session' }),
+      play: async () => (await liveClient())({ cmd: 'play' }),
+      stop: async () => (await liveClient())({ cmd: 'stop' }),
+      deleteTrack: async (name) => { const send = await liveClient(); const t = await trackByName(send, name); if (!t) throw new Error(`no track named ${name}`); const r = okOrThrow(await send({ cmd: 'delete_track', track: t.index }), 'delete_track'); for (const k of Object.keys(lastBuild.tracks)) if (lastBuild.tracks[k].name === t.name) delete lastBuild.tracks[k]; return r; },
+      async buildLane({ name, instrument, samplePath, steps, bars = 1, swing = 0 }) {
+        const send = await liveClient();
+        const t = await ensureTrack(send, name);
+        let load = null;
+        if (samplePath) load = await sendWithRetry(send, { cmd: 'load_sample', path: await toSlot(samplePath, instrument || name, 'Snare'), track: t.index });
+        const notes = stepsToNotes(steps, swing);
+        const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.index, slot: 0, length: bars * 4, notes, fire: true, name, show: false }), 'create_clip');
+        lastBuild.tracks[instrument || name] = { index: t.index, name: t.name };
+        return { track: t, notes: notes.length, loadedSample: Boolean(load?.ok), loadError: load && !load.ok ? load.error : undefined, clip: clip.mode };
+      },
+      async buildMelody({ name, samplePath, notes, bars }) {
+        const send = await liveClient();
+        const t = await ensureTrack(send, name);
+        let load = null;
+        if (samplePath) load = await sendWithRetry(send, { cmd: 'load_sample', path: await toSlot(samplePath, name, 'Synth'), track: t.index });
+        const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.index, slot: 0, length: melodyBars(notes, bars) * 4, notes: melodyToLiveNotes(notes), fire: true, name, show: false }), 'create_clip');
+        lastBuild.tracks[name.toLowerCase()] = { index: t.index, name: t.name };
+        return { track: t, notes: notes.length, loadedSample: Boolean(load?.ok), loadError: load && !load.ok ? load.error : undefined, clip: clip.mode };
+      },
+      async updateLayer({ name, steps, notes, bars = 1, swing = 0 }) {
+        const send = await liveClient();
+        const t = await trackByName(send, name); if (!t) throw new Error(`no track named ${name}`);
+        const liveNotes = notes ? melodyToLiveNotes(notes) : stepsToNotes(steps || [], swing);
+        const length = notes ? melodyBars(notes, bars) * 4 : bars * 4;
+        const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.index, slot: 0, length, notes: liveNotes, fire: true, name: t.name, show: false }), 'create_clip');
+        return { track: t, notes: liveNotes.length, clip: clip.mode };
+      },
+      async loadSample({ name, samplePath, role }) {
+        const send = await liveClient();
+        const t = await trackByName(send, name); if (!t) throw new Error(`no track named ${name}`);
+        const r = okOrThrow(await sendWithRetry(send, { cmd: 'load_sample', path: await toSlot(samplePath, role || name, 'Snare'), track: t.index }), 'load_sample');
+        return { track: t, replaced: r.replaced, devices: r.devices };
+      },
+    },
+  };
+}
+
+app.post('/api/chat', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream'); res.setHeader('Cache-Control', 'no-cache'); res.setHeader('Connection', 'keep-alive'); res.flushHeaders();
+  const emit = (e) => res.write(`data: ${JSON.stringify(e)}\n\n`);
+  try {
+    const { text = '', beatId, humId, reset } = req.body || {};
+    if (reset) chat.history = [];
+    if (!hasKey(process.env.ANTHROPIC_API_KEY)) throw new Error('ANTHROPIC_API_KEY is not set in .env (the producer agent needs Claude)');
+    const { runProducer } = await import('./lib/agent.js');
+    const recordings = {};
+    if (beatId && uploads.get(String(beatId))) recordings.beat = uploads.get(String(beatId));
+    if (humId && uploads.get(String(humId))) recordings.hum = uploads.get(String(humId));
+    const out = await runProducer({ history: chat.history, userText: String(text), recordings, ctx: makeCtx(emit) });
+    chat.history = out.history;
+    emit({ type: 'text', text: out.text });
+    emit({ type: 'done', tracks: lastBuild.tracks });
+  } catch (e) {
+    console.error('[chat]', e);
+    emit({ type: 'error', error: e.message });
+  }
+  res.end();
+});
+app.post('/api/chat/reset', (_req, res) => { chat.history = []; res.json({ ok: true }); });
 
 app.listen(PORT, () => {
   console.log(`ADE Hack running at http://localhost:${PORT}`);

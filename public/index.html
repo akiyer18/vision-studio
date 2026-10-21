@@ -53,6 +53,20 @@
   .inline { display:flex; gap:8px; align-items:center; font-size:13px; color:var(--muted); }
   code { background:#0b0c0f; padding:1px 5px; border-radius:4px; font-size:12px; }
   section.wide { grid-column:1 / -1; }
+  section.chat { border-color:#3a2a22; background:linear-gradient(180deg,#1b1714,#16181d); }
+  .log { display:flex; flex-direction:column; gap:12px; max-height:52vh; overflow-y:auto; padding:4px 2px; }
+  .msg { max-width:900px; padding:12px 14px; border-radius:12px; font-size:15px; line-height:1.5; white-space:pre-wrap; }
+  .msg.user { background:#2a2420; align-self:flex-end; border:1px solid #3a2a22; }
+  .msg.bot { background:#0b0c0f; border:1px solid var(--line); align-self:flex-start; }
+  .msg .tools { list-style:none; padding:0; margin:0 0 8px; display:flex; flex-direction:column; gap:3px; font-size:13px; color:var(--muted); }
+  .msg .tools li::before { content:'…'; display:inline-block; width:20px; color:var(--muted); }
+  .msg .tools li.ok::before { content:'✓'; color:var(--accent2); }
+  .msg .tools li.bad::before { content:'✗'; color:var(--danger); }
+  .composer { display:flex; gap:10px; align-items:flex-end; margin-top:12px; }
+  .composer textarea { flex:1; min-height:56px; font-size:16px; }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  .chip { font-size:13px; padding:6px 10px; border-radius:999px; background:#22252c; border:1px solid var(--line); cursor:pointer; color:var(--text); }
+  .chip:hover { border-color:var(--accent); }
   section.easy { border-color:#3a2a22; background:linear-gradient(180deg,#1b1714,#16181d); }
   section.easy textarea { font-size:18px; min-height:84px; padding:14px; }
   section.easy h2 { font-size:22px; }
@@ -86,6 +100,29 @@
   </div>
 </header>
 <main>
+  <section class="wide chat">
+    <h2>Your producer</h2>
+    <div class="sub">Talk to it like a collaborator with Ableton open. It plans, synthesizes every sound with Stability AI, lays the layers into Live itself, and tells you what to try next.</div>
+    <div class="log" id="c-log"></div>
+    <div class="chips" id="c-chips">
+      <span class="chip">Start a dark techno beat at 128, kick first</span>
+      <span class="chip">Add a snare on 2 and 4 and crisp 16th hats</span>
+      <span class="chip">Give me a hypnotic saw arp in F minor</span>
+      <span class="chip">The kick is too soft, make it punchier</span>
+      <span class="chip">Half time, more swing</span>
+    </div>
+    <div class="composer">
+      <textarea id="c-text" placeholder="e.g. let's build a lo-fi beat around my beatbox, 88 bpm"></textarea>
+      <button class="primary big" id="c-send">Send</button>
+    </div>
+    <div class="actions">
+      <button class="rec" id="c-beat">● Beatbox</button><span class="inline" id="c-beat-info">attach a beat</span>
+      <button class="rec" id="c-hum">● Hum</button><span class="inline" id="c-hum-info">attach a melody</span>
+      <button id="c-show">Show in Live</button>
+      <button id="c-reset" title="Forget the conversation (Live tracks stay)">New session</button>
+    </div>
+  </section>
+  <details class="wide" id="quick"><summary>One-button build (no conversation): describe or record, press once)</summary>
   <section class="wide easy">
     <h2>What's in your head?</h2>
     <div class="sub">Describe it, beatbox it, hum it, or all three. One button puts it in Ableton as a Drums track and a Saw track.</div>
@@ -109,6 +146,7 @@
     <div class="grid" id="e-grid"></div>
     <div class="hint" id="e-grid-hint" style="display:none">Click cells to toggle hits. Changes go straight into the Live clips.</div>
   </section>
+  </details>
   <details class="wide" id="advanced"><summary>Advanced controls (sounds, pattern, melody, send each part to Live separately)</summary><div class="adv">
   <section>
     <h2>1 · Hear it</h2>
@@ -633,6 +671,56 @@ $('e-tweak-go').onclick = async () => {
   $('e-tweak-go').disabled = false;
 };
 $('e-tweak').addEventListener('keydown', e => { if (e.key === 'Enter') $('e-tweak-go').click(); });
+
+// ---------- the producer chat (SSE) ----------
+let beatUpload = null, humUpload = null, chatBusy = false;
+async function uploadBlob(b, infoId, label) {
+  const fd = new FormData(); fd.append('audio', b, 'rec.webm');
+  const r = await fetch('/api/upload', { method:'POST', body: fd }); const j = await r.json();
+  if (!r.ok) { $(infoId).textContent = j.error; return null; }
+  $(infoId).innerHTML = `${label} attached (${j.seconds.toFixed(1)}s) &nbsp;<audio controls src="${URL.createObjectURL(b)}" style="height:28px;vertical-align:middle"></audio>`;
+  return j.id;
+}
+makeRecorder('c-beat', 'c-beat-info', async b => { beatBlob = b; beatUpload = await uploadBlob(b, 'c-beat-info', 'beat'); });
+makeRecorder('c-hum', 'c-hum-info', async b => { melBlob = b; humUpload = await uploadBlob(b, 'c-hum-info', 'melody'); });
+$('c-show').onclick = () => postJson('/api/live/show', {});
+$('c-reset').onclick = async () => { await postJson('/api/chat/reset', {}); $('c-log').innerHTML = ''; addBot('New session. Live keeps whatever is already there.'); };
+document.querySelectorAll('#c-chips .chip').forEach(ch => ch.onclick = () => { $('c-text').value = ch.textContent; $('c-text').focus(); });
+function addMsg(cls, text) { const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text; $('c-log').appendChild(d); $('c-log').scrollTop = 1e9; return d; }
+function addBot(text) { return addMsg('bot', text); }
+$('c-send').onclick = sendChat;
+$('c-text').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } });
+async function sendChat() {
+  const text = $('c-text').value.trim();
+  if (chatBusy || (!text && !beatUpload && !humUpload)) return;
+  chatBusy = true; $('c-send').disabled = true; $('c-text').value = '';
+  addMsg('user', text + (beatUpload ? ' 🎙 beat' : '') + (humUpload ? ' 🎙 melody' : ''));
+  const bot = addBot(''); const tools = document.createElement('ul'); tools.className = 'tools'; bot.appendChild(tools);
+  const body = document.createElement('div'); bot.appendChild(body); body.textContent = 'thinking…';
+  const live = new Map();
+  try {
+    const r = await fetch('/api/chat', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ text, beatId: beatUpload, humId: humUpload }) });
+    beatUpload = humUpload = null; $('c-beat-info').textContent = 'attach a beat'; $('c-hum-info').textContent = 'attach a melody'; $('c-beat').textContent = '● Beatbox'; $('c-hum').textContent = '● Hum';
+    const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i; while ((i = buf.indexOf('\n\n')) >= 0) {
+        const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+        if (!chunk.startsWith('data: ')) continue;
+        const ev = JSON.parse(chunk.slice(6));
+        if (ev.type === 'tool') { const li = document.createElement('li'); li.textContent = ev.summary || ev.name; tools.appendChild(li); live.set(ev.id || ev.name + tools.children.length, li); li.dataset.name = ev.name; }
+        else if (ev.type === 'tool_done') { const li = [...tools.children].reverse().find(l => l.dataset.name === ev.name && !l.className); if (li) { li.className = ev.ok === false ? 'bad' : 'ok'; if (ev.summary) li.textContent = ev.summary; } }
+        else if (ev.type === 'text') { body.textContent = ev.text || ''; }
+        else if (ev.type === 'error') { body.textContent = 'Error: ' + ev.error; body.style.color = 'var(--danger)'; }
+        else if (ev.type === 'done') { if (!body.textContent) body.textContent = 'Done.'; }
+        $('c-log').scrollTop = 1e9;
+      }
+    }
+  } catch (e) { body.textContent = 'Error: ' + e.message; }
+  chatBusy = false; $('c-send').disabled = false; $('c-text').focus();
+}
+addBot('Hi. Tell me what you hear, or beatbox a beat and hum a melody, and I\'ll build it in Live layer by layer. I\'ll tell you what I did and what to try next.');
 </script>
 </body>
 </html>
