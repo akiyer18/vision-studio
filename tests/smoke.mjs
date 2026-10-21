@@ -40,6 +40,31 @@ const shouldMatch = { "make me a deep house groove": "deep-house", "2000s hip ho
 for (const [t, slug] of Object.entries(shouldMatch)) ok(k.matchGenre(t) === slug, `matchGenre "${t}"`, String(k.matchGenre(t)));
 const shouldNot = ["make the house party vibe louder", "use a factory preset", "a metallic snare please", "pop the kick out a bit", "there is a trap door sound", "drill into the bass more", "the pad is too soft", "keep the guitar as the lead", "make it groovy not rushed", "more ambient reverb on the snare"];
 for (const t of shouldNot) ok(k.matchGenre(t) == null, `matchGenre false positive "${t}"`, String(k.matchGenre(t)));
+// short everyday-word aliases ("deep", "rumble", "perc", "garage", "drag", "drone", "trap") need a genre context
+const shortNeg = ["deep bass please", "give me a rumble on the kick", "add some perc hits", "garage door sample", "can you drag the hats a bit", "the drone is too loud", "trap door sound"];
+for (const t of shortNeg) ok(k.matchGenre(t) == null, `matchGenre short-alias false positive "${t}"`, String(k.matchGenre(t)));
+const shortPos = { "a deep house groove": "deep-house", "trap beat 140": "trap", "make it drill": "drill", "garage shuffle at 132": "uk-garage" };
+for (const [t, slug] of Object.entries(shortPos)) ok(k.matchGenre(t) === slug, `matchGenre short-alias "${t}"`, String(k.matchGenre(t)));
+{ const lp = k.getLoopPrompts("deep-house"); ok(lp && "track" in lp && typeof lp.production === "string" && typeof lp.era === "string", "getLoopPrompts exposes track/production/era", JSON.stringify({ track: lp?.track, production: lp?.production?.slice(0, 40), era: lp?.era?.slice(0, 40) })); ok(lp && !/\{bpm\}/.test(lp.withBpm(122).loops.join(" ")), "withBpm fills every {bpm}"); }
+
+// ---- Stable Audio prompt composition
+const { composePrompt, stripTrackType } = await import("../lib/prompts.js");
+{
+  const p1 = composePrompt({ kind: "drums", bpm: 122, title: "Deep House", body: "deep house drum loop at {bpm} BPM, warm 909 kick, no melody", production: "Warm, round low end, subtle saturation." });
+  ok(p1.startsWith("TrackType: Instrument, Genre: Deep House,") && p1.includes("122 BPM") && (p1.match(/\bBPM\b/g) || []).length === 1 && (p1.match(/no melody/g) || []).length === 1 && /no vocals/.test(p1) && /no bass/.test(p1) && /saturation/.test(p1), "composePrompt drums", p1);
+  const p2 = composePrompt({ kind: "texture", bpm: 90, body: "TrackType: Instrument, Genre: Lo-fi, warm detuned chord pad, {bpm} BPM, dusty tape", production: "Lo-fi, warm" });
+  ok(p2 === "TrackType: Instrument, warm detuned chord pad, 90 BPM, dusty tape, no drums, no vocals", "composePrompt texture strips pasted tags and skips production when the body has a production word", p2);
+  const p3 = composePrompt({ kind: "oneshot", body: "warm deep house kick drum, 400 ms decay, dry one-shot" });
+  ok(p3.startsWith("TrackType: SFX,") && /single hit/.test(p3) && /no reverb tail/.test(p3) && /no music/.test(p3) && (p3.match(/\bdry\b/g) || []).length === 1 && !/BPM/.test(p3), "composePrompt oneshot", p3);
+  const p4 = composePrompt({ kind: "track", bpm: 140, title: "Trap", body: "trap beat with sliding 808s", era: "Atlanta 2012-2018" });
+  ok(p4 === "TrackType: Music, Genre: Trap, trap beat with sliding 808s, 140 BPM, Atlanta 2012-2018, cohesive full mix", "composePrompt track", p4);
+  ok(stripTrackType("TrackType: SFX, Genre: Techno, rumble kick") === "rumble kick" && stripTrackType("plain body") === "plain body", "stripTrackType");
+}
+
+// ---- ears helpers (offline)
+const ears = await import("../lib/ears.js");
+ok(JSON.stringify(ears.extractJson("```json\n{\"a\": [1,2,], \"b\": NaN, \"s\": \"x } y\"}\n```")) === '{"a":[1,2],"b":null,"s":"x } y"}', "extractJson repairs trailing commas/NaN and honors strings");
+ok(Array.isArray(ears.extractJson("here: [1, {\"q\": \"]\"}] done")), "extractJson accepts arrays");
 for (const g of k.listGenres()) { const v = k.validateBlueprint(g.slug); ok(v.ok, `blueprint ${g.slug} valid`, JSON.stringify(v)); const lp = k.getLoopPrompts(g.slug); ok(lp && lp.loops.length >= 1, `blueprint ${g.slug} has loop prompts`); }
 
 // ---- analysis on synthetic audio: dual-mono vs widened
@@ -54,6 +79,9 @@ ok(as.stereo && as.stereo.width > 0.5, "decorrelated noise reads as wide", JSON.
 ok(am.durationSeconds > 1.9 && am.durationSeconds < 2.1, "duration measured", String(am.durationSeconds));
 let silentOk = true; try { const z = await analyzeAudio(silent); silentOk = Number.isFinite(z.durationSeconds); } catch (e) { silentOk = /silent|no sound/i.test(e.message); }
 ok(silentOk, "analyzeAudio handles silence without crashing");
+// local evidence gate used by critiqueMix/scoreGenre (no model call)
+{ const sil = await ears.audioEvidence(path.join(T, "silent.wav")); ok(sil.peakDbfs <= -30 && sil.onsets === 0, "audioEvidence on silence", JSON.stringify(sil)); }
+{ const tone = await ears.audioEvidence(path.join(T, "mono.wav")); ok(tone.peakDbfs > -30 && tone.durationSec > 1.9, "audioEvidence on a tone", JSON.stringify(tone)); }
 
 // ---- widener via pytools (if venv present)
 const py = await import("../lib/pytools.js");

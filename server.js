@@ -12,6 +12,9 @@ import { describeToPattern } from './lib/pattern.js';
 import { patternToMidi } from './lib/midi.js';
 import { GM_DRUM_NOTES } from './lib/pattern.js';
 import { ffmpeg } from './lib/audio.js';
+import { hitsPrompt, extractHits, HIT_ROLES } from './lib/hits.js';
+import { composePrompt } from './lib/prompts.js';
+import * as synthLocal from './lib/synthlocal.js';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 const execFileP = promisify(execFileCb);
@@ -82,7 +85,8 @@ app.get('/api/health', async (_req, res) => {
 
 const TONAL = new Set(['synth', 'saw', 'bass', 'pad', 'lead', 'pluck', 'keys', 'melody', 'rhodes', 'piano', 'chords', 'tone']);
 // The whole sound pipeline as a function: (recording?) -> Stability -> one-shot + full file in the Ableton folder.
-async function synthesize({ prompt = '', mode = 'oneshot', kind, name = 'sound', audioPath, offsetSeconds, strength = 0.7, model = 'stable-audio-2.5', oneshotSeconds }) {
+const roleOfName = (n) => { const h = String(n || '').toLowerCase(); if (/open ?hat|ohat|hat_open/.test(h)) return 'hat_open'; if (/hat|hh|hihat/.test(h)) return 'hat_closed'; for (const r of HIT_ROLES) if (h.includes(r.replace('_', ' ')) || h.includes(r)) return r; if (/snap/.test(h)) return 'snap'; return null; };
+async function synthesize({ prompt = '', mode = 'oneshot', kind, name = 'sound', role, audioPath, offsetSeconds, strength = 0.7, model = 'stable-audio-2.5', oneshotSeconds, alternates = 3 }) {
   if (!hasKey(process.env.STABILITY_API_KEY)) throw new Error('STABILITY_API_KEY is not set in .env');
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   if (!audioPath) mode = 'text';
@@ -91,7 +95,24 @@ async function synthesize({ prompt = '', mode = 'oneshot', kind, name = 'sound',
   let result;
   const wantSec = Number.isFinite(Number(oneshotSeconds)) && Number(oneshotSeconds) > 0 ? clamp(Number(oneshotSeconds), 0.2, 20) : (kind === 'tone' ? 2.5 : 1.0);
   const genSec = Math.max(6, Math.ceil(wantSec + 1));
-  if (mode === 'text') {
+  const hitRole = kind === 'tone' || kind === 'raw' ? null : (HIT_ROLES.includes(role) ? role : roleOfName(role) || roleOfName(name) || roleOfName(prompt));
+  if (mode === 'text' && hitRole) {
+    // Drums: Stable Audio cannot do "a single kick" (it returns a sub drone) but it is excellent at a SEQUENCE of hits.
+    // Generate 10 s of separate hits, keep the ones that sound like the role, cut each with its natural tail, pick the best.
+    const genreTitle = lastBuild.genreTarget ? String(lastBuild.genreTarget).split(':')[0].replace(/\s*\(.*\)\s*$/, '') : '';
+    const full = hitsPrompt({ role: hitRole, character: prompt, genreTitle });
+    result = await textToAudio({ prompt: full, duration: 10, model: 'stable-audio-2.5' });
+    const gen = path.join(TMP, `${id}-hits.wav`);
+    await fs.writeFile(gen, result.buffer);
+    const ex = await extractHits(gen, { role: hitRole, max: clamp(Number(alternates) || 3, 1, 4), outDir: TMP, name: `${id}-${hitRole}` });
+    if (ex.hits.length) {
+      for (const [i, h] of ex.hits.entries()) files.push({ ...(await publish(await fs.readFile(h.path), i ? `${name}-${h.label}` : name, '.wav', i ? 'alt' : 'oneshot')), label: h.label, length: h.length, centroidHz: h.centroidHz, subShare: h.subShare, score: h.score });
+      files.push(await publish(result.buffer, `${name}-hits`, '.wav', 'loop'));
+      return { files, seed: result.seed, mode, role: hitRole, prompt: full, hits: { total: ex.total, matching: ex.matching }, alternates: files.filter((f) => f.kind === 'alt') };
+    }
+    // nothing usable came back: fall through to the single-hit path on a fresh generation
+    result = await textToAudio({ prompt: buildPrompt(prompt, 'oneshot', kind), duration: genSec, model });
+  } else if (mode === 'text') {
     result = await textToAudio({ prompt: buildPrompt(prompt, 'oneshot', kind), duration: genSec, model });
   } else {
     const raw = path.join(TMP, `${id}-raw.wav`);
@@ -114,7 +135,7 @@ async function synthesize({ prompt = '', mode = 'oneshot', kind, name = 'sound',
     const one = path.join(TMP, `${id}-oneshot.wav`);
     const norm = path.join(TMP, `${id}-oneshot-norm.wav`);
     await sliceFirstHit(gen, one, { seconds: wantSec });
-    await normalize(one, norm);
+    await normalize(one, norm, kind === 'tone' ? -1 : -3);
     files.unshift(await publish(await fs.readFile(norm), name, '.wav', 'oneshot'));
   }
   files.push(await publish(result.buffer, `${name}-full`, '.wav', 'loop'));
@@ -657,15 +678,31 @@ function makeCtx(emit) {
       const useAudio = Boolean(audioPath) && source !== 'text';
       const n = clamp(Number(variations) || 1, 1, 3);
       const one = async (label) => {
-        const out = await synthesize({ prompt, name: n > 1 ? `${role}-${label}` : role, kind: kind === 'tone' ? 'tone' : undefined, mode: useAudio ? 'oneshot' : 'text', audioPath: useAudio ? audioPath : undefined, offsetSeconds, oneshotSeconds: oneshotSeconds || lengthSeconds, strength: strength ?? 0.7 });
+        const out = await synthesize({ prompt, role, alternates: n, name: n > 1 ? `${role}-${label}` : role, kind: kind === 'tone' ? 'tone' : undefined, mode: useAudio ? 'oneshot' : 'text', audioPath: useAudio ? audioPath : undefined, offsetSeconds, oneshotSeconds: oneshotSeconds || lengthSeconds, strength: strength ?? 0.7 });
         const f = out.files.find((x) => x.kind === 'oneshot') || out.files[0];
         const audio = await import('./lib/audio.js');
-        return { path: f.path, name: f.name, url: f.url, durationSeconds: await audio.durationSeconds(f.path), peakDb: await audio.peakDb(f.path), seed: out.seed, label };
+        const alts = (out.alternates || []).map((a) => ({ path: a.path, name: a.name, url: a.url, label: a.label, length: a.length, centroidHz: a.centroidHz, subShare: a.subShare }));
+        return { path: f.path, name: f.name, url: f.url, durationSeconds: await audio.durationSeconds(f.path), peakDb: await audio.peakDb(f.path), seed: out.seed, label, promptUsed: out.prompt, hits: out.hits, alternates: alts, subShare: f.subShare, centroidHz: f.centroidHz, note: f.subShare != null && f.subShare < 0.25 && /kick/.test(String(role)) ? 'thin low end: layer a synth_local sub under it' : undefined };
       };
-      if (n === 1) return one('A');
-      const variants = await Promise.all(['A', 'B', 'C'].slice(0, n).map(one));
+      const first = await one('A');
+      if (first.alternates?.length) {   // a hit-sequence generation already holds different takes: variations for free
+        const variants = [{ ...first, label: 'A' }, ...first.alternates.slice(0, n - 1).map((a) => ({ ...a, durationSeconds: a.length }))];
+        if (n > 1) emit({ type: 'variations', group: `${role}-${Date.now()}`, role, items: variants.map((v) => ({ path: v.path, url: v.url, label: v.label })) });
+        return { ...first, variants, note: `${variants.length} different hits from one generation (A = best match; B/C are round-robin alternates for ghost notes or layering)` };
+      }
+      if (n === 1) return first;
+      const variants = [first, ...(await Promise.all(['B', 'C'].slice(0, n - 1).map(one)))];
       emit({ type: 'variations', group: `${role}-${Date.now()}`, role, items: variants.map((v) => ({ path: v.path, url: v.url, label: v.label, seed: v.seed })) });
       return { variants, ...variants[0], note: `${n} variations (A/B/C); first returned as default` };
+    },
+    async synthLocal({ kind = 'sub', name, startHz, endHz, decayMs, drive, highpassHz, gainDb } = {}) {
+      const out = path.join(TMP, `local-${kind}-${Date.now()}.wav`);
+      if (kind === '808') await synthLocal.synth808(out, { ...(startHz ? { startHz } : {}), ...(endHz ? { endHz } : {}), ...(decayMs ? { decayMs } : {}), ...(drive != null ? { drive } : {}) });
+      else if (kind === 'snap') await synthLocal.synthSnap(out, { ...(decayMs ? { decayMs } : {}), ...(highpassHz ? { highpassHz } : {}), ...(gainDb != null ? { gainDb } : {}) });
+      else await synthLocal.synthSub(out, { ...(startHz ? { startHz } : {}), ...(endHz ? { endHz } : {}), ...(decayMs ? { decayMs } : {}), ...(drive != null ? { drive } : {}), ...(gainDb != null ? { gainDb } : {}) });
+      const f = await publish(await fs.readFile(out), name || `${kind}-local`, '.wav', 'oneshot');
+      const audio = await import('./lib/audio.js');
+      return { path: f.path, url: f.url, name: f.name, kind, durationSeconds: await audio.durationSeconds(f.path) };
     },
     writePattern: async (o) => describeToPattern(o),
     async slice(refPath, { startSeconds = 0, lengthSeconds = 0.35, name = 'chop', fadeMs = 5 } = {}) {
@@ -681,14 +718,38 @@ function makeCtx(emit) {
     // ---- v7: tool roles. Stability = sounds (loops/restyle), Gemini = ears (DNA/critique/labels), open-source python = analysis/processing ----
     addRef(name, p) { if (!chat.recordings.refs.some((r) => r.path === p)) chat.recordings.refs.push({ name, path: p }); const index = chat.recordings.refs.findIndex((r) => r.path === p) + 1; return { index, name: `ref#${index}`, label: name }; },
     setGroove(groove) { if (groove && Array.isArray(groove.microtiming)) { lastBuild.groove = { swing: groove.swing ?? null, microtiming: groove.microtiming.slice(0, 16), velocityProfile: (groove.velocityProfile || []).slice(0, 16), source: groove.source || 'analysis', at: Date.now() }; } return lastBuild.groove; },
-    async generateLoop({ prompt, bpm = lastBuild.bpm || 120, bars = 2, kind = 'drums' }) {
+    /** The freshest audio of what the set sounds like: a Live capture (< 10 min old) or an offline render of our layers. */
+    async seedMix() {
+      if (lastBuild.lastCapture && Date.now() - (lastBuild.lastCaptureAt || 0) < 10 * 60e3) return { path: lastBuild.lastCapture, source: 'live capture' };
+      try { const r = await this.render({}); return { path: r.path, source: 'offline render of the AI layers' }; } catch { return null; }
+    },
+    async generateLoop({ prompt, bpm = lastBuild.bpm || 120, bars = 2, kind = 'drums', init = null, strength = 0.6 }) {
       const seconds = Math.max(6, Math.ceil(clamp(Number(bars), 1, 8) * 4 * 60 / clamp(Number(bpm), 40, 300)) + (kind === 'drums' ? 1 : 0));
       const body = String(prompt).trim().replace(/^(TrackType|Genre|Format):[^,]+,\s*/i, '');
+      let lp = null; try { const k = await import('./lib/knowledge.js'); const slug = lastBuild.genreTarget ? k.matchGenre(String(lastBuild.genreTarget).split(':')[0]) : null; lp = slug && k.getLoopPrompts ? k.getLoopPrompts(slug) : null; } catch {}
+      const genreTitle = lastBuild.genreTarget ? String(lastBuild.genreTarget).split(':')[0].replace(/\s*\(.*\)\s*$/, '') : undefined;
       const hasBpm = /\bBPM\b/i.test(body), hasProd = /dry|wet|room|tape|vinyl|saturat|reverb|lo-fi|clean|gritty|crunch/i.test(body);
-      const full = kind === 'drums' ? `TrackType: Instrument, ${body}${hasBpm ? '' : `, drum loop at ${Math.round(bpm)} BPM`}${hasProd ? '' : ', tight and dry'}${/no vocals/i.test(body) ? '' : ', no vocals'}${/no melody/i.test(body) ? '' : ', no melody'}`
+      const composed = (() => { try { return composePrompt({ kind: kind === 'drums' || kind === 'tops' ? 'drums' : 'texture', title: genreTitle, bpm, body: kind === 'fx' ? `${body}, transition sound, wide stereo` : kind === 'tops' ? `${body}, hi-hats shakers and percussion only, no kick drum, no snare` : kind === 'drums' ? body : `${body}, wide stereo`, production: lp?.production || undefined }); } catch { return null; } })();
+      const full = composed ? composed : kind === 'drums' ? `TrackType: Instrument, ${body}${hasBpm ? '' : `, drum loop at ${Math.round(bpm)} BPM`}${hasProd ? '' : ', tight and dry'}${/no vocals/i.test(body) ? '' : ', no vocals'}${/no melody/i.test(body) ? '' : ', no melody'}`
         : kind === 'fx' ? `TrackType: SFX, ${body}, transition sound, wide stereo, no drums`
         : `TrackType: Instrument, ${body}${hasBpm ? '' : `, evolving texture layer at ${Math.round(bpm)} BPM`}, wide stereo, no drums`;
-      const result = await textToAudio({ prompt: full, duration: Math.min(seconds, 60), model: LOOP_MODEL });
+      // audio-to-audio: when a seed is given (the set's capture, our render, the kit loop, a user sample) the new loop inherits its
+      // tempo, key and sonic world instead of being a text-only guess; strength = how far it may move away (0.3 subtle .. 0.85 new)
+      let result, seeded = null;
+      if (init) {
+        let seedPath = init === 'mix' ? (await this.seedMix())?.path : init;
+        if (seedPath && !audioPathOk(seedPath)) throw new Error('generateLoop: seed outside project audio');
+        if (seedPath) {
+          const seedWav = path.join(TMP, `seed-${Date.now()}.wav`);
+          const want = clamp(Number(bars), 1, 8) * 4 * 60 / clamp(Number(bpm), 40, 300);
+          await ffmpeg(['-i', seedPath, '-t', String(Math.max(6, Math.ceil(want))), '-ac', '2', '-ar', '44100', seedWav]);
+          const st = clamp(Number(strength) || 0.6, 0.2, 0.9);
+          try { result = await audioToAudio({ wavPath: seedWav, prompt: full, strength: st, duration: Math.min(seconds, 60), model: LOOP_MODEL }); }
+          catch (e) { console.warn('[loop] audio-to-audio on', LOOP_MODEL, 'failed, trying 2.5:', e.message.slice(0, 80)); result = await audioToAudio({ wavPath: seedWav, prompt: full, strength: st, duration: Math.min(seconds, 60), model: 'stable-audio-2.5' }); }
+          seeded = { from: init === 'mix' ? 'mix' : path.basename(seedPath), strength: st };
+        }
+      }
+      if (!result) result = await textToAudio({ prompt: full, duration: Math.min(seconds, 60), model: LOOP_MODEL });
       // bar-exact: Stability renders whole seconds, Live warps the clip to bars*4 beats, so trim to the exact loop length
       const exact = clamp(Number(bars), 1, 8) * 4 * 60 / clamp(Number(bpm), 40, 300);
       const rawLoop = path.join(TMP, `loop-raw-${Date.now()}.wav`), trimmed = path.join(TMP, `loop-${Date.now()}.wav`);
@@ -696,7 +757,7 @@ function makeCtx(emit) {
       let loopBuf = result.buffer;
       try { await ffmpeg(['-i', rawLoop, '-af', `atrim=0:${exact.toFixed(4)},afade=t=out:st=${Math.max(0, exact - 0.012).toFixed(3)}:d=0.012`, '-ac', '2', '-ar', '44100', trimmed]); loopBuf = await fs.readFile(trimmed); } catch (e) { console.warn('[loop] trim failed:', e.message); }
       const loop = await publish(loopBuf, `${kind}-loop`, '.wav', 'loop');
-      const out = { loop: { path: loop.path, url: loop.url, name: loop.name, seconds: Number(exact.toFixed(3)), bars: clamp(Number(bars), 1, 8), bpm: Math.round(bpm), prompt: full }, kit: [] };
+      const out = { loop: { path: loop.path, url: loop.url, name: loop.name, seconds: Number(exact.toFixed(3)), bars: clamp(Number(bars), 1, 8), bpm: Math.round(bpm), prompt: full, seeded }, kit: [] };
       if (kind === 'drums') {
         const { decodeMono16k } = await import('./lib/melody.js');
         const { detectOnsets, onsetFeatures, classifyOnset } = await import('./lib/rhythm.js');
@@ -753,7 +814,7 @@ function makeCtx(emit) {
       const silent = Boolean(r.silent) || dur < 0.5 || (r.peakDbfs != null && r.peakDbfs < -30) || sounding < Math.min(barSec, dur * 0.3);
       const out = { path: outPath, url: `/out/${encodeURIComponent(path.basename(outPath))}`, bars, bpm, seconds: Number(dur.toFixed(2)), soundingSeconds: Number(sounding.toFixed(2)), silent, peakDbfs: r.peakDbfs, note: silent ? `Live produced (almost) no sound: peak ${r.peakDbfs != null ? r.peakDbfs.toFixed(1) + ' dBFS' : 'none'}, ${sounding.toFixed(1)} s sounding of ${dur.toFixed(1)} s. Check: is the playhead on a section with clips, are the audio files online (no orange missing clips), is Back to Arrangement lit, is Live's output device the one it plays through?` : 'leading silence trimmed to the first downbeat' };
       if (!silent) { try { out.profile = await (await import('./lib/analyze.js')).analyzeAudio(outPath); } catch (e) { out.profileError = e.message; } }
-      lastBuild.lastCapture = outPath;
+      lastBuild.lastCapture = outPath; lastBuild.lastCaptureAt = Date.now();
       return out;
     },
     async critiqueCapture(p, refPath, opts = {}) {
@@ -965,7 +1026,7 @@ function makeCtx(emit) {
       const cands = [];
       for (let i = 0; i < clamp(Number(candidates) || 1, 1, 2); i++) {
         stage(`composing ${bars} bars at ${Math.round(bpm)} BPM with Stable Audio 3${i ? ' (second candidate)' : ''}`);
-        const full = `TrackType: Music, ${bp ? `Genre: ${bp.title}, ` : ''}${body.replace(/^(TrackType|Genre|Format):[^,]+,\s*/i, '').replace(/,\s*no (melody|vocals|bass|drums)/gi, '')}, full arrangement with intro, verse and hook${/\bBPM\b/i.test(body) ? '' : `, ${Math.round(bpm)} BPM`}`;
+        const full = composePrompt({ kind: 'track', title: bp?.title, bpm, body: `${body.replace(/,\s*no (melody|vocals|bass|drums)/gi, '')}, full arrangement with intro, verse and hook` });
         const res = await textToAudio({ prompt: full, duration: seconds, model: LOOP_MODEL });
         const f = await publish(res.buffer, `${(bp?.slug || genre || 'track').replace(/[^a-z0-9]+/gi, '-')}-track`, '.wav', 'loop');
         let judged = { verdict: null, score: null, why: 'ears unavailable' };
@@ -1290,7 +1351,7 @@ function makeCtx(emit) {
         const send = await liveClient();
         const t = await ensureTrack(send, name);
         let load = null;
-        if (samplePath) { const slotPath = await toSlot(samplePath, instrument || name, 'Snare'); load = await sendWithRetry(send, { cmd: 'load_sample', path: slotPath, track: t.name }); if (load?.ok) rememberSound(t.name, samplePath, slotPath, instrument || name); }
+        if (samplePath) { const slotPath = await toSlot(samplePath, instrument || name, 'Snare'); load = await sendWithRetry(send, { cmd: 'load_sample', path: slotPath, track: t.name }); if (load?.ok) { try { await send({ cmd: 'set_device_param', track: t.name, device: 'Simpler', param: 'Vol < Vel', value: 0.65 }); } catch {} } if (load?.ok) rememberSound(t.name, samplePath, slotPath, instrument || name); }
         const notes = stepsToNotes(steps, swing, humanize, lastBuild.bpm || 120, useGroove ? lastBuild.groove : null);
         const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.name, slot: Number(slot) || 0, length: bars * 4, notes, fire: true, name, show: false }), 'create_clip');
         lastBuild.tracks[instrument || name] = { index: t.index, name: t.name };
@@ -1364,6 +1425,17 @@ function makeCtx(emit) {
       async setSimpler({ track, ...opts }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'set_simpler', track: t.name, ...opts }), 'set_simpler'); },
       async sampleInfo({ track }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'sample_info', track: t.name }), 'sample_info'); },
       // loop/texture as a layer: load the file into Simpler, warp it to tempo, trigger with one long C3 note
+      async addLoopLayer({ name, prompt, kind = 'tops', bars = 2, bpm, matchMix = true, strength = 0.6, seedPath, slot = 0 }) {
+        const tempo = bpm || await syncTempo();
+        const hasLayers = Object.keys(lastBuild.clips || {}).length > 0 || Boolean(lastBuild.lastCapture);
+        const init = seedPath ? seedPath : (matchMix && hasLayers ? 'mix' : null);
+        const g = await this.generateLoop({ prompt, bpm: tempo, bars, kind: kind === 'bass' || kind === 'chords' || kind === 'melody' ? 'texture' : kind, init, strength });
+        const warpMode = kind === 'drums' || kind === 'tops' ? 'beats' : kind === 'bass' ? 'tones' : 'complex_pro';
+        const trackName = lastBuild.project && !/^AI /.test(name) ? `AI ${name}` : name;
+        const r = await this.live.loadAudioClip({ track: trackName, slot, samplePath: g.loop.path, warpMode, overwrite: true });
+        rememberClip(trackName, { audio: true, bars: g.loop.bars, slot });
+        return { track: r.track || trackName, clip: r.clip, loop: g.loop, warpMode, note: g.loop.seeded ? `generated from the set's own sound (audio-to-audio, strength ${g.loop.seeded.strength})` : 'generated from text (nothing to seed from yet)' };
+      },
       async buildLoopLayer({ name, samplePath, bars = 2, kind = 'loop', gainDb }) {
         const send = await liveClient();
         const t = await ensureTrack(send, name);
@@ -1463,6 +1535,7 @@ function makeCtx(emit) {
         const t = await trackByName(send, name); if (!t) throw new Error(`no track named ${name}`);
         const slotPath = await toSlot(samplePath, role || name, 'Snare');
         const r = okOrThrow(await sendWithRetry(send, { cmd: 'load_sample', path: slotPath, track: t.name ?? t.index }), 'load_sample');
+        try { await send({ cmd: 'set_device_param', track: t.name, device: 'Simpler', param: 'Vol < Vel', value: 0.65 }); } catch {}
         rememberSound(t.name, samplePath, slotPath, role || name);
         return { track: t, replaced: r.replaced, devices: r.devices };
       },
