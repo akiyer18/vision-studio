@@ -47,13 +47,15 @@ async function publish(buffer, name, ext, kind) {
   return { name: file, url: `/out/${encodeURIComponent(file)}`, path: full, kind };
 }
 
+// Prompt grammar from the Stable Audio guide: tags first, then genre -> instrument/rhythm -> mood/production -> performance detail.
 function buildPrompt(prompt, mode, kind) {
-  const p = String(prompt || '').trim();
-  if (kind === 'tone') return `${p || 'analog synth'}, single sustained note, clean, no drums, no percussion`;
+  const p = String(prompt || '').trim().replace(/^(TrackType|Genre|Format):[^,]+,\s*/i, '');
   if (kind === 'raw') return p;
-  if (mode === 'loop') return `${p || 'drum loop'}, tight drum loop, dry, clean, punchy`;
-  return `${p || 'drum hit'}, single one-shot drum sample, dry, punchy, clean transient, no melody, no music`;
+  if (kind === 'tone') return `TrackType: Instrument, ${p || 'analog synth'}, a single sustained note, clean, no drums, no percussion`;
+  if (mode === 'loop') return `TrackType: Instrument, ${p || 'drum loop'}, drum loop, tight and dry, no melody`;
+  return `TrackType: SFX, ${p || 'drum hit'}, a single hit, clean transient, natural decay, close-miked, dry, no melody`;
 }
+const LOOP_MODEL = process.env.STABILITY_LOOP_MODEL || 'stable-audio-3';   // async but longer/better for loops, textures, restyles
 
 async function liveVersion() {
   let installed = null, running = null, reachable = false;
@@ -584,8 +586,11 @@ function makeCtx(emit) {
     setGroove(groove) { if (groove && Array.isArray(groove.microtiming)) { lastBuild.groove = { swing: groove.swing ?? null, microtiming: groove.microtiming.slice(0, 16), velocityProfile: (groove.velocityProfile || []).slice(0, 16), source: groove.source || 'analysis', at: Date.now() }; } return lastBuild.groove; },
     async generateLoop({ prompt, bpm = lastBuild.bpm || 120, bars = 2, kind = 'drums' }) {
       const seconds = Math.max(6, Math.ceil(clamp(Number(bars), 1, 8) * 4 * 60 / clamp(Number(bpm), 40, 300)) + (kind === 'drums' ? 1 : 0));
-      const suffix = kind === 'drums' ? `, drum loop, ${Math.round(bpm)} BPM, tight, dry, no vocals, no melody` : kind === 'fx' ? ', sound effect, riser, impact, no drums' : `, atmospheric texture, ${Math.round(bpm)} BPM, no drums`;
-      const result = await textToAudio({ prompt: `${String(prompt).trim()}${suffix}`, duration: Math.min(seconds, 47), model: 'stable-audio-2.5' });
+      const body = String(prompt).trim().replace(/^(TrackType|Genre|Format):[^,]+,\s*/i, '');
+      const full = kind === 'drums' ? `TrackType: Instrument, ${body}, drum loop at ${Math.round(bpm)} BPM, tight and dry, no vocals, no melody`
+        : kind === 'fx' ? `TrackType: SFX, ${body}, transition sound, no drums`
+        : `TrackType: Instrument, ${body}, evolving texture layer at ${Math.round(bpm)} BPM, no drums`;
+      const result = await textToAudio({ prompt: full, duration: Math.min(seconds, 60), model: LOOP_MODEL });
       const loop = await publish(result.buffer, `${kind}-loop`, '.wav', 'loop');
       const out = { loop: { path: loop.path, url: loop.url, name: loop.name, seconds }, kit: [] };
       if (kind === 'drums') {
@@ -614,7 +619,7 @@ function makeCtx(emit) {
       const input = path.join(TMP, `restyle-in-${Date.now()}.wav`);
       const dur = await (await import('./lib/audio.js')).durationSeconds(r.path);
       if (dur < 6) await makeLoopInput(r.path, input); else await fs.copyFile(r.path, input);
-      const result = await audioToAudio({ wavPath: input, prompt: `${String(prompt).trim()}, full mix, cohesive, produced, ${Math.round(lastBuild.bpm || 120)} BPM`, strength: clamp(Number(strength), 0.2, 0.8), duration: Math.min(Math.max(6, Math.ceil(dur)), 47), model: 'stable-audio-2.5' });
+      const result = await audioToAudio({ wavPath: input, prompt: `TrackType: Music, ${String(prompt).trim().replace(/^(TrackType|Genre|Format):[^,]+,\s*/i, '')}, cohesive full mix at ${Math.round(lastBuild.bpm || 120)} BPM`, strength: clamp(Number(strength), 0.2, 0.8), duration: Math.min(Math.max(6, Math.ceil(dur)), 60), model: LOOP_MODEL });
       const f = await publish(result.buffer, 'restyle', '.wav', 'loop');
       return { path: f.path, url: f.url, name: f.name, strength, basedOn: r.url };
     },
