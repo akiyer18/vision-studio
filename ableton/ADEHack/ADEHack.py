@@ -31,6 +31,8 @@ class ADEHack(ControlSurface):
         ControlSurface.__init__(self, c_instance)
         self._server = None
         self._clients = []  # list of [socket, bytes_buffer]
+        self._ramp = None
+        self._ramp_id = 0
         with self.component_guard():
             try:
                 self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -188,6 +190,51 @@ class ADEHack(ControlSurface):
                 return {'ok': True, 'index': self._index_of(track), 'name': track.name}
             if cmd == 'list_tracks':
                 return self._cmd_list_tracks(msg)
+            if cmd == 'clip_edit':
+                return self._cmd_clip_edit(msg)
+            if cmd == 'duplicate_clip':
+                track = self._track(msg.get('track', 'selected'))
+                src, dst = int(msg['slot']), int(msg['to_slot'])
+                if not track.clip_slots[src].has_clip:
+                    return {'ok': False, 'error': 'no clip in %s slot %d' % (track.name, src)}
+                track.clip_slots[src].duplicate_clip_to(track.clip_slots[dst])
+                return {'ok': True, 'track': track.name, 'slot': src, 'to_slot': dst}
+            if cmd == 'duplicate_scene':
+                song = self.song()
+                index = int(msg.get('index', 0))
+                song.duplicate_scene(index)
+                scenes = list(song.scenes)
+                new_index = min(index + 1, len(scenes) - 1)
+                return {'ok': True, 'index': index, 'new_index': new_index, 'name': scenes[new_index].name}
+            if cmd == 'duplicate_track':
+                song = self.song()
+                track = self._track(msg.get('track', 'selected'))
+                index = self._index_of(track)
+                song.duplicate_track(index)
+                tracks = list(song.tracks)
+                new_index = min(index + 1, len(tracks) - 1)
+                new = tracks[new_index]
+                if msg.get('name'):
+                    new.name = u'%s' % (msg['name'],)
+                return {'ok': True, 'source_index': index, 'index': new_index, 'name': new.name}
+            if cmd == 'rename_scene':
+                scenes = list(self.song().scenes)
+                scene = scenes[int(msg['index'])]
+                scene.name = u'%s' % (msg['name'],)
+                return {'ok': True, 'index': scenes.index(scene), 'name': scene.name}
+            if cmd == 'transport_setup':
+                return self._cmd_transport_setup(msg)
+            if cmd == 'capture_midi':
+                song = self.song()
+                if not getattr(song, 'can_capture_midi', False):
+                    return {'ok': False, 'error': 'nothing to capture (Live has no recent MIDI input; play something on a MIDI track first)'}
+                song.capture_midi()
+                return {'ok': True, 'track': song.view.selected_track.name}
+            if cmd == 'set_track_color':
+                track = self._track(msg.get('track', 'selected'))
+                track.color_index = int(msg['color_index'])
+                return {'ok': True, 'index': self._index_of(track), 'name': track.name,
+                        'color_index': int(track.color_index)}
             if cmd == 'create_midi_track':
                 return self._cmd_create_midi_track(msg)
             if cmd == 'select_track':
@@ -440,8 +487,16 @@ class ADEHack(ControlSurface):
         sel = song.view.selected_track
         out = []
         for i, t in enumerate(song.tracks):
-            out.append({'index': i, 'name': t.name, 'is_midi': bool(t.has_midi_input),
-                        'selected': t == sel})
+            info = {'index': i, 'name': t.name, 'is_midi': bool(t.has_midi_input),
+                    'selected': t == sel}
+            try:
+                info['color_index'] = int(t.color_index)
+                info['is_grouped'] = bool(t.is_grouped)
+                info['group_track'] = t.group_track.name if t.is_grouped and t.group_track else None
+                info['fold_state'] = int(t.fold_state) if getattr(t, 'is_foldable', False) else None
+            except Exception as e:
+                info['meta_error'] = '%r' % (e,)
+            out.append(info)
         return {'ok': True, 'tracks': out}
 
     def _cmd_create_midi_track(self, msg):
@@ -605,6 +660,145 @@ class ADEHack(ControlSurface):
             self.log_message('ADEHack: arrangement recording stopped')
         except Exception as e:
             self.log_message('ADEHack: stop recording failed: %r' % (e,))
+
+    # --------------------------------------------------------------- v5: clips
+    def _live_enum(self, enum_name, value):
+        """Live's enums are Boost.Python enums: convert an int to Live.Song.<Enum>.values[int]."""
+        try:
+            enum = getattr(Live.Song, enum_name)
+            return enum.values[int(value)]
+        except Exception:
+            return value
+
+    def _cmd_clip_edit(self, msg):
+        track = self._track(msg.get('track', 'selected'))
+        slot_index = int(msg.get('slot', 0))
+        slot = track.clip_slots[slot_index]
+        if not slot.has_clip:
+            return {'ok': False, 'error': 'no clip in %s slot %d' % (track.name, slot_index)}
+        clip = slot.clip
+        done, errors = [], {}
+
+        def op(label, fn):
+            try:
+                fn()
+                done.append(label)
+            except Exception as e:
+                errors[label] = '%s: %s' % (e.__class__.__name__, e)
+                self.log_message('ADEHack: clip_edit %s failed: %r' % (label, e))
+
+        if msg.get('quantize'):
+            q = msg['quantize']
+            grid = self._live_enum('RecordingQuantization', q.get('grid', 5))  # 5 = 1/16
+            amount = max(0.0, min(1.0, float(q.get('amount', 1.0))))
+            op('quantize', lambda: clip.quantize(grid, amount))
+        if msg.get('duplicate_loop'):
+            op('duplicate_loop', clip.duplicate_loop)
+        if msg.get('crop'):
+            op('crop', clip.crop)
+        if msg.get('loop_start') is not None or msg.get('loop_end') is not None:
+            def set_loop():
+                start = float(msg.get('loop_start', clip.loop_start))
+                end = float(msg.get('loop_end', clip.loop_end))
+                for order in (('end_marker', 'loop_end', 'loop_start', 'start_marker'),
+                              ('loop_start', 'start_marker', 'loop_end', 'end_marker')):
+                    try:
+                        for attr in order:
+                            setattr(clip, attr, end if attr in ('end_marker', 'loop_end') else start)
+                        return
+                    except Exception:
+                        continue
+                raise ValueError('could not set loop %r..%r' % (start, end))
+            op('loop', set_loop)
+        if msg.get('color_index') is not None:
+            op('color_index', lambda: setattr(clip, 'color_index', int(msg['color_index'])))
+        if msg.get('name'):
+            op('name', lambda: setattr(clip, 'name', u'%s' % (msg['name'],)))
+        state = {}
+        for attr in ('name', 'length', 'loop_start', 'loop_end', 'color_index', 'is_playing'):
+            try:
+                v = getattr(clip, attr)
+                state[attr] = v if isinstance(v, (int, float, bool)) else u'%s' % (v,)
+            except Exception:
+                pass
+        return {'ok': not errors or bool(done), 'track': track.name, 'slot': slot_index,
+                'done': done, 'errors': errors, 'clip': state}
+
+    # ----------------------------------------------------------- v5: transport
+    def _transport_state(self):
+        song = self.song()
+        state = {'tempo': float(song.tempo), 'is_playing': bool(song.is_playing)}
+        for attr in ('metronome', 'loop', 'loop_start', 'loop_length', 'swing_amount',
+                     'clip_trigger_quantization', 'can_capture_midi'):
+            try:
+                v = getattr(song, attr)
+                state[attr] = v if isinstance(v, (bool, float)) else int(v)
+            except Exception:
+                pass
+        if self._ramp is not None:
+            state['tempo_ramp'] = {'to': self._ramp['to'], 'remaining_ticks': self._ramp['ticks']}
+        return state
+
+    def _cmd_transport_setup(self, msg):
+        song = self.song()
+        done, errors = [], {}
+
+        def op(label, fn):
+            try:
+                fn()
+                done.append(label)
+            except Exception as e:
+                errors[label] = '%s: %s' % (e.__class__.__name__, e)
+                self.log_message('ADEHack: transport_setup %s failed: %r' % (label, e))
+
+        if msg.get('metronome') is not None:
+            op('metronome', lambda: setattr(song, 'metronome', bool(msg['metronome'])))
+        if msg.get('loop_start') is not None:
+            op('loop_start', lambda: setattr(song, 'loop_start', float(msg['loop_start'])))
+        if msg.get('loop_length') is not None:
+            op('loop_length', lambda: setattr(song, 'loop_length', float(msg['loop_length'])))
+        if msg.get('loop') is not None:
+            op('loop', lambda: setattr(song, 'loop', bool(msg['loop'])))
+        if msg.get('launch_quantization') is not None:
+            op('launch_quantization', lambda: setattr(
+                song, 'clip_trigger_quantization',
+                self._live_enum('Quantization', int(msg['launch_quantization']))))
+        if msg.get('swing') is not None:
+            op('swing', lambda: setattr(song, 'swing_amount', max(0.0, min(1.0, float(msg['swing'])))))
+        if msg.get('tempo') is not None and not msg.get('tempo_ramp'):
+            op('tempo', lambda: setattr(song, 'tempo', float(msg['tempo'])))
+        if msg.get('tempo_ramp'):
+            op('tempo_ramp', lambda: self._start_ramp(msg['tempo_ramp']))
+        return {'ok': not errors or bool(done), 'done': done, 'errors': errors,
+                'state': self._transport_state()}
+
+    def _start_ramp(self, spec):
+        song = self.song()
+        to = float(spec['to'])
+        seconds = max(0.1, float(spec.get('seconds', 4.0)))
+        ticks = max(1, int(round(seconds * 10.0)))
+        self._ramp_id += 1  # invalidates any running ramp's scheduled callbacks
+        self._ramp = {'id': self._ramp_id, 'to': to, 'ticks': ticks,
+                      'step': (to - float(song.tempo)) / float(ticks)}
+        self.schedule_message(1, lambda: self._ramp_tick(self._ramp_id))
+
+    def _ramp_tick(self, ramp_id):
+        ramp = self._ramp
+        if ramp is None or ramp['id'] != ramp_id:
+            return  # cancelled / replaced
+        try:
+            song = self.song()
+            ramp['ticks'] -= 1
+            if ramp['ticks'] <= 0:
+                song.tempo = ramp['to']
+                self._ramp = None
+                self.log_message('ADEHack: tempo ramp done at %.2f' % ramp['to'])
+                return
+            song.tempo = float(song.tempo) + ramp['step']
+            self.schedule_message(1, lambda: self._ramp_tick(ramp_id))
+        except Exception as e:
+            self.log_message('ADEHack: tempo ramp error: %r' % (e,))
+            self._ramp = None
 
     def _show_view(self, name):
         try:

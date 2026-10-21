@@ -10,7 +10,11 @@ stays in sync; pass recreate:true to delete+create instead; fire is skipped if t
 instrument via `browser.hotswap_target = device` so `load_item` swaps the sample instead of adding a second Simpler, falling back to `track.delete_device`; re-scans browser roots user_folders > current_project > user_library > samples
 every ~0.3 s for up to ~2.4 s via schedule_message before replying not found — freshly written wavs take a moment to index; use a client timeout >= 5 s),
 `focus_clip {track, slot?}` (highlight slot, detail_clip, Session + Detail/Clip views, clip.view.show_loop()),
-`arrangement_record {bars?, stop?}` (record_mode + start_playing; auto-stops after bars via schedule_message), `show_view {view:"Session"|"Arranger"|"Detail/Clip"|"Detail/DeviceChain"}`, `play`, `stop`,
+`arrangement_record {bars?, stop?}` (record_mode + start_playing; auto-stops after bars via schedule_message), `clip_edit {track, slot, quantize?:{grid:0..8 (5 = 1/16), amount:0..1}, duplicate_loop?, crop?, loop_start?, loop_end?, color_index?, name?}` -> {ok, done:[ops], errors:{op:msg}, clip:{name,length,loop_start,loop_end,color_index,is_playing}},
+`duplicate_clip {track, slot, to_slot}`, `duplicate_scene {index}` -> {ok,index,new_index,name}, `duplicate_track {track, name?}` -> {ok,source_index,index,name}, `rename_scene {index,name}`,
+`transport_setup {metronome?, loop?, loop_start?, loop_length?, launch_quantization?:int (Live.Song.Quantization: 4 = 1 bar), swing?:0..1, tempo?, tempo_ramp?:{to, seconds}}` -> {ok, done, errors, state:{tempo,is_playing,metronome,loop,loop_start,loop_length,swing_amount,clip_trigger_quantization,can_capture_midi,tempo_ramp?}} (ramp steps every 100 ms; a new ramp cancels the old),
+`capture_midi {}` (ok:false when !song.can_capture_midi), `set_track_color {track, color_index}`; list_tracks entries also carry color_index, is_grouped, group_track, fold_state.
+`show_view {view:"Session"|"Arranger"|"Detail/Clip"|"Detail/DeviceChain"}`, `play`, `stop`,
 `list_devices {track, params?:true}` (params: first 32 of each device with value/min/max/display),
 `load_device {track, name}` (BFS over browser.audio_effects > instruments > midi_effects > drums > sounds, exact then case-insensitive;
 selects the track, `load_item` appends the device; replies the new device + params), `set_device_param {track, device:int|name, param:int|name, value}` (clamped),

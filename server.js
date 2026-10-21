@@ -32,10 +32,13 @@ const upload = multer({ dest: TMP, limits: { fileSize: 50 * 1024 * 1024 } });
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(n) ? n : lo));
 const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'sound';
 const hasKey = (v) => Boolean(v && !/paste-your-key/i.test(v));
-function insideOut(p) {
-  const r = path.relative(OUT_DIR, path.resolve(String(p || '')));
-  return r && !r.startsWith('..') && !path.isAbsolute(r);
+function insideDir(dir, p) {
+  const r = path.relative(dir, path.resolve(String(p || '')));
+  return Boolean(r) && !r.startsWith('..') && !path.isAbsolute(r);
 }
+const insideOut = (p) => insideDir(OUT_DIR, p);
+const insideTmp = (p) => insideDir(TMP, p);
+const audioPathOk = (p) => insideOut(p) || insideTmp(p);
 
 async function publish(buffer, name, ext, kind) {
   const file = `${slug(name)}-${Date.now()}${ext}`;
@@ -165,13 +168,21 @@ function roleFor(hint = '', fallback = 'Snare') {
   const key = Object.keys(ROLE_OF).find((k) => h.includes(k));
   return key ? ROLE_OF[key] : fallback;
 }
+let slotLock = Promise.resolve();
+const reservedSlots = new Map();   // slot file -> reserved at (ms); released by rememberSound or after 2 min
 async function nextSlot(role) {
+  const run = slotLock.then(() => nextSlotUnlocked(role));
+  slotLock = run.catch(() => {});
+  return run;
+}
+async function nextSlotUnlocked(role) {
   let counters = {};
   try { counters = JSON.parse(await fs.readFile(COUNTER_FILE, 'utf8')); } catch {}
   const indexed = await indexedSlotNames();
   const n = POOL_SIZE[role] || 6;
   // never hand out a slot that a track in the current set is still playing (Live caches by filename)
-  const inUse = new Set(Object.values(lastBuild.samples || {}).map((s) => path.basename(s.slotPath || '')));
+  for (const [k, at] of reservedSlots) if (Date.now() - at > 120000) reservedSlots.delete(k);
+  const inUse = new Set([...Object.values(lastBuild.samples || {}).map((s) => path.basename(s.slotPath || '')), ...reservedSlots.keys()]);
   let pick = null;
   for (let i = 0; i < n; i++) {
     const k = ((counters[role] || 0) + i) % n + 1;
@@ -185,6 +196,7 @@ async function nextSlot(role) {
     return legacy;
   }
   counters[role] = pick.k;
+  reservedSlots.set(pick.name, Date.now());
   await fs.writeFile(COUNTER_FILE, JSON.stringify(counters));
   return pick.name;
 }
@@ -242,7 +254,7 @@ app.post('/api/live/sample', async (req, res) => {
     let track = req.body?.track;
     if (track == null && req.body?.instrument) {
       if (!lastBuild.tracks[req.body.instrument]) throw new Error(`no track for ${req.body.instrument} in the current build`);
-      track = lastBuild.tracks[req.body.instrument].index;
+      track = lastBuild.tracks[req.body.instrument].name;
     }
     const reply = await sendWithRetry(send, { cmd: 'load_sample', path: p, ...(track != null ? { track } : {}) });
     if (!reply?.ok) throw new Error(reply?.error || 'Live rejected load_sample');
@@ -400,14 +412,14 @@ app.post('/api/live/update', async (req, res) => {
     lastBuild.pattern = pattern;
     const hadTracks = Object.keys(lastBuild.tracks);
     if (lastBuild.tracks.drums && !Object.keys(lastBuild.tracks).some((k) => LANE_LABEL[k])) {
-      const r = await send({ cmd: 'create_clip', track: lastBuild.tracks.drums.index, slot: 0, length: pattern.bars * 4, notes: patternToLiveNotes(pattern, 'single'), fire: true, name: 'Drums', show: false });
+      const r = await send({ cmd: 'create_clip', track: lastBuild.tracks.drums.name, slot: 0, length: pattern.bars * 4, notes: patternToLiveNotes(pattern, 'single'), fire: true, name: 'Drums', show: false });
       if (!r?.ok) throw new Error(r?.error); done.push('drums');
     } else {
       // lanes removed from the pattern: empty their clips so the old hits stop
       for (const [inst, t] of Object.entries(lastBuild.tracks)) {
         if (!LANE_LABEL[inst] || pattern.lanes.some((l) => l.instrument === inst && l.steps.length)) continue;
         if (instruments && !instruments.includes(inst)) continue;
-        const r = await send({ cmd: 'create_clip', track: t.index, slot: 0, length: pattern.bars * 4, notes: [], fire: false, name: t.name, show: false });
+        const r = await send({ cmd: 'create_clip', track: t.name, slot: 0, length: pattern.bars * 4, notes: [], fire: false, name: t.name, show: false });
         if (r?.ok) done.push(inst + ' (silenced)');
       }
       for (const lane of pattern.lanes) {
@@ -420,7 +432,7 @@ app.post('/api/live/update', async (req, res) => {
           if (!c?.ok) throw new Error(c?.error);
           t = lastBuild.tracks[lane.instrument] = { index: c.index, name: label };
         }
-        const r = await send({ cmd: 'create_clip', track: t.index, slot: 0, length: pattern.bars * 4, notes: patternToLiveNotes({ ...pattern, lanes: [lane] }, 'single'), fire: true, name: t.name, show: false });
+        const r = await send({ cmd: 'create_clip', track: t.name, slot: 0, length: pattern.bars * 4, notes: patternToLiveNotes({ ...pattern, lanes: [lane] }, 'single'), fire: true, name: t.name, show: false });
         if (!r?.ok) throw new Error(`${t.name}: ${r?.error}`); done.push(lane.instrument);
       }
     }
@@ -438,10 +450,17 @@ app.post('/api/tweak', async (req, res) => {
 // ================= v3: the producer agent (Claude with tools) =================
 const STATE_FILE = path.join(TMP, 'chat-state.json');
 const chat = { history: [], recordings: { refs: [] } };   // attachments persist for the whole session (and across restarts)
-try { Object.assign(chat, JSON.parse(await fs.readFile(STATE_FILE, 'utf8'))); if (chat.samples) lastBuild.samples = chat.samples; } catch {}
+try { const st = JSON.parse(await fs.readFile(STATE_FILE, 'utf8')); chat.history = st.history || []; chat.recordings = st.recordings || { refs: [] }; if (st.samples) lastBuild.samples = st.samples; if (st.tracks) lastBuild.tracks = st.tracks; if (st.bpm) lastBuild.bpm = st.bpm; } catch {}
 lastBuild.samples ||= {};   // track name (lower) -> { samplePath, slotPath, role }
-async function saveChat() { try { await fs.writeFile(STATE_FILE, JSON.stringify({ history: chat.history.slice(-60), recordings: chat.recordings, samples: lastBuild.samples })); } catch (e) { console.warn('[state]', e.message); } }
-function rememberSound(trackName, samplePath, slotPath, role) { lastBuild.samples[String(trackName).toLowerCase()] = { samplePath, slotPath, role, at: Date.now() }; }
+function safeHistory(h, max = 60) {   // cut only at a plain user text message so no tool_result is orphaned
+  if (h.length <= max) return h;
+  let i = h.length - max;
+  while (i < h.length && !(h[i].role === 'user' && typeof h[i].content === 'string')) i++;
+  return i < h.length ? h.slice(i) : [];
+}
+async function saveChat() { try { await fs.writeFile(STATE_FILE, JSON.stringify({ history: safeHistory(chat.history), recordings: chat.recordings, samples: lastBuild.samples, tracks: lastBuild.tracks, bpm: lastBuild.bpm })); } catch (e) { console.warn('[state]', e.message); } }
+function rememberSound(trackName, samplePath, slotPath, role) { reservedSlots.delete(path.basename(slotPath || '')); lastBuild.samples[String(trackName).toLowerCase()] = { samplePath, slotPath, role, at: Date.now() }; }
+function forgetTrack(trackName) { delete lastBuild.samples[String(trackName).toLowerCase()]; for (const k of Object.keys(lastBuild.tracks)) if (lastBuild.tracks[k]?.name?.toLowerCase() === String(trackName).toLowerCase()) delete lastBuild.tracks[k]; }
 const uploads = new Map();   // id -> wav path (this process only)
 
 app.post('/api/upload', upload.single('audio'), async (req, res) => {
@@ -494,7 +513,7 @@ function makeCtx(emit) {
     },
     writePattern: async (o) => describeToPattern(o),
     async slice(refPath, { startSeconds = 0, lengthSeconds = 0.35, name = 'chop', fadeMs = 5 } = {}) {
-      if (!insideOut(refPath) && !refPath.startsWith(TMP)) throw new Error('slice: path outside project audio');
+      if (!audioPathOk(refPath)) throw new Error('slice: path outside project audio');
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const cut = path.join(TMP, `${id}-slice.wav`), norm = path.join(TMP, `${id}-slice-norm.wav`);
       const len = clamp(Number(lengthSeconds), 0.05, 4), fade = Math.min(fadeMs / 1000, len / 4);
@@ -519,9 +538,9 @@ function makeCtx(emit) {
       let bpm = null; try { bpm = Math.round(estimateBpm(onsets)); } catch {}
       return { pieces, bpm, onsetCount: onsets.length };
     },
-    listen: async (p, q) => { if (!insideOut(p) && !p.startsWith(TMP)) throw new Error('listen: path outside project audio'); return (await import('./lib/ears.js')).listen(p, q); },
-    transcribe: async (p, opts) => { if (!insideOut(p) && !p.startsWith(TMP)) throw new Error('transcribe: path outside project audio'); return (await import('./lib/transcribe.js')).transcribe(p, opts); },
-    judge: async (p, intent) => { if (!insideOut(p) && !p.startsWith(TMP)) throw new Error('judge: path outside project audio'); return (await import('./lib/ears.js')).judge(p, intent); },
+    listen: async (p, q) => { if (!audioPathOk(p)) throw new Error('listen: path outside project audio'); return (await import('./lib/ears.js')).listen(p, q); },
+    transcribe: async (p, opts) => { if (!audioPathOk(p)) throw new Error('transcribe: path outside project audio'); return (await import('./lib/transcribe.js')).transcribe(p, opts); },
+    judge: async (p, intent) => { if (!audioPathOk(p)) throw new Error('judge: path outside project audio'); return (await import('./lib/ears.js')).judge(p, intent); },
     writeMelody: async (o) => { const { describeToMelody } = await import('./lib/melody.js'); const r = await describeToMelody(o); return { notes: r.notes, bars: r.bars, key: r.key, source: r.source }; },
     beatboxToPattern: async (p, o) => (await import('./lib/rhythm.js')).beatboxToPattern(p, o),
     humToNotes: async (p, o) => (await import('./lib/melody.js')).humToNotes(p, o),
@@ -529,6 +548,9 @@ function makeCtx(emit) {
       setTempo: async (bpm) => { const send = await liveClient(); const r = okOrThrow(await send({ cmd: 'set_tempo', bpm }), 'set_tempo'); lastBuild.bpm = bpm; return r; },
       listTracks: async () => {
         const r = okOrThrow(await (await liveClient())({ cmd: 'list_tracks' }), 'list_tracks');
+        const present = new Set(r.tracks.map((t) => t.name.toLowerCase()));
+        for (const k of Object.keys(lastBuild.samples)) if (!present.has(k)) delete lastBuild.samples[k];   // prune tracks the user removed in Live
+        for (const k of Object.keys(lastBuild.tracks)) if (!present.has(String(lastBuild.tracks[k]?.name || '').toLowerCase())) delete lastBuild.tracks[k];
         r.tracks = r.tracks.map((t) => { const s = lastBuild.samples[t.name.toLowerCase()]; return s ? { ...t, soundPath: s.samplePath, soundRole: s.role } : t; });
         r.note = 'soundPath = the wav a track plays; pass it to listen / judge_sound';
         return r;
@@ -536,7 +558,7 @@ function makeCtx(emit) {
       show: async () => { const send = await liveClient(); const r = await send({ cmd: 'show_view', view: 'Session' }); await send({ cmd: 'show_view', view: 'Detail/Clip' }); return r; },
       play: async () => (await liveClient())({ cmd: 'play' }),
       stop: async () => (await liveClient())({ cmd: 'stop' }),
-      deleteTrack: async (name) => { const send = await liveClient(); const t = await trackByName(send, name); if (!t) throw new Error(`no track named ${name}`); const r = okOrThrow(await send({ cmd: 'delete_track', track: t.index }), 'delete_track'); for (const k of Object.keys(lastBuild.tracks)) if (lastBuild.tracks[k].name === t.name) delete lastBuild.tracks[k]; return r; },
+      deleteTrack: async (name) => { const send = await liveClient(); const t = await trackByName(send, name); if (!t) throw new Error(`no track named ${name}`); const r = okOrThrow(await send({ cmd: 'delete_track', track: t.name }), 'delete_track'); forgetTrack(t.name); await saveChat(); return r; },
       async buildLane({ name, instrument, samplePath, steps, bars = 1, swing = 0, slot = 0 }) {
         const send = await liveClient();
         const t = await ensureTrack(send, name);
@@ -582,7 +604,16 @@ function makeCtx(emit) {
       },
       async deleteDevice({ track, device }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'delete_device', track: t.index, device }), 'delete_device'); },
       async setMixer({ track, volume, pan, mute, solo, arm }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); const cmd = { cmd: 'set_mixer', track: t.index }; if (volume != null) cmd.volume = clamp(Number(volume), 0, 1); if (pan != null) cmd.pan = clamp(Number(pan), -1, 1); if (mute != null) cmd.mute = Boolean(mute); if (solo != null) cmd.solo = Boolean(solo); if (arm != null) cmd.arm = Boolean(arm); return okOrThrow(await send(cmd), 'set_mixer'); },
-      createScene: async ({ name, index = -1 } = {}) => okOrThrow(await (await liveClient())({ cmd: 'create_scene', index, name }), 'create_scene'),
+      createScene: async ({ name, index } = {}) => {
+        const send = await liveClient();
+        const scenes = (await send({ cmd: 'list_scenes' }))?.scenes || [];
+        if (index != null && index >= 0 && index < scenes.length) {
+          const existing = scenes[index];
+          const named = await send({ cmd: 'rename_scene', index, name });   // v5 script; older script answers unknown cmd
+          return { ok: true, index, name: named?.ok ? name : existing.name, existed: true, note: named?.ok ? 'renamed existing scene' : 'scene already exists; rename not supported by this script version' };
+        }
+        return okOrThrow(await send({ cmd: 'create_scene', index: -1, name }), 'create_scene');
+      },
       fireScene: async (arg) => { const index = typeof arg === 'object' && arg ? arg.index : arg; return okOrThrow(await (await liveClient())({ cmd: 'fire_scene', index: Number(index) }), 'fire_scene'); },
       listScenes: async () => okOrThrow(await (await liveClient())({ cmd: 'list_scenes' }), 'list_scenes'),
       recordArrangement: async ({ bars, stop } = {}) => okOrThrow(await (await liveClient())(stop ? { cmd: 'arrangement_record', stop: true } : { cmd: 'arrangement_record', bars: clamp(Number(bars) || 8, 1, 64) }), 'arrangement_record'),
@@ -603,7 +634,7 @@ app.post('/api/chat', async (req, res) => {
   const emit = (e) => res.write(`data: ${JSON.stringify(e)}\n\n`);
   try {
     const { text = '', beatId, humId, refIds = [], reset } = req.body || {};
-    if (reset) { chat.history = []; chat.recordings = { refs: [] }; await saveChat(); }
+    if (reset) { chat.history = []; chat.recordings = { refs: [] }; lastBuild.samples = {}; lastBuild.tracks = {}; await saveChat(); }
     if (!hasKey(process.env.ANTHROPIC_API_KEY)) throw new Error('ANTHROPIC_API_KEY is not set in .env (the producer agent needs Claude)');
     const { runProducer } = await import('./lib/agent.js');
     const attachedThisTurn = [];
@@ -625,7 +656,13 @@ app.post('/api/chat', async (req, res) => {
   }
   res.end();
 });
-app.post('/api/chat/reset', async (_req, res) => { chat.history = []; chat.recordings = { refs: [] }; await saveChat(); res.json({ ok: true }); });
+app.post('/api/chat/reset', async (_req, res) => { chat.history = []; chat.recordings = { refs: [] }; lastBuild.samples = {}; lastBuild.tracks = {}; await saveChat(); res.json({ ok: true }); });
+
+app.use((err, req, res, _next) => {   // multer limits, bad JSON, anything thrown synchronously -> JSON, not HTML
+  console.error('[http]', err.message);
+  if (req.file) fs.unlink(req.file.path).catch(() => {});
+  res.status(err.status || err.statusCode || 500).json({ error: err.message || 'server error' });
+});
 
 app.listen(PORT, () => {
   console.log(`ADE Hack running at http://localhost:${PORT}`);
