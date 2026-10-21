@@ -261,6 +261,7 @@ fetch('/api/health').then(r => r.json()).then(h => {
   $('b-stab').className = 'badge ' + (h.stabilityKey ? 'ok' : 'bad');
   $('b-claude').textContent = h.anthropicKey ? 'Claude patterns' : 'Rule-based patterns';
   $('b-claude').className = 'badge ' + (h.anthropicKey ? 'ok' : '');
+  const ears = document.createElement('span'); ears.className = 'badge ' + (h.ears ? 'ok' : ''); ears.textContent = h.ears ? 'Ears: Music Flamingo' : 'Ears off (add HF_TOKEN)'; $('b-claude').after(ears);
   $('b-dir').title = h.outDir; $('b-dir').textContent = '📁 ' + h.outDir.split('/').slice(-2).join('/');
 });
 INSTR.forEach(i => { const o = document.createElement('option'); o.value = i; o.textContent = i.replace('_',' '); $('p-lane').appendChild(o); });

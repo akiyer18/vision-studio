@@ -56,6 +56,7 @@ app.get('/api/health', (_req, res) => {
   res.json({
     stabilityKey: hasKey(process.env.STABILITY_API_KEY),
     anthropicKey: hasKey(process.env.ANTHROPIC_API_KEY),
+    ears: Boolean(process.env.HF_TOKEN || process.env.HUGGING_FACE_HUB_TOKEN),
     outDir: OUT_DIR,
   });
 });
@@ -69,8 +70,10 @@ async function synthesize({ prompt = '', mode = 'oneshot', kind, name = 'sound',
   if (!kind) kind = TONAL.has(String(name).toLowerCase()) ? 'tone' : undefined;
   const files = [];
   let result;
+  const wantSec = clamp(Number(oneshotSeconds), 0.2, 20) || (kind === 'tone' ? 2.5 : 1.0);
+  const genSec = Math.max(6, Math.ceil(wantSec + 1));
   if (mode === 'text') {
-    result = await textToAudio({ prompt: buildPrompt(prompt, 'oneshot', kind), duration: 6, model });
+    result = await textToAudio({ prompt: buildPrompt(prompt, 'oneshot', kind), duration: genSec, model });
   } else {
     const raw = path.join(TMP, `${id}-raw.wav`);
     const input = path.join(TMP, `${id}-input.wav`);
@@ -84,14 +87,14 @@ async function synthesize({ prompt = '', mode = 'oneshot', kind, name = 'sound',
     if (mode === 'loop') await makeLoopInput(raw, input);
     else await makeOneShotLoop(raw, input);
     files.push(await publish(await fs.readFile(raw), `${name}-hum`, '.wav', 'raw'));
-    result = await audioToAudio({ wavPath: input, prompt: buildPrompt(prompt, mode, kind), strength: clamp(Number(strength), 0.01, 1) || 0.7, duration: 6, model });
+    result = await audioToAudio({ wavPath: input, prompt: buildPrompt(prompt, mode, kind), strength: clamp(Number(strength), 0.01, 1) || 0.7, duration: genSec, model });
   }
   const gen = path.join(TMP, `${id}-gen.wav`);
   await fs.writeFile(gen, result.buffer);
   if (mode !== 'loop') {
     const one = path.join(TMP, `${id}-oneshot.wav`);
     const norm = path.join(TMP, `${id}-oneshot-norm.wav`);
-    await sliceFirstHit(gen, one, { seconds: clamp(Number(oneshotSeconds), 0.2, 6) || (kind === 'tone' ? 2.5 : 1.0) });
+    await sliceFirstHit(gen, one, { seconds: wantSec });
     await normalize(one, norm);
     files.unshift(await publish(await fs.readFile(norm), name, '.wav', 'oneshot'));
   }
@@ -470,6 +473,8 @@ function makeCtx(emit) {
       return { path: one.path, name: one.name, url: one.url, durationSeconds: await audio.durationSeconds(one.path), peakDb: await audio.peakDb(one.path), seed: out.seed };
     },
     writePattern: async (o) => describeToPattern(o),
+    listen: async (p, q) => { if (!insideOut(p) && !p.startsWith(TMP)) throw new Error('listen: path outside project audio'); return (await import('./lib/ears.js')).listen(p, q); },
+    judge: async (p, intent) => { if (!insideOut(p) && !p.startsWith(TMP)) throw new Error('judge: path outside project audio'); return (await import('./lib/ears.js')).judge(p, intent); },
     writeMelody: async (o) => { const { describeToMelody } = await import('./lib/melody.js'); const r = await describeToMelody(o); return { notes: r.notes, bars: r.bars, key: r.key, source: r.source }; },
     beatboxToPattern: async (p, o) => (await import('./lib/rhythm.js')).beatboxToPattern(p, o),
     humToNotes: async (p, o) => (await import('./lib/melody.js')).humToNotes(p, o),

@@ -16,6 +16,8 @@ const ctx = {
   writeMelody: async (o) => { calls.push(["writeMelody", o]); return { key: o.key, bars: o.bars, notes: [{ pitch: 60, startBeats: 0, durationBeats: 1, velocity: 100 }], source: "rules" }; },
   beatboxToPattern: async (p, o) => { calls.push(["beatboxToPattern", p, o]); return { pattern: { name: "bb", bpm: 120, bars: 1, stepsPerBar: 16, swing: 0, lanes: [] }, onsets: [{ time: 0.31, instrument: "kick" }, { time: 0.8, instrument: "snare" }, { time: 1.3, instrument: "kick" }], bpm: 120 }; },
   humToNotes: async (p, o) => { calls.push(["humToNotes", p, o]); return { notes: [{ pitch: 62, startBeats: 0, durationBeats: 0.5, velocity: 90 }], bars: 1, bpm: o.bpm }; },
+  listen: async (p, q) => { calls.push(["listen", p, q]); return { text: "a dry, clicky kick with a short sub tail; dark and driving" }; },
+  judge: async (p, intent) => { calls.push(["judge", p, intent]); return { text: "tight and clicky but the sub tail is too short", match: 6 }; },
   live: {
     setTempo: async (bpm) => { calls.push(["setTempo", bpm]); return { tempo: bpm }; },
     listTracks: async () => [{ index: 0, name: "Kick", is_midi: true, selected: true }],
@@ -31,7 +33,7 @@ const ctx = {
 };
 
 const tools = makeTools(ctx, { beat: "/tmp/fake.wav" });
-const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "show_live", "play", "stop"];
+const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "judge_sound", "show_live", "play", "stop"];
 assert.deepEqual(tools.map((t) => t.name), expected, "tool names");
 for (const t of tools) {
   assert.ok(t.description && t.description.length > 20, `${t.name} description`);
@@ -51,6 +53,8 @@ const sample = {
   update_layer: { name: "Kick", steps: [{ step: 0, velocity: 120 }], bars: 1 },
   replace_sound: { name: "Kick", samplePath: "/out/y.wav", role: "kick" },
   remove_layer: { name: "Rim" },
+  listen: { path: "/tmp/fake.wav", question: "what kind of kick is this?" },
+  judge_sound: { path: "/out/x.wav", intent: "tight clicky techno kick with a short sub tail" },
   show_live: {}, play: {}, stop: {},
 };
 for (const t of tools) {
@@ -71,6 +75,24 @@ assert.equal(sy.kind, "drum"); assert.equal(sy.audioPath, "/tmp/fake.wav"); asse
 // tonal default length
 await tools.find((t) => t.name === "synthesize_sound").run({ role: "pad", prompt: "warm pad, single sustained note, no drums", source: "text" });
 assert.equal(calls.filter((c) => c[0] === "synth").at(-1)[1].oneshotSeconds, 2.5);
+
+// ears: shapes, and failure paths
+const li = JSON.parse(await tools.find((t) => t.name === "listen").run({ path: "/tmp/fake.wav" }));
+assert.match(li.heard, /clicky kick/);
+const ju = JSON.parse(await tools.find((t) => t.name === "judge_sound").run(sample.judge_sound));
+assert.equal(ju.match, 6); assert.match(ju.critique, /sub tail/);
+ctx.judge = async () => ({ text: "could not rate", match: null });
+assert.equal(JSON.parse(await tools.find((t) => t.name === "judge_sound").run(sample.judge_sound)).match, null, "null match preserved");
+ctx.listen = async () => { throw new Error("Music Flamingo timed out after 40 s"); };
+const lf = JSON.parse(await tools.find((t) => t.name === "listen").run({ path: "/tmp/fake.wav" }));
+assert.equal(lf.ok, false); assert.match(lf.error, /timed out/); assert.equal(events.at(-1).ok, false);
+assert.ok(PRODUCER_SYSTEM.includes("judge_sound") && PRODUCER_SYSTEM.includes("at most 3"), "system prompt covers ears + cap");
+// lengthSeconds bound: 16 ok (long pad), 25 rejected
+const ss = tools.find((t) => t.name === "synthesize_sound");
+assert.equal(ss.parse({ role: "pad", prompt: "evolving pad, single sustained note, no drums", lengthSeconds: 16 }).lengthSeconds, 16);
+assert.throws(() => ss.parse({ role: "pad", prompt: "pad", lengthSeconds: 25 }), "lengthSeconds 25 rejected");
+await ss.run(ss.parse({ role: "pad", prompt: "evolving pad, single sustained note, no drums", lengthSeconds: 12 }));
+assert.equal(calls.filter((c) => c[0] === "synth").at(-1)[1].oneshotSeconds, 12, "lengthSeconds forwarded");
 
 // failures become ok:false strings, never throws
 ctx.live.setTempo = async () => { throw new Error("Live not reachable"); };
