@@ -20,7 +20,12 @@ every ~0.3 s for up to ~2.4 s via schedule_message before replying not found —
 selects the track, `load_item` appends the device; replies the new device + params), `set_device_param {track, device:int|name, param:int|name, value}` (clamped),
 `delete_device {track, device}`, `set_mixer {track, volume?:0..1 (0.85 = 0 dB), pan?:-1..1, mute?, solo?, arm?}`,
 `create_scene {index=-1, name?}`, `fire_scene {index}`, `list_scenes`, `stop_clip {track, slot}`, `delete_track {track}`, `rename_track {track,name}`,
-`browse {root?}` (debug: top-level names under each browser root).
+`set_simpler {track, device?, mode?:classic|oneshot|slice, warp?:bool, warp_mode?:beats|tones|texture|repitch|complex|complex_pro, loop?:bool ('S Loop On' param), gain_db?, voices?:1..32, retrigger?:bool, start_marker?, end_marker? (sample frames)}` -> {ok, track, device, done:[...], errors:{...}, state}, `sample_info {track, device?}` -> {ok, track, device, sample:{playback_mode (0 classic/1 one-shot/2 slicing), voices, retrigger, file_path, length (frames), warping, warp_mode, gain, start_marker, end_marker, slices, loop}},
+`set_send {track, send:'A'|'B'|int|name, level?:0..1}` -> {ok, track, sends:[{index,name,level}]},
+`browse {root:instruments|sounds|drums|audio_effects|midi_effects|user_folders|..., query?, depth=2, limit=200}` -> {ok, root, items:[{name,is_folder,is_loadable,is_device,path:[...]}], truncated},
+load_device matching: exact device > exact preset > alias (Ping Pong Delay/Simple Delay/Echo -> Delay, eq -> EQ Eight, glue -> Glue Compressor, ...) > case-insensitive > substring; reply has match + requested; not-found lists the real top-level names.
+Live 10 Standard here has NO Echo / Ping Pong Delay / Operator / Analog / Wavetable (Suite); instruments = Drum Rack, Impulse, Instrument Rack, Simpler, External Instrument; presets live under `sounds` (Bass, Pad, Synth Lead, ...).
+`browse {root?}` (legacy debug: top-level names under each browser root).
 Replies: one JSON line, `{"ok":true,...}` or `{"ok":false,"error":"..."}`.
 
 Live API used: `ControlSurface.schedule_message(1, cb)` (100 ms tick, no threads), `self.song().tempo/tracks/view.selected_track`,

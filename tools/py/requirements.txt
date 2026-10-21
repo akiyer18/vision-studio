@@ -1,0 +1,13 @@
+# CPU-only, permissive/open licenses. Installed into tools/py/.venv (Python 3.11) by setup.sh
+# Pins are for an Intel Mac: torch 2.2.2 is the last release with macOS x86_64 wheels; numba/llvmlite likewise need older wheels.
+numpy>=1.24,<2
+soundfile
+llvmlite==0.43.0
+numba==0.60.0
+librosa==0.10.2.post1
+torch==2.2.2
+torchaudio==2.2.2
+demucs==4.0.1   # 4.1.0 pulls in sphn (Rust, needs libopus+pkg-config+old CMake) which fails to build on this Mac
+basic-pitch[onnx]>=0.4
+pedalboard>=0.9
+pyloudnorm

@@ -319,10 +319,23 @@ function fileCard(f, extra) {
   const div = document.createElement('div'); div.className = 'file';
   div.innerHTML = `<div class="top"><span><span class="kind">${f.kind}</span> &nbsp; ${f.name}</span>
       <span><button data-reveal="${encodeURIComponent(f.path)}">Reveal in Finder</button>
-      ${f.kind === 'oneshot' || f.kind === 'loop' || f.kind === 'raw' ? `<button data-live="${encodeURIComponent(f.path)}" title="Load into the selected track in Live (needs ADEHack remote script)">→ Live</button>` : ''}</span></div>
+      ${f.kind === 'oneshot' || f.kind === 'loop' || f.kind === 'raw' ? `<button data-live="${encodeURIComponent(f.path)}" title="Load into the selected track in Live (needs ADEHack remote script)">→ Live</button>` : ''}
+      ${f.kind === 'oneshot' ? `<button data-refine="${encodeURIComponent(f.path)}" title="Gemini listens, rewrites the Stability prompt, regenerates, scores; best wins">✦ Refine</button>` : ''}</span></div>
     ${f.url.endsWith('.mid') ? '' : `<audio controls src="${f.url}"></audio>`}
     <div class="path">${f.path}</div>${extra || ''}`;
   div.querySelector('[data-reveal]').onclick = () => fetch('/api/reveal', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ path: f.path }) });
+  const rb = div.querySelector('[data-refine]');
+  if (rb) rb.onclick = async () => {
+    const intent = prompt('What should this sound be? (e.g. "deeper 808 kick with a hard click")', f.name.replace(/-\d+\.wav$/, '').replace(/-/g, ' '));
+    if (!intent) return;
+    rb.disabled = true; rb.textContent = '✦ listening…';
+    const r = await postJson('/api/refine', { path: f.path, intent, role: (f.name.match(/^(kick|snare|clap|hat|perc|rim|tom|synth|saw|bass|pad|lead|keys)/) || ['', 'drum'])[1], rounds: 2 });
+    rb.disabled = false; rb.textContent = '✦ Refine';
+    if (!r.ok) { setStatus('s-status', r.error, true); return; }
+    const hist = (r.history || []).map(h => `round ${h.round}: ${h.match ?? '?'}/10${h.gap ? ' — ' + h.gap : ''}`).join('\n');
+    const card = fileCard({ name: r.best.path.split('/').pop(), url: r.best.url, path: r.best.path, kind: 'oneshot' }, `<div class="path" style="white-space:pre-wrap">${hist}\nprompt: ${r.best.prompt}</div>`);
+    div.after(card);
+  };
   const lb = div.querySelector('[data-live]');
   if (lb) lb.onclick = async () => { lb.textContent = '…'; const r = await postJson('/api/live/sample', { path: f.path, role: f.name }); lb.textContent = r.ok ? '✓ in Live' : '→ Live'; if (!r.ok) setStatus('s-status', r.error, true); };
   return div;
