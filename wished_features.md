@@ -1,13 +1,16 @@
 ## UI
 
-Tabs list:
+Tabs list: 5 tabs
 
 - create from scratch (prompt text, sound)
 	- TODO ask if we can do both text and sound simultaneously
-- analyse uploaded track / from DAW to suggest improvements and generate alternatives
+- analyse uploaded track / from DAW to suggest improvements 
+- generate alternatives
 	- comparative analysis of new alternatives, ai should describe changes made
-	- analyse genre history, suggest artists to listen to as reference (maybe use Soundcharts API for that?)
+
+- analyse genre history, suggest artists to listen to as reference (maybe use Soundcharts API for that?)
 - tweak on a sample to create a new sample (suggest samples?)
+
 
 different levels of musicians - select your level?
 
