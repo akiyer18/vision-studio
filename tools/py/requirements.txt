@@ -7,7 +7,7 @@ numba==0.60.0
 librosa==0.10.2.post1
 torch==2.2.2
 torchaudio==2.2.2
-demucs>=4.0.1
+demucs==4.0.1   # 4.1.0 pulls in sphn (Rust, needs libopus+pkg-config+old CMake) which fails to build on this Mac
 basic-pitch[onnx]>=0.4
 pedalboard>=0.9
 pyloudnorm

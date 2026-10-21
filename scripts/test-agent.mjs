@@ -37,12 +37,14 @@ const ctx = {
   productionDna: async (p) => { calls.push(["productionDna", p]); return { drums: { kick: "round dusty kick, soft attack", snare: "cracked layered snare", hats: "crisp swung hats" }, groove: "lazy, behind the beat", space: "short plate on snare", tempo: 93, key: "F minor", arrangement: "8-bar loops, drop at bar 17", expensive: ["kick and bass share a sub lane", "hats panned wide", "vocal chops tuned"] }; },
   critiqueMix: async (ref) => { calls.push(["critiqueMix", ref]); return { groove: "straight vs reference swing 0.22", lowEnd: "kick/bass masking 60-90 Hz", topFixes: [{ what: "bass highpass", how: "add_effect Bass EQ Eight highpass 60 Hz" }] }; },
   labelPieces: async (paths) => { calls.push(["labelPieces", paths]); return paths.map((p, i) => ({ path: p, label: i % 2 ? "consonant" : "vowel", pitchedness: i % 2 ? 0.2 : 0.9, usableAs: i % 2 ? "perc" : "chop" })); },
+  refineSound: async (o) => { calls.push(["refineSound", o]); return { best: { path: "/out/kick-r2.wav", url: "/out/kick-r2.wav", prompt: "deep electronic kick drum, single hit, hard click transient, 500 ms sub tail, dry", match: 8, round: 2 }, history: [{ round: 1, prompt: "p1", viaAudioToAudio: true, gap: "too boxy", heard: "boxy kick", match: 5 }, { round: 2, prompt: "p2", viaAudioToAudio: true, gap: "sub tail long", heard: "tighter", match: 8 }], appliedToTrack: Boolean(o.track) }; },
+  undoSound: async (o) => { calls.push(["undoSound", o]); return { restored: "/out/kick-old.wav", remainingUndos: 1 }; },
   listen: async (p, q) => { calls.push(["listen", p, q]); return { text: "a dry, clicky kick with a short sub tail; dark and driving" }; },
   judge: async (p, intent) => { calls.push(["judge", p, intent]); return { text: "tight and clicky but the sub tail is too short", match: 6 }; },
   transcribe: async (p, o) => { calls.push(["transcribe", p, o]); return { notes: Array.from({ length: 12 }, (_, i) => ({ pitch: 60 + (i % 5), startBeats: i * 0.5, durationBeats: 0.5, velocity: 90 })), bars: 2, bpm: 118, tracks: [{ name: "piano", noteCount: 12 }], summary: "12 notes, piano", midiPath: "/tmp/t.mid", ms: 1234 }; },
   live: {
     setTempo: async (bpm) => { calls.push(["setTempo", bpm]); return { tempo: bpm }; },
-    listTracks: async () => [{ index: 0, name: "Kick", is_midi: true, selected: true }],
+    listTracks: async () => [{ index: 0, name: "Kick", is_midi: true, selected: true, soundPath: "/out/kick.wav" }, { index: 1, name: "Hats", is_midi: true, selected: false }],
     buildLane: async (i) => { calls.push(["buildLane", i]); return { track: { index: 1, name: i.name }, notes: i.steps.length, loadedSample: true }; },
     buildMelody: async (i) => { calls.push(["buildMelody", i]); return { track: { index: 2, name: i.name }, notes: i.notes.length, loadedSample: true }; },
     updateLayer: async (i) => { calls.push(["updateLayer", i]); return { track: { index: 1, name: i.name }, notes: (i.steps || i.notes).length }; },
@@ -69,7 +71,7 @@ const ctx = {
 };
 
 const tools = makeTools(ctx, { beat: "/tmp/fake.wav", refs: [{ name: "loop.wav", path: "/tmp/ref1.wav" }, { name: "kick.wav", path: "/tmp/ref2.wav" }] });
-const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "transcribe_audio", "judge_sound", "slice_sample", "chop_sample", "load_device", "add_effect", "set_param", "list_devices", "set_mixer", "create_scene", "fire_scene", "record_arrangement", "analyze_audio", "compare_audio", "render_preview", "set_track_color", "capture_midi", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "separate_stems", "analyze_music", "process_audio", "master_preview", "generate_loop", "restyle_mix", "production_dna", "critique_mix", "label_pieces", "show_live", "play", "stop"];
+const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "transcribe_audio", "judge_sound", "slice_sample", "chop_sample", "load_device", "add_effect", "set_param", "list_devices", "set_mixer", "create_scene", "fire_scene", "record_arrangement", "analyze_audio", "compare_audio", "render_preview", "set_track_color", "capture_midi", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "separate_stems", "analyze_music", "process_audio", "master_preview", "generate_loop", "restyle_mix", "production_dna", "critique_mix", "label_pieces", "refine_sound", "undo_sound", "show_live", "play", "stop"];
 assert.deepEqual(tools.map((t) => t.name), expected, "tool names");
 for (const t of tools) {
   assert.ok(t.description && t.description.length > 20, `${t.name} description`);
@@ -123,6 +125,8 @@ const sample = {
   production_dna: { which: "ref#1" },
   critique_mix: { reference: "ref#1" },
   label_pieces: { paths: ["/out/p0.wav", "/out/p1.wav"] },
+  refine_sound: { which: "Kick", intent: "punchier, shorter sub tail" },
+  undo_sound: { track: "Kick" },
   show_live: {}, play: {}, stop: {},
 };
 for (const t of tools) {
@@ -441,6 +445,26 @@ for (const k of ["TOOL ROLES", "SAMPLING WORKFLOW", "separate_stems", "analyze_m
 for (const k of ["TrackType", "in this ORDER", "tags first", "production character", "performance details last", "Always include the BPM", "never instruct", "init noise level", "re-roll ONCE", "14-inch hi-hats", "Genre: Deep House", "non-lexical"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt grammar has ${k}`);
 assert.ok(PRODUCER_SYSTEM.indexOf("tags first") < PRODUCER_SYSTEM.indexOf("genre / style reference") && PRODUCER_SYSTEM.indexOf("genre / style reference") < PRODUCER_SYSTEM.indexOf("production character (recording"), "ordering rule in order");
 assert.match(T("synthesize_sound").description, /TrackType: SFX/); assert.match(T("generate_loop").description, /TrackType: Instrument/); assert.match(T("restyle_mix").description, /TrackType: Music/);
+
+// v8: refine_sound / undo_sound / creator in control
+const rf = JSON.parse(await T("refine_sound").run(T("refine_sound").parse(sample.refine_sound)));
+assert.equal(rf.track, "Kick"); assert.equal(rf.best.samplePath, "/out/kick-r2.wav"); assert.equal(rf.best.match, 8); assert.equal(rf.history.length, 2); assert.equal(rf.appliedToTrack, true);
+let rfc = calls.filter((c) => c[0] === "refineSound").at(-1)[1];
+assert.equal(rfc.path, "/out/kick.wav", "track form resolves soundPath"); assert.equal(rfc.track, "Kick"); assert.equal(rfc.rounds, 2);
+const rfp = JSON.parse(await T("refine_sound").run(T("refine_sound").parse({ which: "/out/x.wav", intent: "brighter", rounds: 1, role: "snare" })));
+rfc = calls.filter((c) => c[0] === "refineSound").at(-1)[1];
+assert.equal(rfc.path, "/out/x.wav"); assert.equal(rfc.track, undefined, "path form applies to no track"); assert.equal(rfp.appliedToTrack, false); assert.equal(rfc.rounds, 1); assert.equal(rfc.role, "snare");
+await T("refine_sound").run(T("refine_sound").parse({ which: "Kick", intent: "x punch", applyToTrack: false }));
+assert.equal(calls.filter((c) => c[0] === "refineSound").at(-1)[1].track, undefined, "applyToTrack:false");
+assert.throws(() => T("refine_sound").parse({ which: "Kick", intent: "x punch", rounds: 4 }), "rounds 4 rejected");
+const rfh = JSON.parse(await T("refine_sound").run({ which: "Hats", intent: "crisper" })); assert.equal(rfh.ok, false); assert.match(rfh.error, /no sound loaded/);
+const rfn = JSON.parse(await T("refine_sound").run({ which: "Nope", intent: "crisper" })); assert.equal(rfn.ok, false); assert.match(rfn.error, /no track named 'Nope'; tracks: Kick, Hats/);
+ctx.refineSound = async () => { throw new Error("GEMINI_API_KEY not set"); };
+assert.equal(JSON.parse(await T("refine_sound").run(sample.refine_sound)).ok, false);
+const un = JSON.parse(await T("undo_sound").run(sample.undo_sound)); assert.equal(un.restored, "/out/kick-old.wav"); assert.equal(un.remainingUndos, 1);
+ctx.undoSound = async () => { throw new Error("nothing to undo on Kick"); };
+assert.equal(JSON.parse(await T("undo_sound").run(sample.undo_sound)).ok, false);
+for (const k of ["CREATOR IN CONTROL", "two alternatives", "undo", "refine_sound", "Never delete or replace", "change only that", "undo the kick"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
 
 // persistent attachments: note lists all, marks new vs earlier
 const fc = { beta: { messages: { toolRunner(params) { return { params, pushMessages() {}, async *[Symbol.asyncIterator]() { yield { role: "assistant", stop_reason: "end_turn", content: [] }; } }; } } } };
