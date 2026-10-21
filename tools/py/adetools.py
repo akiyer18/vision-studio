@@ -236,9 +236,15 @@ def cmd_master(a):
     gain = (a.lufs - lufs_mid) if np.isfinite(lufs_mid) else 0.0
     gain = float(max(-24.0, min(24.0, gain)))
     y = pb.Pedalboard([pb.Gain(gain_db=gain), pb.Limiter(threshold_db=-1.0, release_ms=80)])(y, sr)
+    # pedalboard's Limiter (JUCE) normalizes towards its ceiling, i.e. it adds gain; trim back to the target
     lufs_out = integrated_lufs(y, sr)
+    trim = 0.0
+    if np.isfinite(lufs_out) and lufs_out > a.lufs + 0.3:
+        trim = float(max(-24.0, a.lufs - lufs_out))
+        y = pb.Pedalboard([pb.Gain(gain_db=trim)])(y, sr)
+        lufs_out = integrated_lufs(y, sr)
     write_audio(a.out, y, sr)
-    out({"ok": True, "out": a.out, "targetLufs": a.lufs, "lufsIn": None if not np.isfinite(lufs_in) else round(lufs_in, 2), "lufs": None if not np.isfinite(lufs_out) else round(lufs_out, 2), "gainDb": round(gain, 2), "peakDbfs": peak_dbfs(y), "sampleRate": sr})
+    out({"ok": True, "out": a.out, "targetLufs": a.lufs, "lufsIn": None if not np.isfinite(lufs_in) else round(lufs_in, 2), "lufs": None if not np.isfinite(lufs_out) else round(lufs_out, 2), "gainDb": round(gain + trim, 2), "peakDbfs": peak_dbfs(y), "sampleRate": sr})
 
 def cmd_versions(a):
     import importlib

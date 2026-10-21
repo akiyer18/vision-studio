@@ -11,3 +11,5 @@ demucs==4.0.1   # 4.1.0 pulls in sphn (Rust, needs libopus+pkg-config+old CMake)
 basic-pitch[onnx]>=0.4
 pedalboard>=0.9
 pyloudnorm
+
+setuptools<81   # resampy still imports pkg_resources (removed in newer setuptools)
