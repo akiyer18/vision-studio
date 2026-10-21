@@ -7,14 +7,15 @@ alwaysApply: true
 
 Vision Studio is a producer's translator. Describe what you hear, in words, with your voice, or with an instrument, and it makes the sound, explains how it got there, and teaches you to make it yourself in Logic.
 
-Three rooms: Create makes something new, Analyse improves a track, and Tweak reshapes a sample. For the hackathon, Create is live, Analyse is live if time allows, and Tweak stays marked Soon. Spec section 11 is the full set of rules.
+Four rooms. Create makes something new. Genre deep dive studies a curated genre and can open Create with those traits. Analyse improves a track, and Tweak reshapes a sample. For the hackathon, Create and Genre deep dive are live. Analyse and Tweak stay marked Soon. There is no level setting. Spec section 11 is the full set of rules.
 
 Create today:
 
-- An agent fills a song brief. If it lacks information, ask one question at a time.
+- An agent fills a song brief. If it lacks information, ask one question at a time, using the slot question text, up to 5.
+- The composer chooses "A full idea" or "One sound". One sound asks only sound type, genre, duration, mood, and brightness, and returns one layer with three variations.
 - Every question offers: an answer, You decide, Skip this, Skip all and build.
 - Skip all and build always produces a prompt, however little input is given. The render action is Build.
-- Output options: drums, chords, bass, melody, texture, all layers separately, full mix.
+- Output options for a full idea: drums, chords, bass, melody, texture, all layers separately, full mix.
 - Never ask tempo. Derive it from mood and energy, or detect it from audio.
 - Each layer returns 3 variations.
-- Every result explains how it was made, and how to make it in Logic. A level of Beginner, Producer, or Pro changes question count and wording, explanation depth, and which controls are visible.
+- Every result explains how it was made, and how to make it in Logic. MIDI is not shown on its own. Export to Logic lists the MIDI files with the audio.

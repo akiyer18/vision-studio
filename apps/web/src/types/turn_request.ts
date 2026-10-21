@@ -26,5 +26,28 @@ export interface TurnRequest {
     structure?: string;
     must_keep?: string;
     tempo?: string;
+    sound?: string;
+    genre?: string;
+    brightness?: string;
+    pattern?: string;
+    production?: string;
+  };
+  mode?: "full" | "one_sound";
+  reference?: {
+    output?: string;
+    mood?: string;
+    energy?: string;
+    world?: string;
+    key?: string;
+    style?: string;
+    palette?: string;
+    structure?: string;
+    must_keep?: string;
+    tempo?: string;
+    sound?: string;
+    genre?: string;
+    brightness?: string;
+    pattern?: string;
+    production?: string;
   };
 }

@@ -1,7 +1,7 @@
 import { motion, useReducedMotion } from "framer-motion"
 import { memo, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react"
 
-import { fileName, fileUrl } from "../../api/client.ts"
+import { explainResult, fileName, fileUrl, type Explanation } from "../../api/client.ts"
 import { missingLayers } from "../../recentIdeas.ts"
 import { features } from "../../features.ts"
 import { transport } from "../../playback/transport.ts"
@@ -25,7 +25,7 @@ export function LayersView() {
   const reduce = useReducedMotion()
   const results = useRef<HTMLDivElement>(null)
   const seen = useRef(0)
-  const allowed = features.fullMix ? LANES : LANES.filter((layer) => layer !== "full_mix")
+  const allowed = [...(features.fullMix ? LANES : LANES.filter((layer) => layer !== "full_mix")), "sound"]
   const ordered = layerOrder.filter((layer) => (allowed as readonly string[]).includes(layer))
   const lanes = ordered.length > 0 ? ordered : allowed.filter((layer) => renders.some((item) => item.layer === layer))
 
@@ -56,6 +56,7 @@ export function LayersView() {
       {lanes.map((layer) => (
         <LayerCard key={layer} layer={layer} reduce={reduce === true} />
       ))}
+      <ExplainPanel />
     </div>
   )
 }
@@ -187,6 +188,54 @@ const LayerCard = memo(function LayerCard({ layer, reduce }: { layer: string; re
     </motion.section>
   )
 })
+
+function ExplainPanel() {
+  const brief = useStudio((state) => state.turn?.brief ?? null)
+  const prompts = useStudio((state) => (state.turn?.status === "ready" ? state.turn.prompts : undefined))
+  const trace = useStudio((state) => state.turn?.trace)
+  const stamp = prompts?.map((item) => item.prompt).join("\n") ?? ""
+  const [explanation, setExplanation] = useState<{ stamp: string; value: Explanation } | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+  const current = explanation?.stamp === stamp ? explanation.value : null
+
+  useEffect(() => {
+    if (!brief || !prompts || prompts.length === 0) return
+    let cancel = false
+    explainResult({ brief, prompts, trace: trace ?? [] }).then(
+      (result) => {
+        if (!cancel) setExplanation({ stamp, value: result })
+      },
+      () => {
+        if (!cancel) setProblem("The explanation did not load.")
+      },
+    )
+    return () => {
+      cancel = true
+    }
+  }, [brief, prompts, stamp, trace])
+
+  if (!prompts || prompts.length === 0) return null
+  return (
+    <div className="flex flex-col gap-2">
+      <details className="rounded-2xl border border-white/10 px-4 py-3">
+        <summary className="cursor-pointer text-ink">How this was made</summary>
+        <p className="mt-3 text-secondary">{current?.how ?? problem ?? "Writing the explanation."}</p>
+      </details>
+      <details className="rounded-2xl border border-white/10 px-4 py-3">
+        <summary className="cursor-pointer text-ink">Make it in Logic</summary>
+        {current ? (
+          <ol className="mt-3 list-decimal pl-5 text-secondary">
+            {current.steps.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+        ) : (
+          <p className="mt-3 text-secondary">{problem ?? "Writing the explanation."}</p>
+        )}
+      </details>
+    </div>
+  )
+}
 
 async function unavailablePaths(sessionId: string, renders: RenderResult[]): Promise<Set<string>> {
   const paths = [...new Set(renders.map((item) => item.path))]

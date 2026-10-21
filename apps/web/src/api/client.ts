@@ -1,6 +1,9 @@
 import type { AudioFeatures } from "../types/audio_features.ts"
 import type { InputType } from "../types/input_type.ts"
 import type { RenderResult } from "../types/render_result.ts"
+import type { LayerPrompt } from "../types/layer_prompt.ts"
+import type { SongBrief } from "../types/song_brief.ts"
+import type { TraceStep } from "../types/trace_step.ts"
 import type { TurnRequest } from "../types/turn_request.ts"
 import type { TurnResponse } from "../types/turn_response.ts"
 
@@ -70,6 +73,40 @@ export function upload(input: { session_id: string; input_type: InputType; file:
   body.set("input_type", input.input_type)
   body.set("file", input.file)
   return request<AudioFeatures>("/upload", { method: "POST", body })
+}
+
+export type GenreSummary = { id: string; title: string }
+
+export type GenreDetail = {
+  id: string
+  title: string
+  tempo_range: string
+  bpm: number
+  keys: string[]
+  instruments: string[]
+  drum_pattern: string
+  production: string
+  references: { artist: string; tracks: string[] }[]
+  history: string
+  prefill: NonNullable<TurnRequest["reference"]>
+}
+
+export type Explanation = { how: string; steps: string[]; source: string }
+
+export function listGenres(): Promise<GenreSummary[]> {
+  return request<GenreSummary[]>("/genres")
+}
+
+export function genreDetail(id: string): Promise<GenreDetail> {
+  return request<GenreDetail>(`/genres/${encodeURIComponent(id)}`)
+}
+
+export function explainResult(body: { brief: SongBrief; prompts: LayerPrompt[]; trace: TraceStep[] }): Promise<Explanation> {
+  return request<Explanation>("/explain", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
 }
 
 export function turn(body: TurnRequest): Promise<TurnResponse> {

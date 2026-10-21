@@ -24,6 +24,11 @@ class Slots(BaseModel):
     structure: SlotValue | None = None
     must_keep: SlotValue | None = None
     tempo: SlotValue | None = None
+    sound: SlotValue | None = None
+    genre: SlotValue | None = None
+    brightness: SlotValue | None = None
+    pattern: SlotValue | None = None
+    production: SlotValue | None = None
 
 
 class SongBrief(BaseModel):
@@ -33,4 +38,4 @@ class SongBrief(BaseModel):
     slots: Slots
     output: list[Literal["drums", "chords", "bass", "melody", "texture", "all_layers", "full_mix"]]
     questions_asked: int
-    skipped: list[Literal["output", "mood", "energy", "world", "key", "style", "palette", "structure", "must_keep", "tempo"]]
+    skipped: list[Literal["output", "mood", "energy", "world", "key", "style", "palette", "structure", "must_keep", "tempo", "sound", "genre", "brightness", "pattern", "production"]]

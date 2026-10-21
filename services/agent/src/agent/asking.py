@@ -18,6 +18,21 @@ class AskContext:
     questions_asked: int
 
 
+ONE_SOUND = ("sound", "genre", "structure", "mood", "brightness")
+
+
+def next_one_sound(filled: frozenset[str], questions_asked: int) -> SlotSpec | None:
+    """One sound asks only its five slots, in section 11 order, still at most 5."""
+    if questions_asked >= MAX_QUESTIONS:
+        return None
+    specs = {spec.slot: spec for spec in slot_specs()}
+    for name in ONE_SOUND:
+        if name in filled:
+            continue
+        return specs[name]
+    return None
+
+
 def next_question(context: AskContext) -> SlotSpec | None:
     if context.questions_asked >= MAX_QUESTIONS:
         return None

@@ -12,10 +12,13 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from agent.bedrock import explain_payload, history_payload
+from agent.explain import explain_result
+from agent.genres import load_genres, present_history, reference_values
 from agent.prompts import seeds_for
 from agent.theory import bass_midi, chords_midi
 from agent.turn import run_turn
-from contracts import AudioFeatures, LayerPrompt, RenderJob, RenderResult, TurnRequest, TurnResponse
+from contracts import AudioFeatures, LayerPrompt, RenderJob, RenderResult, SongBrief, TraceStep, TurnRequest, TurnResponse
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
@@ -66,6 +69,18 @@ class ExportBody(BaseModel):
 
 class ExportResponse(BaseModel):
     files: list[str]
+
+
+class ExplainBody(BaseModel):
+    brief: SongBrief
+    prompts: list[LayerPrompt]
+    trace: list[TraceStep]
+
+
+class ExplainResponse(BaseModel):
+    how: str
+    steps: list[str]
+    source: str
 
 
 @dataclass
@@ -214,6 +229,37 @@ def create_app(data_root: Path | None = None) -> FastAPI:
                 shutil.copy2(source, dest)
                 copied.append(str(dest))
         return ExportResponse(files=copied)
+
+    @app.get("/genres")
+    def genres() -> list[dict[str, str]]:
+        return [{"id": genre.id, "title": genre.title} for genre in load_genres()]
+
+    @app.get("/genres/{genre_id}")
+    def genre(genre_id: str) -> dict[str, object]:
+        try:
+            found = next(item for item in load_genres() if item.id == genre_id)
+        except StopIteration as error:
+            raise HTTPException(404, "That genre is not in the files") from error
+        complete = history_payload if os.environ.get("PROVIDER") == "bedrock" else None
+        return {
+            "id": found.id,
+            "title": found.title,
+            "tempo_range": found.tempo_range,
+            "bpm": found.bpm,
+            "keys": list(found.keys),
+            "instruments": list(found.instruments),
+            "drum_pattern": found.drum_pattern,
+            "production": found.production,
+            "references": [{"artist": item.artist, "tracks": list(item.tracks)} for item in found.references],
+            "history": present_history(found, complete),
+            "prefill": reference_values(found),
+        }
+
+    @app.post("/explain", response_model=ExplainResponse)
+    def explain(body: ExplainBody) -> ExplainResponse:
+        complete = explain_payload if os.environ.get("PROVIDER") == "bedrock" else None
+        result = explain_result(body.brief, body.prompts, body.trace, complete)
+        return ExplainResponse(how=result.how, steps=list(result.steps), source=result.source)
 
     @app.get("/files/{session_id}/{file_path:path}")
     def files(session_id: str, file_path: str, request: Request) -> FileResponse:

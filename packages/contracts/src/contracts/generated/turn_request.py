@@ -14,7 +14,7 @@ class Answer(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    slot: Literal["output", "mood", "energy", "world", "key", "style", "palette", "structure", "must_keep", "tempo"] = (
+    slot: Literal["output", "mood", "energy", "world", "key", "style", "palette", "structure", "must_keep", "tempo", "sound", "genre", "brightness", "pattern", "production"] = (
         Field(..., title="SlotName")
     )
     action: Literal["answer", "you_decide", "skip", "skip_all"] = Field(
@@ -37,6 +37,15 @@ class Overrides(BaseModel):
     structure: str | None = None
     must_keep: str | None = None
     tempo: str | None = None
+    sound: str | None = None
+    genre: str | None = None
+    brightness: str | None = None
+    pattern: str | None = None
+    production: str | None = None
+
+
+class Reference(Overrides):
+    pass
 
 
 class TurnRequest(BaseModel):
@@ -51,3 +60,5 @@ class TurnRequest(BaseModel):
         None
     )
     overrides: Overrides | None = None
+    mode: Literal["full", "one_sound"] | None = None
+    reference: Reference | None = None

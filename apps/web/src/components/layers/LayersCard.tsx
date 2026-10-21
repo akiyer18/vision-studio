@@ -20,6 +20,7 @@ const chipHue: Partial<Record<OutputChoice, string>> = {
 }
 
 export function LayersCard() {
+  const mode = useStudio((state) => state.mode)
   const prompts = useStudio((state) => (state.turn?.status === "ready" ? state.turn.prompts : undefined))
   const output = useStudio((state) => state.turn?.brief.output)
   const edits = useStudio((state) => state.promptEdits)
@@ -60,6 +61,9 @@ export function LayersCard() {
   return (
     <section className="glass panel-layers flex flex-col gap-4 px-2 py-4" aria-label="Layers">
       <h2 className="section-title">Layers</h2>
+      {mode === "one_sound" ? (
+        <p className="text-sm text-secondary">One sound, three variations.</p>
+      ) : (
       <div className="flex flex-col gap-2" role="group" aria-label="Output">
         {rows.map((row) => (
           <div key={row[0]?.choice ?? "rest"} className="flex flex-nowrap gap-2">
@@ -75,6 +79,7 @@ export function LayersCard() {
           </div>
         ))}
       </div>
+      )}
       {cards.length > 0 ? (
         <details className="text-sm text-secondary">
           <summary className="cursor-pointer text-ink">Edit the prompts</summary>
@@ -119,7 +124,7 @@ export function LayersCard() {
           </div>
         </details>
       ) : (
-        <p className="text-sm text-secondary">Pick layers, then build.</p>
+        <p className="text-sm text-secondary">{mode === "one_sound" ? "Build when the prompt is ready." : "Pick layers, then build."}</p>
       )}
       {problem ? (
         <div role="alert">

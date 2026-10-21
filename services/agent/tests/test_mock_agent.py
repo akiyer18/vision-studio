@@ -25,6 +25,11 @@ def test_slots_match_the_spec_table() -> None:
         "structure",
         "must_keep",
         "tempo",
+        "sound",
+        "genre",
+        "brightness",
+        "pattern",
+        "production",
     ]
     assert specs["tempo"].impact == 0
     assert specs["output"].impact == 1.0

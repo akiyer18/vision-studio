@@ -16,6 +16,11 @@ export interface SongBrief {
     structure?: SlotValue;
     must_keep?: SlotValue;
     tempo?: SlotValue;
+    sound?: SlotValue;
+    genre?: SlotValue;
+    brightness?: SlotValue;
+    pattern?: SlotValue;
+    production?: SlotValue;
   };
   output: OutputChoice[];
   questions_asked: number;

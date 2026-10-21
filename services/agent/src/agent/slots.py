@@ -55,8 +55,8 @@ def slot_specs() -> tuple[SlotSpec, ...]:
         else:
             current[key] = value
         specs[-1] = _spec_from(current)
-    if len(specs) != 10:
-        raise ValueError(f"expected 10 slots, found {len(specs)}")
+    if len(specs) != 15:
+        raise ValueError(f"expected 15 slots, found {len(specs)}")
     return tuple(specs)
 
 

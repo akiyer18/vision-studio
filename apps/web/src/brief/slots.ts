@@ -11,6 +11,11 @@ export const SLOT_ORDER: SlotName[] = [
   "palette",
   "structure",
   "must_keep",
+  "sound",
+  "genre",
+  "brightness",
+  "pattern",
+  "production",
 ]
 
 export const SLOT_LABEL: Record<SlotName, string> = {
@@ -24,4 +29,9 @@ export const SLOT_LABEL: Record<SlotName, string> = {
   palette: "Palette",
   structure: "Structure",
   must_keep: "Must keep",
+  sound: "Sound",
+  genre: "Genre",
+  brightness: "Brightness",
+  pattern: "Pattern",
+  production: "Production",
 }

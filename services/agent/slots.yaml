@@ -74,3 +74,43 @@ tempo:
   ask_when: never
   question: never asked
   options: []
+sound:
+  impact: 0
+  ask_when: one sound mode only
+  question: What kind of sound is it?
+  options:
+    - snare
+    - 808
+    - pad
+    - riser
+genre:
+  impact: 0
+  ask_when: one sound mode only
+  question: What genre should it sit in?
+  options:
+    - lofi hip hop
+    - house
+    - techno
+    - drum and bass
+    - ambient
+    - trap
+    - synthwave
+    - neo soul
+brightness:
+  impact: 0
+  ask_when: one sound mode only
+  question: How bright should it be?
+  options:
+    - dark
+    - balanced
+    - bright
+pattern:
+  impact: 0
+  ask_when: never
+  question: never asked
+  options: []
+production:
+  impact: 0
+  ask_when: never
+  question: never asked
+  options: []

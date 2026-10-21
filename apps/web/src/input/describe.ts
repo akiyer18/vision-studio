@@ -64,7 +64,7 @@ export function fileExtension(file: File): string {
 }
 
 export function fileProblem(file: File): string | null {
-  if (fileKind(file) === "other") return "Use a wav, mp3, m4a, webm, or MIDI file."
+  if (fileKind(file) !== "audio") return "Use a wav, mp3, m4a, or webm file."
   if (file.size > LIMIT) return "That file is over 50 MB. Use a shorter recording."
   return null
 }

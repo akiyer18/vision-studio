@@ -17,10 +17,10 @@ from contracts import (
     TurnResponse,
 )
 
-from agent.asking import AskContext, almost_empty, next_question
+from agent.asking import AskContext, almost_empty, next_one_sound, next_question
 from agent.defaults import PRESETS, default_slot, derive_bpm, parse_bpm, preset_for, skipped
 from agent.extract import extract_audio, extract_text
-from agent.prompts import compile_prompts
+from agent.prompts import compile_one_sound, compile_prompts
 from agent.slots import ABOUT_QUESTION, MAX_QUESTIONS, slot_specs
 from agent.theory import chords_for
 
@@ -68,6 +68,7 @@ class Session:
     pending: Pending | None = None
     about_asked: bool = False
     force_ready: bool = False
+    mode: str = "full"
     trace: list[TraceStep] = field(default_factory=list)
 
     def note(self, step: str, detail: str) -> None:
@@ -121,6 +122,10 @@ def _select_provider():
 
 def run_session(sessions: dict[str, Session], request: TurnRequest, hooks: TurnHooks) -> TurnResponse:
     session = sessions.setdefault(request.session_id, Session(request.session_id))
+    if request.mode:
+        session.mode = request.mode
+    if request.reference is not None:
+        _apply_reference(session, request.reference)
     if request.audio_features is not None:
         _apply_audio(session, request.audio_features)
     if request.output:
@@ -136,11 +141,15 @@ def run_session(sessions: dict[str, Session], request: TurnRequest, hooks: TurnH
         return _question_response(session, session.pending, waiting=True)
     if session.force_ready:
         return _ready(session, hooks)
-    if _should_ask_about(session):
+    if session.mode != "one_sound" and _should_ask_about(session):
         session.about_asked = True
         pending = Pending("about", "mood", ABOUT_QUESTION, ())
         return _ask(session, pending)
-    spec = next_question(_context(session))
+    spec = (
+        next_one_sound(frozenset(session.slots), session.questions_asked)
+        if session.mode == "one_sound"
+        else next_question(_context(session))
+    )
     if spec is not None and session.questions_asked < MAX_QUESTIONS:
         pending = Pending("slot", spec.slot, spec.question, spec.options)
         return _ask(session, pending)
@@ -206,6 +215,23 @@ def _apply_audio(session: Session, features: AudioFeatures) -> None:
         session.note("detect", f"bpm: {features.bpm}")
     if features.chords:
         session.note("detect", "chords: " + ", ".join(features.chords))
+
+
+def _apply_reference(session: Session, reference: object) -> None:
+    data = reference.model_dump(exclude_none=True) if hasattr(reference, "model_dump") else dict(reference)
+    for name, value in data.items():
+        current = session.slots.get(name)
+        if current is not None and current.source == "you":
+            continue
+        _store(
+            session,
+            name,
+            SlotValue(value=str(value), source="reference", reason="From the genre file", confidence=1.0),
+        )
+        session.locked.add(name)
+        if name == "key":
+            session.gave_key = True
+        session.note("reference", f"{name}: {value}")
 
 
 def _apply_overrides(session: Session, overrides: object) -> None:
@@ -286,7 +312,11 @@ def _set_key_mode(session: Session, mode: str) -> None:
 
 def _fill_gaps(session: Session, *, skipped_fill: bool) -> None:
     for spec in slot_specs():
-        if spec.slot == "tempo" or spec.slot in session.slots:
+        if spec.slot in session.slots or spec.slot in {"tempo", "pattern", "production"}:
+            continue
+        if spec.impact == 0 and not (session.mode == "one_sound" and spec.slot in {"sound", "genre", "brightness"}):
+            continue
+        if session.mode == "one_sound" and spec.slot == "output":
             continue
         _use_default(session, spec.slot, mark_skipped=skipped_fill)
 
@@ -372,6 +402,12 @@ def _tempo(session: Session, energy: str, mood: str) -> tuple[int, str]:
 
 
 def _ready(session: Session, hooks: TurnHooks) -> TurnResponse:
+    if session.mode == "one_sound" and "output" not in session.slots:
+        _store(
+            session,
+            "output",
+            SlotValue(value="one sound", source="you", reason="One sound mode", confidence=1.0),
+        )
     _fill_gaps(session, skipped_fill=False)
     mood = session.mood_name()
     energy = session.slots["energy"].value
@@ -382,7 +418,18 @@ def _ready(session: Session, hooks: TurnHooks) -> TurnResponse:
     romans = list(PRESETS.get(mood, PRESETS["peaceful"]).roman)
     chords = chords_for(key, romans)
     session.note("theory", f"{' '.join(romans)} in {key} is {', '.join(chords)}")
-    prompts = compile_prompts(session.output, mood=mood, energy=energy, world=world, key=key, bpm=bpm)
+    if session.mode == "one_sound":
+        prompts = compile_one_sound(
+            sound=session.slots["sound"].value,
+            genre=session.slots["genre"].value,
+            brightness=session.slots["brightness"].value,
+            mood=mood,
+            energy=energy,
+            key=key,
+            bpm=bpm,
+        )
+    else:
+        prompts = compile_prompts(session.output, mood=mood, energy=energy, world=world, key=key, bpm=bpm)
     prompts = hooks.polish(session, prompts)
     session.note("prompt", f"Wrote {len(prompts)} prompt" if len(prompts) == 1 else f"Wrote {len(prompts)} prompts")
     session.pending = None

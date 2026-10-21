@@ -3,11 +3,14 @@ import { create } from "zustand"
 import type { RecentIdea, RecentMessage } from "../recentIdeas.ts"
 import type { RenderResult } from "../types/render_result.ts"
 import type { SlotName } from "../types/slot_name.ts"
+import type { SongBrief } from "../types/song_brief.ts"
 import type { TurnRequest } from "../types/turn_request.ts"
 import type { TurnResponse } from "../types/turn_response.ts"
 
 export type UiStatus = "idle" | "working" | "ready" | "error"
 export type SlotOverrides = NonNullable<TurnRequest["overrides"]>
+export type IdeaMode = NonNullable<TurnRequest["mode"]>
+export type SlotReference = NonNullable<TurnRequest["reference"]>
 export type PromptEdit = { prompt?: string; negative?: string }
 export type RenderAction = "render" | "regenerate"
 export type LayerRun = { take: number; variant: number; total: number }
@@ -37,6 +40,8 @@ type StudioState = {
   restored: boolean
   missing: string[]
   thread: RecentMessage[]
+  mode: IdeaMode
+  reference: SlotReference
   setTurn: (turn: TurnResponse | null) => void
   commitTurn: (turn: TurnResponse, clearOverrides?: boolean) => void
   queueOverride: (slot: SlotName, value: string) => void
@@ -60,6 +65,8 @@ type StudioState = {
   resetSession: () => void
   restoreSession: (entry: RecentIdea) => void
   setMissing: (layers: string[]) => void
+  setMode: (mode: IdeaMode) => void
+  showReference: (prefill: SlotReference, line: string) => void
 }
 
 export const useStudio = create<StudioState>((set) => ({
@@ -85,6 +92,8 @@ export const useStudio = create<StudioState>((set) => ({
   restored: false,
   missing: [],
   thread: [],
+  mode: "full",
+  reference: {},
   setTurn: (turn) => set({ turn }),
   commitTurn: (turn, clearOverrides = false) =>
     set((state) => ({
@@ -104,6 +113,7 @@ export const useStudio = create<StudioState>((set) => ({
       heard: false,
       restored: false,
       missing: [],
+      reference: {},
     })),
   queueOverride: (slot, value) => set((state) => ({ overrides: { ...state.overrides, [slot]: value } })),
   editPrompt: (layer, field, value) =>
@@ -204,6 +214,7 @@ export const useStudio = create<StudioState>((set) => ({
       restored: false,
       missing: [],
       thread: [],
+      reference: {},
     })),
   restoreSession: (entry) =>
     set((state) => ({
@@ -235,13 +246,38 @@ export const useStudio = create<StudioState>((set) => ({
       restored: true,
       missing: [],
       thread: entry.thread,
+      mode: entry.mode ?? "full",
+      reference: {},
     })),
+  setMode: (mode) => set({ mode }),
+  showReference: (prefill, line) =>
+    set({
+      mode: "full",
+      reference: prefill,
+      thread: [{ id: 1, text: line }],
+      status: "idle",
+      turn: {
+        status: "ready",
+        brief: referenceBrief(prefill),
+        prompts: [],
+        trace: [{ step: "reference", detail: line }],
+      },
+    }),
   setMissing: (layers) =>
     set((state) => {
       if (state.missing.length === layers.length && state.missing.every((layer, index) => layer === layers[index])) return state
       return { missing: layers }
     }),
 }))
+
+function referenceBrief(prefill: SlotReference): SongBrief {
+  const slots: SongBrief["slots"] = {}
+  for (const [name, value] of Object.entries(prefill)) {
+    if (!value) continue
+    slots[name as SlotName] = { value, source: "reference", reason: "From the genre file", confidence: 1 }
+  }
+  return { slots, output: [], questions_asked: 0, skipped: [] }
+}
 
 function layerOrder(renders: { layer: string }[]): string[] {
   const order: string[] = []

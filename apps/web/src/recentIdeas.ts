@@ -29,6 +29,7 @@ export type RecentIdea = {
   trace: TraceStep[]
   question?: Question
   status: "question" | "ready"
+  mode?: "full" | "one_sound"
 }
 
 export type RecentDraft = {
@@ -44,6 +45,7 @@ export type RecentDraft = {
   trace: TraceStep[]
   question?: Question
   status: "question" | "ready"
+  mode?: "full" | "one_sound"
 }
 
 export type IdeaStore = {
@@ -118,6 +120,7 @@ export function saveRecentTo(storage: IdeaStore, draft: RecentDraft, now = new D
     trace: draft.trace,
     question: draft.question,
     status: draft.status,
+    mode: draft.mode ?? existing?.mode ?? "full",
   }
   const next = [entry, ...current.filter((item) => item.id !== entry.id)].slice(0, LIMIT)
   storage.setItem(KEY, JSON.stringify(next))

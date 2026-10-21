@@ -9,6 +9,7 @@ Vision Studio is a helper, not the author. The agent only works from what the pr
 
 ```
 SlotSource      = "you" | "detected" | "guessed" | "reference"
+SlotName        = "output" | "mood" | "energy" | "world" | "key" | "style" | "palette" | "structure" | "must_keep" | "tempo" | "sound" | "genre" | "brightness" | "pattern" | "production"
 OutputChoice    = "drums" | "chords" | "bass" | "melody" | "texture" | "all_layers" | "full_mix"
 AnswerAction    = "answer" | "you_decide" | "skip" | "skip_all"
 InputType       = "text_only" | "hum" | "vocal" | "instrument_loop" | "drum_loop" | "full_track" | "midi"
@@ -25,7 +26,8 @@ Question        { slot: SlotName, text: string, options: string[], index: intege
 
 TurnRequest     { session_id: string, text?: string, audio_features?: AudioFeatures,
                   answer?: { slot: SlotName, action: AnswerAction, value?: string },
-                  output?: OutputChoice[], overrides?: Record<SlotName, string> }
+                  output?: OutputChoice[], overrides?: Record<SlotName, string>,
+                  mode?: "full" | "one_sound", reference?: Record<SlotName, string> }
 
 LayerPrompt     { layer: string, prompt: string, negative: string,
                   seeds: [number, number, number], kb_sources: string[] }
@@ -41,7 +43,9 @@ RenderResult    { layer, variant: integer, path, seconds, bpm: integer, detected
 
 Semantics:
 - An absent SongBrief slot means that slot is not yet known.
-- Source "detected" is for values read from uploaded audio, including a full track. Source "reference" is reserved for a song looked up by name later.
+- Source "detected" is for values read from uploaded audio, including a full track. Source "reference" is a value taken from a genre file. It stays available for a song looked up by name later.
+- mode is absent or "full" for a full idea. "one_sound" asks only the one-sound slots in section 11.
+- reference stores genre traits as source "reference" and locks them so a later guess cannot replace them.
 - "you_decide" fills the slot with the default, source "guessed", reason from the default rule.
 - "skip" does the same and prefixes the reason with "skipped: ".
 - "skip_all" fills every remaining slot with defaults and returns status "ready".
@@ -101,6 +105,7 @@ Order (from the Stable Audio 3 prompt guide): track type, genre, instruments and
 Single layer: TrackType: Instrument, {layer descriptor}{ in KEY for tonal layers}, {mood words}, {energy words}, {bpm} BPM
 Full mix:     TrackType: Music, {world mix descriptor} instrumental in {key}, {mood words}, {energy words}, {bpm} BPM
 Negative:     the other layers plus vocals (full mix: vocals only)
+One sound:    section 11. One layer, TrackType SFX or Instrument, not the table above.
 ```
 
 Mood words: longing "melancholic, late night, intimate"; joyful "bright, uplifting, euphoric";
@@ -195,7 +200,7 @@ An empty card has one sentence and one button. An error sits in the card it belo
 
 The first visit opens a glass tour after 800 ms. It says what Vision Studio is and that it takes about 60 seconds, then highlights the sidebar, the composer, the brief card, and the Build button. Next, Back, and close. Finishing or closing stores that it was seen. Help, in the sidebar, holds Replay tour and Shortcuts. The tour does not mention a feature that is switched off.
 
-Flags live in `apps/web/src/features.ts`: record, soloMute, fullMix, styleguideLink, demo, analyser, and edits. Analyser and edits are off, so Song analyser and Song edits show a Soon pill and are not clickable. Solo and mute are local when the flag is on. Mute drops that layer from playback and from the next full build. Solo keeps only that layer. The buttons use `aria-pressed`. Recent ideas are kept in localStorage, up to 20, newest first. The first turn of a session saves the title, date, brief, prompts, selected layers, and any render paths. Opening one restores that session on screen without another agent turn. If a render file is gone, that layer says Build again. Rename and delete sit on the row.
+Flags live in `apps/web/src/features.ts`: record, soloMute, fullMix, styleguideLink, demo, create, genre, analyser, edits, and soundcharts. Create and Genre deep dive are on. Analyser and edits are off, so Analyse and Tweak show a Soon pill and are not clickable. Soundcharts is off. Solo and mute are local when the flag is on. Mute drops that layer from playback and from the next full build. Solo keeps only that layer. The buttons use `aria-pressed`. Recent ideas are kept in localStorage, up to 20, newest first. The first turn of a session saves the title, date, brief, prompts, selected layers, and any render paths. Opening one restores that session on screen without another agent turn. If a render file is gone, that layer says Build again. Rename and delete sit on the row.
 
 Under 1200px the rail becomes a tabbed panel above the composer. Under 768px the sidebar is a drawer opened from a menu button, and the thread is full width.
 
@@ -261,50 +266,57 @@ Tests stub the Bedrock client. The live test is marked `bedrock` and runs only w
 
 Vision Studio is a producer's translator. The producer describes what they hear, in words, with their voice, or with an instrument. The product makes that sound, explains how it got there, and teaches them to make it themselves in Logic. Text and sound can arrive in the same turn. "Here's my beatbox, make it a dusty lo-fi kit" is the headline example.
 
-Three rooms, one verb each.
+There is no level setting. Questions use one wording: the section 2 text, the asking rule, and a maximum of 5. Nothing in the interface, the brief, or the agent changes with Beginner, Producer, or Pro.
 
-| Room | Verb | Bring | Get |
-| --- | --- | --- | --- |
-| Create | Make something new | Text, a sound (hum, beatbox, an instrument, a loop), or both | Layers or one specific sound, plus how it was made |
-| Analyse | Improve a track | A track or a bounce from the DAW | Feedback, alternatives, a comparison of what changed, and a genre guide |
-| Tweak | Reshape a sample | One sample | New variations of that sample, and similar samples to explore |
+Four rooms. The sidebar reads them from `features.ts`. A room whose flag is off shows a small Soon pill and is not clickable.
+
+| Room | Flag | Verb | Bring | Get |
+| --- | --- | --- | --- | --- |
+| Create | create, on | Make something new | Text, a sound, or both | Layers or one sound, plus how it was made |
+| Genre deep dive | genre, on | Study a genre | Nothing. The files are already there | History, traits, references, and a path into Create |
+| Analyse | analyser, off | Improve a track | A track or a bounce | Feedback, alternatives, and a comparison |
+| Tweak | edits, off | Reshape a sample | One sample | New variations of that sample |
 
 Create:
 
-1. Bring the idea. Type, record, drop a file, or combine them.
-2. Choose layers or one specific sound. Layers are drums, chords, bass, melody, texture, all separately, or a mix.
-3. The agent asks only what is missing, at the producer's level. Every question can be answered, decided, skipped, or skipped entirely.
+1. Bring the idea. Type, record, drop a file, or combine them. MIDI is not offered in the interface.
+2. Choose a full idea or one sound, with the composer toggle "A full idea" or "One sound". A full idea then chooses layers: drums, chords, bass, melody, texture, all separately, or a mix.
+3. The agent asks only what is missing. Every question can be answered, decided, skipped, or skipped entirely.
 4. Hear three variations. Pick one, or ask for another take.
-5. Learn from the result: how it was made, and how to make it in Logic.
+5. Learn from the result. Under the layer cards, collapsed by default: "How this was made" and "Make it in Logic".
 
-One specific sound is a sample-library request, such as "a snappy EDM snare" or "a warm 808". It is defined by genre, duration, mood, and brightness. Brightness is how much high-frequency content the sound has.
+One sound is a sample-library request, such as "a snappy EDM snare" or "a warm 808". It asks only what is missing among sound type, genre, duration, mood, and brightness, in that order, still one at a time and still at most 5. Duration uses the structure slot and its existing question. Sound type, genre, and brightness use the questions in section 2. The other slots are not asked. The same answer, You decide, Skip this, and Skip all and build rules apply. You decide and Skip use these defaults: sound "pad", genre "no genre", brightness "balanced", plus the section 3 defaults for duration and mood. Skip all fills whatever of those five is still empty, then the remaining section 3 defaults, and returns one prompt.
 
-Analyse:
+The prompt is one layer named sound:
 
-1. Upload a track, or a bounce from Logic.
-2. The report gives the basics and feedback. Basics are tempo, key, energy, brightness, how busy the rhythm is, and which instruments are present. Feedback is in producer terms and stays on instruments, rhythm, and arrangement.
-3. Alternatives are two or three versions of the track. Each one follows a single suggestion, such as warmer, more swing, or a lo-fi version.
-4. Comparison plays the original and each alternative side by side, and says what changed and why.
-5. The genre guide names the detected genre, gives a short factual history, and lists artists and tracks to study. History stays short and factual.
+```
+TrackType: SFX or Instrument, {sound}{ in KEY when Instrument}, {genre}, {brightness words}, {mood words}, {energy words}, {bpm} BPM
+Negative: vocals
+```
 
-Tweak:
+TrackType is SFX when the sound type contains snare or riser. Otherwise it is Instrument, which is the section 4 type for a single layer. Brightness words: dark "dark, few highs"; balanced "balanced highs"; bright "bright, airy highs". The layer returns three variations.
 
-1. Drop one sample.
-2. Describe the change, such as "brighter", "punchier", or "more vinyl", or use a quick chip.
-3. Set how different the result should be, from a subtle change to a new sound.
-4. Hear three variations. Each one explains what changed.
-5. See similar sounds to explore next.
+MIDI stays out of the interface. There is no MIDI section, card, or download, and the composer does not accept a MIDI file. The backend still writes chord and bass MIDI. Export to Logic still copies those files into the export folder. The export confirmation lists them in the same file list as the audio, with no separate MIDI heading.
 
-Level is Beginner, Producer, or Pro. It changes three things: how many questions are asked and how they are worded, how deep the explanations go, and which controls are visible. The same result is explained more simply at Beginner and more technically at Pro.
+Explain runs on a Create result. One Claude call through the Bedrock provider writes both "How this was made" (the brief, the choices, and the reasons from the trace) and "Make it in Logic" (steps that use Logic's own instruments and plugins). When Bedrock is off or the call fails, a template is shown instead. The template lists each filled slot as "{label}: {value}. {reason}.", then "Choices: " and the trace details, then one Logic step per prompt: "In Logic, add a {layer} track and shape it with Logic's instruments and plugins until it matches: {prompt}."
 
-Explain runs in every room. Every result has a "How this was made" panel: the brief, the choices, and the reasons. Every alternative says what changed. Every created sound has "Make it in Logic" steps that recreate it with Logic's own instruments and plugins. Those steps come from the brief and the prompt. Explanation depth follows the level.
+Genre deep dive. The list is on the left of the page and the detail is on the right. Content comes from one markdown file per genre in `kb/genres`, not from the model. Each file is marked DRAFT for editing and has a short history, then traits: tempo range, a working BPM inside that range, typical keys, signature instruments, a drum pattern, and production techniques, then reference artists and tracks. The first files are lofi hip hop, house, techno, drum and bass, ambient, trap, synthwave, and neo soul.
+
+The detail shows the history, the traits as a compact grid, and the references. Claude may only rephrase the history for readability. The traits and the references stay the file fields. When Bedrock is off or the call fails, the history is the file text.
+
+Use in Create opens Create, prefills the traits as slots with source reference, and adds one thread line, "Using {title}." The prefill is: genre the title, tempo the working BPM, key the first typical key, palette the instruments, pattern the drum pattern, production the production techniques. Pattern and production are never asked. They exist so this prefill has a slot.
+
+Soundcharts is `features.soundcharts`, off by default. While it is off, the detail does not show similar artists and does not call Soundcharts. No similar-artist list is invented.
+
+Analyse, when it is built later: upload a track, report the basics and feedback, offer two or three alternatives, and compare them. Tweak, when it is built later: one sample, a change, three variations, and similar sounds. Neither room is clickable while its flag is off.
 
 Hackathon scope:
 
 | Room | Demo |
 | --- | --- |
-| Create | Live, including one specific sound and Make it in Logic |
-| Analyse | Live if time allows: the report, one or two alternatives, the explanation, and the genre card |
-| Tweak | Marked Soon in the sidebar, and named as the next step in the pitch |
+| Create | Live, including one sound, the explanation, and Make it in Logic |
+| Genre deep dive | Live, from the curated files, with Use in Create |
+| Analyse | Soon |
+| Tweak | Soon |
 
-Analyse and Tweak share one path: audio in, guided variations out. Pitch line: "Hum it, describe it, or bring your track. Vision Studio makes the sound, explains how, and teaches you to make it yourself."
+Pitch line: "Hum it, describe it, or bring your track. Vision Studio makes the sound, explains how, and teaches you to make it yourself."

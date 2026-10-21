@@ -201,7 +201,7 @@ def _extract_message(session: Session) -> str:
 def _polish_message(session: Session, prompts: list[LayerPrompt]) -> str:
     world = session.slots["world"].value
     layers = [
-        {"layer": item.layer, "anchor": anchor_for(world, item.layer), "prompt": item.prompt} for item in prompts
+        {"layer": item.layer, "anchor": _anchor(session, item.layer), "prompt": item.prompt} for item in prompts
     ]
     brief = {name: slot.value for name, slot in session.slots.items()}
     return json.dumps({"brief": brief, "layers": layers}, indent=2)
@@ -321,7 +321,6 @@ def _disagreement(proposal: _Proposal, measured: str, kept: str) -> str:
 def _apply_polish(session: Session, prompts: list[LayerPrompt], payload: dict) -> list[LayerPrompt]:
     returned = _polished_by_layer(payload)
     brief = " ".join(slot.value for slot in session.slots.values())
-    world = session.slots["world"].value
     key = session.slots["key"].value
     updated: list[LayerPrompt] = []
     for item in prompts:
@@ -334,7 +333,7 @@ def _apply_polish(session: Session, prompts: list[LayerPrompt], payload: dict) -
         reason = rejection_reason(
             item.prompt,
             polished,
-            anchor=anchor_for(world, item.layer),
+            anchor=_anchor(session, item.layer),
             brief=brief,
             key=key,
         )
@@ -345,6 +344,13 @@ def _apply_polish(session: Session, prompts: list[LayerPrompt], payload: dict) -
             session.note("polish", f"Kept the template for the {name} prompt: {reason}")
             updated.append(item)
     return updated
+
+
+def _anchor(session: Session, layer: str) -> str:
+    if layer == "sound":
+        sound = session.slots.get("sound")
+        return sound.value if sound is not None else "sound"
+    return anchor_for(session.slots["world"].value, layer)
 
 
 def _polished_by_layer(payload: dict) -> dict[str, str]:
@@ -360,3 +366,65 @@ def _polished_by_layer(payload: dict) -> dict[str, str]:
         if isinstance(layer, str) and isinstance(prompt, str) and prompt.strip():
             found[layer] = prompt.strip()
     return found
+
+
+_EXPLAIN_SYSTEM = (
+    "You explain a finished sound for Vision Studio. Use only the brief, the trace, and the prompts. "
+    "how states how it was made from those facts. steps are Make it in Logic instructions that use "
+    "Logic's own instruments and plugins. Do not add a genre, instrument, or fact that is not in the input."
+)
+
+_HISTORY_SYSTEM = (
+    "Rephrase only the history you are given, so it is easy to read. "
+    "Do not add artists, tracks, tempos, keys, or facts. If it is already clear, make only light edits."
+)
+
+_EXPLAIN_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["how", "steps"],
+    "properties": {
+        "how": {"type": "string"},
+        "steps": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
+_HISTORY_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["history"],
+    "properties": {"history": {"type": "string"}},
+}
+
+
+def explain_payload(brief, prompts, trace) -> dict:
+    provider = bedrock_provider()
+    message = json.dumps(
+        {
+            "brief": brief.model_dump(exclude_none=True),
+            "prompts": [item.model_dump() for item in prompts],
+            "trace": [step.model_dump() for step in trace],
+        }
+    )
+    return _converse(
+        provider,
+        name="explain_result",
+        description="How the sound was made, and how to make it in Logic.",
+        schema=_EXPLAIN_SCHEMA,
+        system=_EXPLAIN_SYSTEM,
+        message=message,
+        max_tokens=700,
+    )
+
+
+def history_payload(history: str) -> dict:
+    provider = bedrock_provider()
+    return _converse(
+        provider,
+        name="rephrase_history",
+        description="A readable rephrase of the supplied history only.",
+        schema=_HISTORY_SCHEMA,
+        system=_HISTORY_SYSTEM,
+        message=history,
+        max_tokens=400,
+    )

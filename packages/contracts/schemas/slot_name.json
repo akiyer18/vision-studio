@@ -2,5 +2,5 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "SlotName",
   "type": "string",
-  "enum": ["output", "mood", "energy", "world", "key", "style", "palette", "structure", "must_keep", "tempo"]
+  "enum": ["output", "mood", "energy", "world", "key", "style", "palette", "structure", "must_keep", "tempo", "sound", "genre", "brightness", "pattern", "production"]
 }

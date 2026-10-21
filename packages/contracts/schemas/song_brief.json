@@ -18,7 +18,12 @@
         "palette": { "$ref": "slot_value.json" },
         "structure": { "$ref": "slot_value.json" },
         "must_keep": { "$ref": "slot_value.json" },
-        "tempo": { "$ref": "slot_value.json" }
+        "tempo": { "$ref": "slot_value.json" },
+        "sound": { "$ref": "slot_value.json" },
+        "genre": { "$ref": "slot_value.json" },
+        "brightness": { "$ref": "slot_value.json" },
+        "pattern": { "$ref": "slot_value.json" },
+        "production": { "$ref": "slot_value.json" }
       }
     },
     "output": {

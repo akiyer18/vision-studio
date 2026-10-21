@@ -94,6 +94,16 @@ def default_slot(slot: str, mood: str, *, audio: bool) -> SlotValue:
         return _guess("nothing", "There is no audio to keep", 0.3)
     if slot == "output":
         return _guess("all layers separately", "All layers separately is the default output")
+    if slot == "sound":
+        return _guess("pad", "A pad is the default when the sound type was not named")
+    if slot == "genre":
+        return _guess("no genre", "No genre was named", 0.3)
+    if slot == "brightness":
+        return _guess("balanced", "Brightness with no signal stays balanced")
+    if slot == "pattern":
+        return _guess("no pattern named", "No drum pattern was named", 0.3)
+    if slot == "production":
+        return _guess("no production noted", "No production technique was named", 0.3)
     raise KeyError(slot)
 
 

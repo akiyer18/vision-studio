@@ -1,4 +1,4 @@
-import { AudioWaveform, Keyboard, Menu, Music, SlidersHorizontal, X } from "lucide-react"
+import { AudioWaveform, Keyboard, Library, Menu, Music, SlidersHorizontal, X } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
 import { features } from "../../features.ts"
@@ -22,13 +22,17 @@ const statusTone: Record<UiStatus, string> = {
   error: "text-danger",
 }
 
+type Room = "create" | "genre"
+
 type Props = {
   open: boolean
+  room: Room
+  onRoom: (room: Room) => void
   onClose: () => void
   onReplay: () => void
 }
 
-export function Sidebar({ open, onClose, onReplay }: Props) {
+export function Sidebar({ open, room, onRoom, onClose, onReplay }: Props) {
   const status = useStudio((state) => state.status)
   const restoreSession = useStudio((state) => state.restoreSession)
   const [menu, setMenu] = useState(false)
@@ -89,20 +93,29 @@ export function Sidebar({ open, onClose, onReplay }: Props) {
         </button>
       </div>
       <nav aria-label="Studio" className="flex flex-col gap-1">
-        <button
-          type="button"
-          aria-current="page"
-          className="flex h-10 items-center gap-2 rounded-xl bg-white/8 px-2 text-left text-ink"
+        <RoomButton
+          icon={Music}
+          label="Create"
+          live={features.create}
+          current={room === "create"}
           onClick={() => {
+            onRoom("create")
+            onClose()
             document.getElementById("idea")?.focus()
+          }}
+        />
+        <RoomButton
+          icon={Library}
+          label="Genre deep dive"
+          live={features.genre}
+          current={room === "genre"}
+          onClick={() => {
+            onRoom("genre")
             onClose()
           }}
-        >
-          <Music size={18} aria-hidden />
-          Song idea
-        </button>
-        <SoonItem icon={AudioWaveform} label="Song analyser" soon={!features.analyser} />
-        <SoonItem icon={SlidersHorizontal} label="Song edits" soon={!features.edits} />
+        />
+        <SoonItem icon={AudioWaveform} label="Analyse" soon={!features.analyser} />
+        <SoonItem icon={SlidersHorizontal} label="Tweak" soon={!features.edits} />
       </nav>
       <RecentList onOpen={openRecent} />
       <div className="relative flex flex-col gap-3">
@@ -176,6 +189,33 @@ export function Sidebar({ open, onClose, onReplay }: Props) {
         </p>
       </div>
     </aside>
+  )
+}
+
+function RoomButton({
+  icon: Icon,
+  label,
+  live,
+  current,
+  onClick,
+}: {
+  icon: typeof Music
+  label: string
+  live: boolean
+  current: boolean
+  onClick: () => void
+}) {
+  if (!live) return <SoonItem icon={Icon} label={label} soon />
+  return (
+    <button
+      type="button"
+      aria-current={current ? "page" : undefined}
+      className={`flex h-10 items-center gap-2 rounded-xl px-2 text-left ${current ? "bg-white/8 text-ink" : "text-secondary"}`}
+      onClick={onClick}
+    >
+      <Icon size={18} aria-hidden />
+      <span className="truncate">{label}</span>
+    </button>
   )
 }
 

@@ -8,7 +8,7 @@ import type { SlotSource } from "../../types/slot_source.ts"
 import type { SongBrief } from "../../types/song_brief.ts"
 import { SourceBadge } from "../SourceBadge.tsx"
 
-const ROWS: SlotName[] = ["mood", "energy", "world", "style", "palette", "structure", "must_keep"]
+const ROWS: SlotName[] = ["mood", "energy", "world", "style", "palette", "structure", "must_keep", "sound", "genre", "brightness", "pattern", "production"]
 
 type Props = {
   mark: string | null

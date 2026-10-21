@@ -35,7 +35,34 @@
         "palette": { "type": "string" },
         "structure": { "type": "string" },
         "must_keep": { "type": "string" },
-        "tempo": { "type": "string" }
+        "tempo": { "type": "string" },
+        "sound": { "type": "string" },
+        "genre": { "type": "string" },
+        "brightness": { "type": "string" },
+        "pattern": { "type": "string" },
+        "production": { "type": "string" }
+      }
+    },
+    "mode": { "type": "string", "enum": ["full", "one_sound"] },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "output": { "type": "string" },
+        "mood": { "type": "string" },
+        "energy": { "type": "string" },
+        "world": { "type": "string" },
+        "key": { "type": "string" },
+        "style": { "type": "string" },
+        "palette": { "type": "string" },
+        "structure": { "type": "string" },
+        "must_keep": { "type": "string" },
+        "tempo": { "type": "string" },
+        "sound": { "type": "string" },
+        "genre": { "type": "string" },
+        "brightness": { "type": "string" },
+        "pattern": { "type": "string" },
+        "production": { "type": "string" }
       }
     }
   }

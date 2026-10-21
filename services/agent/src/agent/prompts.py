@@ -90,6 +90,50 @@ ANCHORS = {
 }
 
 
+BRIGHTNESS_WORDS = {
+    "dark": "dark, few highs",
+    "balanced": "balanced highs",
+    "bright": "bright, airy highs",
+}
+_SFX = {"snare", "riser"}
+
+
+def track_type(sound: str) -> str:
+    words = set(sound.lower().replace("-", " ").split())
+    if words & _SFX:
+        return "SFX"
+    return "Instrument"
+
+
+def compile_one_sound(
+    *,
+    sound: str,
+    genre: str,
+    brightness: str,
+    mood: str,
+    energy: str,
+    key: str,
+    bpm: int,
+    take: int = 1,
+) -> list[LayerPrompt]:
+    kind = track_type(sound)
+    body = f"{sound} in {key}" if kind == "Instrument" else sound
+    bright = BRIGHTNESS_WORDS.get(brightness, brightness)
+    prompt = (
+        f"TrackType: {kind}, {body}, {genre}, {bright}, "
+        f"{MOOD_WORDS[mood]}, {ENERGY_WORDS[energy]}, {bpm} BPM"
+    )
+    return [
+        LayerPrompt(
+            layer="sound",
+            prompt=prompt,
+            negative="vocals",
+            seeds=seeds_for("sound", mood, genre, key, bpm, take),
+            kb_sources=[mood, genre],
+        )
+    ]
+
+
 def compile_prompts(
     output: list[str],
     *,

@@ -103,6 +103,20 @@ body {
     "side player rail";
 }
 
+.genre-room {
+  grid-column: 2 / span 2;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.genre-list,
+.genre-detail {
+  min-height: 0;
+  overflow: auto;
+}
+
 .studio-canvas {
   grid-area: canvas;
   display: flex;
@@ -251,6 +265,12 @@ body {
     display: contents;
   }
 
+  .genre-room {
+    grid-column: 2;
+    grid-template-columns: 1fr;
+    overflow: visible;
+  }
+
   .studio-shell,
   .studio-shell.has-player {
     height: auto;
@@ -294,6 +314,11 @@ body {
       "rail"
       "composer"
       "player";
+  }
+
+  .genre-room {
+    grid-column: 1;
+    padding-top: 4.5rem;
   }
 
   .studio-side {

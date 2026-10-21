@@ -3,7 +3,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react"
 
 import { inputBridge } from "../../input/bridge.ts"
 import { transport } from "../../playback/transport.ts"
-import { currentIdea, saveRecent } from "../../recentIdeas.ts"
+import { currentIdea, noteIdea, saveRecent } from "../../recentIdeas.ts"
 import { useStudio } from "../../state/studio.ts"
 import { useTour } from "../../tour.ts"
 import { Composer } from "../composer/Composer.tsx"
@@ -14,6 +14,7 @@ import { Sidebar } from "../sidebar/Sidebar.tsx"
 import { Thread, type Bubble } from "../thread/Thread.tsx"
 import { Tour } from "../tour/Tour.tsx"
 import { GettingStarted } from "./GettingStarted.tsx"
+import { GenreRoom, type GenreDetail } from "../genre/GenreRoom.tsx"
 
 const PlayerBar = lazy(() => import("../layers/stage.tsx").then((module) => ({ default: module.PlayerBar })))
 
@@ -28,6 +29,8 @@ export function Dashboard() {
   const thread = useStudio((state) => state.thread)
   const tour = useTour()
   const [open, setOpen] = useState(false)
+  const [room, setRoom] = useState<"create" | "genre">("create")
+  const mode = useStudio((state) => state.mode)
   const [mark, setMark] = useState<string | null>(null)
   const [talking, setTalking] = useState(false)
   const [bubbles, setBubbles] = useState<Bubble[]>([])
@@ -60,10 +63,11 @@ export function Dashboard() {
       renders: renders.map((item) => ({ layer: item.layer, variant: item.variant, path: item.path, seconds: item.seconds, bpm: item.bpm })),
       thread: bubbles,
       trace: turn.trace,
+      mode,
       question: turn.question,
       status: turn.status,
     })
-  }, [turn, renders, bubbles, sessionId])
+  }, [turn, renders, bubbles, sessionId, mode])
 
   const started = talking || turn !== null
   const showLayers = renders.length > 0 || (status === "working" && layerOrder.length > 0)
@@ -76,6 +80,16 @@ export function Dashboard() {
     const trimmed = text.trim()
     if (!trimmed) return
     setBubbles((current) => [...current, { id: current.reduce((max, item) => Math.max(max, item.id), 0) + 1, text: trimmed }])
+  }
+
+  function useGenre(genre: GenreDetail) {
+    transport.stop()
+    noteIdea(`Using ${genre.title}.`, false)
+    useStudio.getState().resetSession()
+    useStudio.getState().showReference(genre.prefill, `Using ${genre.title}.`)
+    setRoom("create")
+    setTalking(true)
+    setOpen(false)
   }
 
   function startOver() {
@@ -97,7 +111,11 @@ export function Dashboard() {
         <button type="button" className="fixed inset-0 z-40 bg-black/50 min-[768px]:hidden" aria-label="Close the menu" onClick={() => setOpen(false)} />
       ) : null}
       <div className={`studio-shell ${showLayers ? "has-player" : ""} ${started ? "" : "is-home"}`}>
-        <Sidebar open={open} onClose={() => setOpen(false)} onReplay={tour.replay} />
+        <Sidebar open={open} room={room} onRoom={setRoom} onClose={() => setOpen(false)} onReplay={tour.replay} />
+        {room === "genre" ? (
+          <GenreRoom onUse={useGenre} />
+        ) : (
+          <>
         <div className="studio-canvas">
           <Thread started={started} bubbles={bubbles} onBubble={addBubble} showLayers={showLayers} showDemo={demoQuery} />
           <div className="studio-composer">
@@ -139,6 +157,8 @@ export function Dashboard() {
             <PlayerBar onStartOver={startOver} />
           </Suspense>
         ) : null}
+          </>
+        )}
       </div>
       <Tour open={tour.open} onClose={tour.finish} />
     </div>

@@ -444,12 +444,13 @@ export function Composer({ started, onBegin, onBubble }: Props) {
           if (file) acceptFile(file, "drop")
         }}
       >
+        <IdeaMode />
         <div className="flex items-end gap-2">
           <div className="flex shrink-0 items-center">
             <input
               ref={fileInput}
               type="file"
-              accept=".wav,.mp3,.m4a,.webm,.mid,.midi,audio/wav,audio/mpeg,audio/mp4,audio/webm,audio/midi"
+              accept=".wav,.mp3,.m4a,.webm,audio/wav,audio/mpeg,audio/mp4,audio/webm"
               className="sr-only"
               aria-label="Choose a sound file"
               onChange={(event) => {
@@ -626,6 +627,31 @@ function nameForMime(mime: string): string {
   if (mime.includes("mp4") || mime.includes("m4a")) return "take.m4a"
   if (mime.includes("wav")) return "take.wav"
   return "take.webm"
+}
+
+function IdeaMode() {
+  const mode = useStudio((state) => state.mode)
+  const setMode = useStudio((state) => state.setMode)
+  return (
+    <div className="flex gap-1 px-1" role="group" aria-label="Idea shape">
+      <button
+        type="button"
+        aria-pressed={mode === "full"}
+        className={`rounded-full px-2 py-0.5 text-sm ${mode === "full" ? "bg-white/8 text-ink" : "text-secondary"}`}
+        onClick={() => setMode("full")}
+      >
+        A full idea
+      </button>
+      <button
+        type="button"
+        aria-pressed={mode === "one_sound"}
+        className={`rounded-full px-2 py-0.5 text-sm ${mode === "one_sound" ? "bg-white/8 text-ink" : "text-secondary"}`}
+        onClick={() => setMode("one_sound")}
+      >
+        One sound
+      </button>
+    </div>
+  )
 }
 
 function formatElapsed(ms: number): string {

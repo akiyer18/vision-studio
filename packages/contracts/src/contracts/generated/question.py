@@ -12,7 +12,7 @@ class Question(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    slot: Literal["output", "mood", "energy", "world", "key", "style", "palette", "structure", "must_keep", "tempo"] = (
+    slot: Literal["output", "mood", "energy", "world", "key", "style", "palette", "structure", "must_keep", "tempo", "sound", "genre", "brightness", "pattern", "production"] = (
         Field(..., title="SlotName")
     )
     text: str

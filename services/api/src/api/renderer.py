@@ -11,7 +11,7 @@ from contracts import RenderJob, RenderResult
 
 from api.audio import SR, bar_frames, session_dir, wav_name, write_wav
 
-_LAYERS = ("drums", "chords", "bass", "melody", "texture", "full_mix")
+_LAYERS = ("drums", "chords", "bass", "melody", "texture", "full_mix", "sound")
 _MIX_PARTS = ("drums", "chords", "bass", "texture")
 _MINUS_1_DB = 10 ** (-1 / 20)
 _LIMIT_DB = 10 ** (-0.1 / 20)
@@ -58,6 +58,8 @@ def _synthesize(layer: str, chords: list[str], bpm: int, frames: int, seed: int)
         return _bass(symbols, bpm, frames, seed)
     if layer == "melody":
         return _melody(symbols, bpm, frames, seed)
+    if layer == "sound":
+        return _texture(frames, seed)
     return _texture(frames, seed)
 
 
