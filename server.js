@@ -463,7 +463,7 @@ app.post('/api/tweak', async (req, res) => {
 
 // ================= v3: the producer agent (Claude with tools) =================
 const STATE_FILE = path.join(TMP, 'chat-state.json');
-const chat = { history: [], recordings: { refs: [] }, settings: { arrangementMode: false, arrangementBars: 8 } };   // attachments + settings persist (and across restarts)
+const chat = { history: [], recordings: { refs: [] }, settings: { arrangementMode: true, arrangementBars: 8 } };   // attachments + settings persist (and across restarts)
 try { const st = JSON.parse(await fs.readFile(STATE_FILE, 'utf8')); chat.history = st.history || []; chat.recordings = st.recordings || { refs: [] }; if (st.settings) chat.settings = { ...chat.settings, ...st.settings }; if (st.samples) lastBuild.samples = st.samples; if (st.tracks) lastBuild.tracks = st.tracks; if (st.bpm) lastBuild.bpm = st.bpm; if (st.clips) lastBuild.clips = st.clips; if (st.explanations) lastBuild.explanations = st.explanations; if (st.soundHistory) lastBuild.soundHistory = st.soundHistory; if (st.groove) lastBuild.groove = st.groove; if (st.lastRender) lastBuild.lastRender = st.lastRender; chat.promptHash = st.promptHash; } catch {}
 lastBuild.samples ||= {};   // track name (lower) -> { samplePath, slotPath, role }
 // Thinking blocks are bound to the system prompt + tool list that produced them; after we change either, replaying them is a 400.
@@ -636,20 +636,28 @@ function makeCtx(emit) {
       const send = await liveClient();
       const bpm = lastBuild.bpm || Number((await send({ cmd: 'ping' }))?.tempo) || 120;
       const seconds = Math.ceil(clamp(Number(bars) || 4, 1, 16) * 4 * 60 / bpm) + 1;
-      if (scene != null) await send({ cmd: 'play_scene_for', index: Number(scene), seconds: seconds + 1 });
-      else await send({ cmd: 'play_for', seconds: seconds + 1 });
-      await new Promise((r) => setTimeout(r, 400));   // let Live's launch quantization land
+      const barSec = 4 * 60 / bpm;
+      const total = seconds + Math.ceil(barSec) + 2;   // pre-roll: launch quantization can delay the start up to a bar
+      if (scene != null) await send({ cmd: 'play_scene_for', index: Number(scene), seconds: total });
+      else await send({ cmd: 'play_for', seconds: total });
+      for (let i = 0; i < 20; i++) { const st = await send({ cmd: 'ping' }); if (st?.is_playing !== false) break; await new Promise((r) => setTimeout(r, 150)); }
+      const rawPath = path.join(TMP, `live-capture-raw-${Date.now()}.wav`);
+      const r = await cap.captureLive({ seconds: total - 1, outPath: rawPath });
       const outPath = path.join(OUT_DIR, `live-capture-${Date.now()}.wav`);
-      const r = await cap.captureLive({ seconds, outPath });
-      const out = { path: r.path, url: `/out/${encodeURIComponent(path.basename(r.path))}`, bars, seconds, silent: Boolean(r.silent), peakDbfs: r.peakDbfs };
-      if (!r.silent) { try { out.profile = await (await import('./lib/analyze.js')).analyzeAudio(r.path); } catch (e) { out.profileError = e.message; } }
-      lastBuild.lastCapture = r.path;
+      // drop the leading silence (before the first downbeat) and keep exactly N bars
+      await ffmpeg(['-i', r.path, '-af', `silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05,atrim=0:${seconds - 1}`, '-ac', '2', '-ar', '44100', outPath]).catch(async () => fs.copyFile(r.path, outPath));
+      const audio = await import('./lib/audio.js');
+      const dur = await audio.durationSeconds(outPath).catch(() => 0);
+      const silent = Boolean(r.silent) || dur < 0.5;
+      const out = { path: outPath, url: `/out/${encodeURIComponent(path.basename(outPath))}`, bars, seconds: Number(dur.toFixed(2)), silent, peakDbfs: r.peakDbfs, note: silent ? undefined : 'leading silence trimmed to the first downbeat' };
+      if (!silent) { try { out.profile = await (await import('./lib/analyze.js')).analyzeAudio(outPath); } catch (e) { out.profileError = e.message; } }
+      lastBuild.lastCapture = outPath;
       return out;
     },
-    async critiqueCapture(p, refPath) {
+    async critiqueCapture(p, refPath, opts = {}) {
       if (!audioPathOk(p)) throw new Error('critique: path outside project audio');
       if (refPath && !audioPathOk(refPath)) throw new Error('critique: reference path outside project audio');
-      return (await import('./lib/ears.js')).critiqueMix(p, refPath);
+      return (await import('./lib/ears.js')).critiqueMix(p, refPath, { genreTarget: opts.genreTarget || lastBuild.genreTarget, mixDetail: Boolean(opts.mixDetail) });
     },
     async importSample({ path: src, track, name, toneFix = {}, mode = 'oneshot' }) {
       if (!audioPathOk(src)) throw new Error('import: path outside project audio');
@@ -751,11 +759,18 @@ function makeCtx(emit) {
       lastBuild.soundHistory[key].pop();
       return { restored: path.basename(prev.samplePath), remainingUndos: hist.length, live: r };
     },
+    async genreBlueprint(genre) {
+      const k = await import('./lib/knowledge.js').catch(() => null);
+      if (!k) throw new Error('knowledge base not built yet (lib/knowledge.js)');
+      const slug = k.matchGenre(String(genre || ''));
+      if (!slug) throw new Error(`unknown genre "${genre}"; known: ${k.listGenres().join(', ')}`);
+      return k.getBlueprint(slug);
+    },
     productionDna: async (p) => { if (!audioPathOk(p)) throw new Error('dna: path outside project audio'); return (await import('./lib/ears.js')).productionDna(p); },
-    async critiqueMix(refPath) {
+    async critiqueMix(refPath, opts = {}) {
       const r = await this.render({});
       if (refPath && !audioPathOk(refPath)) throw new Error('critique: reference path outside project audio');
-      const c = await (await import('./lib/ears.js')).critiqueMix(r.path, refPath);
+      const c = await (await import('./lib/ears.js')).critiqueMix(r.path, refPath, { genreTarget: opts.genreTarget || lastBuild.genreTarget, mixDetail: Boolean(opts.mixDetail) });
       return { ...c, render: { url: r.url, profile: r.profile?.ratings } };
     },
     async labelPieces(paths) {
@@ -1117,10 +1132,18 @@ async function runChatTurn(req, res, emit0) {
     const missing = (Array.isArray(refIds) ? refIds.length : 0) + (beatId ? 1 : 0) + (humId ? 1 : 0) - refs.length - (beat ? 1 : 0) - (hum ? 1 : 0);
     if (missing) emit({ type: 'tool_done', name: 'attachments', ok: false, summary: `${missing} attachment(s) could not be found on the server, please re-attach` });
     const recordings = { ...chat.recordings, refs: chat.recordings.refs.length ? chat.recordings.refs : undefined, attachedThisTurn };
+    // style guidance: when the producer names a genre, hand Claude the blueprint summary up front
+    let userText = String(text);
+    try {
+      const k = await import('./lib/knowledge.js');
+      const explicit = userText.match(/\[genre:\s*([^\]]+)\]/i);
+      const slug = k.matchGenre(explicit ? explicit[1] : userText);
+      if (slug) { const bp = k.getBlueprint(slug); if (bp?.summary) { userText += `\n\n[genre blueprint: ${bp.title}] ${bp.summary}`; emit({ type: 'tool_done', name: 'style', ok: true, summary: `style guide loaded: ${bp.title}` }); } }
+    } catch {}
     let out;
-    try { out = await runProducer({ history: chat.history, userText: String(text), recordings, ctx: makeCtx(emit) }); }
+    try { out = await runProducer({ history: chat.history, userText, recordings, ctx: makeCtx(emit) }); }
     catch (e) {
-      if (/thinking/i.test(e?.message || '') && /signature|bound/i.test(e?.message || '')) { console.warn('[chat] thinking block rejected, stripping and retrying'); chat.history = stripThinking(chat.history); out = await runProducer({ history: chat.history, userText: String(text), recordings, ctx: makeCtx(emit) }); }
+      if (/thinking/i.test(e?.message || '') && /signature|bound/i.test(e?.message || '')) { console.warn('[chat] thinking block rejected, stripping and retrying'); chat.history = stripThinking(chat.history); out = await runProducer({ history: chat.history, userText, recordings, ctx: makeCtx(emit) }); }
       else throw e;
     }
     chat.history = out.history;

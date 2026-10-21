@@ -792,17 +792,20 @@ $('c-show').onclick = () => postJson('/api/live/show', {});
 $('c-arrange').onclick = async () => { $('c-arrange').disabled = true; const r = await postJson('/api/live/arrange', { bars: 8 }); addBot(r.ok ? `Recording the playing clips into the Arrangement for 8 bars. Press Tab in Live to watch the timeline fill; it stops by itself.` : 'Could not start arrangement recording: ' + r.error); $('c-arrange').disabled = false; };
 function profileCard(profile, title) {
   if (!profile || !profile.ratings) return null;
-  const wrap = document.createElement('div');
-  wrap.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-top:6px">${title || 'Technical profile'}${profile.durationSeconds ? ` · ${Number(profile.durationSeconds).toFixed(2)} s` : ''}</div>`;
-  const g = document.createElement('div'); g.className = 'profile';
-  for (const [k, r] of Object.entries(profile.ratings)) {
+  const wrap = document.createElement('details'); wrap.className = 'explain';
+  wrap.innerHTML = `<summary style="color:var(--muted)">measurements${title ? ` · ${title}` : ''}${profile.durationSeconds ? ` · ${Number(profile.durationSeconds).toFixed(1)} s` : ''}</summary>`;
+  const g = document.createElement('div'); g.className = 'profile'; g.style.padding = '6px 10px';
+  for (const [k, r0] of Object.entries(profile.ratings)) {
+    // ratings arrive either as {level, value, unit} or as compact strings like "high (17.3 dB crest)"
+    let level, text;
+    if (r0 && typeof r0 === 'object') { level = r0.level; const v = r0.value != null ? Number(r0.value) : null; text = (v != null ? v.toFixed(Math.abs(v) >= 100 ? 0 : 1) : '') + (r0.unit ? ' ' + r0.unit : ''); }
+    else { const m = String(r0).match(/^(low|medium|high)\s*\(?([^)]*)\)?/i); level = m ? m[1].toLowerCase() : 'medium'; text = m ? m[2] : String(r0); }
     const d = document.createElement('div'); d.className = 'r';
-    const v = r.value != null ? Number(r.value) : null;
-    d.innerHTML = `<b>${k.replace(/([A-Z])/g, ' $1')}</b><span class="lvl-${r.level}">${r.level}</span> <span class="num">${v != null ? v.toFixed(Math.abs(v) >= 100 ? 0 : 1) : ''}${r.unit ? ' ' + r.unit : ''}</span>`;
+    d.innerHTML = `<b>${k.replace(/([A-Z])/g, ' $1')}</b><span class="lvl-${level}">${level}</span> <span class="num">${text || ''}</span>`;
     g.appendChild(d);
   }
   wrap.appendChild(g);
-  if (profile.summary) { const p = document.createElement('div'); p.style.cssText = 'font-size:13px;color:var(--muted)'; p.textContent = profile.summary; wrap.appendChild(p); }
+  if (profile.summary) { const p = document.createElement('div'); p.style.cssText = 'font-size:12px;color:var(--muted);padding:0 10px 8px'; p.textContent = profile.summary; wrap.appendChild(p); }
   return wrap;
 }
 $('c-reset').onclick = async () => { await postJson('/api/chat/reset', {}); $('c-log').innerHTML = ''; addBot('New session. Live keeps whatever is already there.'); };
