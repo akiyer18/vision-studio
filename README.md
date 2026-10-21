@@ -28,10 +28,13 @@ npm start            # http://localhost:3000
 2. **Pattern**: "four on the floor, snare on 2 and 4, offbeat hats", 124 BPM, Generate. Press Play to audition with your new snare. `snare-pattern-<ts>.mid` is saved.
 3. In Live: User Library › ADE Hack → drag the `.wav` onto a MIDI track (Simpler) or a Drum Rack pad, drag the `.mid` onto that track. Use "Single sample" mapping for Simpler, "Drum Rack" mapping for GM pads.
 
-## Agent tools (lib/agent.js)
-set_tempo · list_tracks · analyze_recording (beatbox → pattern + per-hit onsets, hum → notes) · write_drum_pattern · write_melody ·
-synthesize_sound (Stable Audio one-shot, from text or from a hit in your recording) · build_drum_layer · build_melody_layer ·
-update_layer · replace_sound · remove_layer · show_live · play · stop. Server glue: `POST /api/chat` (SSE), `POST /api/upload`.
+## Agent tools (lib/agent.js) — 26
+**Hear:** analyze_recording (beatbox → pattern + per-hit onsets, hum → notes, any attached file as beat or melody) · transcribe_audio (MuScriptor: polyphonic audio → MIDI) · listen / judge_sound (Music Flamingo or Gemini describe audio and score a generated sound against the prompt)
+**Make sounds:** synthesize_sound (Stable Audio, from text or from a hit in a recording/reference, 0.2–20 s) · slice_sample · chop_sample (cut real pieces out of a reference, e.g. vocal chops)
+**Build in Live:** set_tempo · build_drum_layer · build_melody_layer · update_layer · replace_sound · remove_layer · create_scene · fire_scene (variations in scene B) · record_arrangement
+**Shape & mix:** add_effect (any Live device, params mapped to Live's real ranges) · set_param · list_devices · set_mixer · list_tracks · show_live · play · stop
+Attachments (beatbox, hum, files) persist for the whole chat session. Server glue: `POST /api/chat` (SSE), `POST /api/upload`.
+Keys in `.env`: STABILITY_API_KEY, ANTHROPIC_API_KEY, optional HF_TOKEN (Music Flamingo + MuScriptor Spaces, ZeroGPU quota) and GEMINI_API_KEY (ears without GPU quota).
 
 ## Layout
 - `server.js` Express API (`/api/synth`, `/api/pattern`, `/api/reveal`, `/api/health`)
