@@ -501,13 +501,15 @@ function makeCtx(emit) {
       const x = await decodeMono16k(refPath);
       const onsets = detectOnsets(x).slice(0, 64);
       const picked = onsets.sort((a, b) => b.flux - a.flux).slice(0, clamp(Number(maxPieces), 1, 16)).sort((a, b) => a.time - b.time);
-      const out = [];
+      const { estimateBpm } = await import('./lib/rhythm.js');
+      const pieces = [];
       for (const [i, o] of picked.entries()) {
         const f = onsetFeatures(x, o.sample);
         const piece = await this.slice(refPath, { startSeconds: Math.max(0, o.time - 0.01), lengthSeconds: pieceSeconds, name: `${name}-${i + 1}` });
-        out.push({ ...piece, time: Number(o.time.toFixed(3)), instrument: classifyOnset(f), index: i + 1 });
+        pieces.push({ index: i + 1, startSeconds: Number(o.time.toFixed(3)), lengthSeconds: pieceSeconds, kind: classifyOnset(f), loudnessDb: Number((20 * Math.log10(Math.max(f.rms, 1e-6))).toFixed(1)), samplePath: piece.path, name: piece.name, url: piece.url });
       }
-      return out;
+      let bpm = null; try { bpm = Math.round(estimateBpm(onsets)); } catch {}
+      return { pieces, bpm, onsetCount: onsets.length };
     },
     listen: async (p, q) => { if (!insideOut(p) && !p.startsWith(TMP)) throw new Error('listen: path outside project audio'); return (await import('./lib/ears.js')).listen(p, q); },
     transcribe: async (p, opts) => { if (!insideOut(p) && !p.startsWith(TMP)) throw new Error('transcribe: path outside project audio'); return (await import('./lib/transcribe.js')).transcribe(p, opts); },
@@ -550,13 +552,13 @@ function makeCtx(emit) {
         return { track: t, notes: liveNotes.length, clip: clip.mode };
       },
       // ---- hands: devices, mixer, scenes, arrangement (ADEHack v4 protocol) ----
-      async loadDevice({ track, name }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'load_device', track: t.index, name }), `load_device ${name}`); },
+      async loadDevice({ track, name, device }) { name = name || device; const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'load_device', track: t.index, name }), `load_device ${name}`); },
       async setParam({ track, device, param, value }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'set_device_param', track: t.index, device, param, value: Number(value) }), 'set_device_param'); },
-      async listDevices({ track, params = false }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'list_devices', track: t.index, params: Boolean(params) }), 'list_devices'); },
+      async listDevices(arg) { const { track, params = true } = typeof arg === 'object' && arg ? arg : { track: arg }; const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'list_devices', track: t.index, params: Boolean(params) }), 'list_devices'); },
       async deleteDevice({ track, device }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'delete_device', track: t.index, device }), 'delete_device'); },
       async setMixer({ track, volume, pan, mute, solo, arm }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); const cmd = { cmd: 'set_mixer', track: t.index }; if (volume != null) cmd.volume = clamp(Number(volume), 0, 1); if (pan != null) cmd.pan = clamp(Number(pan), -1, 1); if (mute != null) cmd.mute = Boolean(mute); if (solo != null) cmd.solo = Boolean(solo); if (arm != null) cmd.arm = Boolean(arm); return okOrThrow(await send(cmd), 'set_mixer'); },
       createScene: async ({ name, index = -1 } = {}) => okOrThrow(await (await liveClient())({ cmd: 'create_scene', index, name }), 'create_scene'),
-      fireScene: async ({ index }) => okOrThrow(await (await liveClient())({ cmd: 'fire_scene', index: Number(index) }), 'fire_scene'),
+      fireScene: async (arg) => { const index = typeof arg === 'object' && arg ? arg.index : arg; return okOrThrow(await (await liveClient())({ cmd: 'fire_scene', index: Number(index) }), 'fire_scene'); },
       listScenes: async () => okOrThrow(await (await liveClient())({ cmd: 'list_scenes' }), 'list_scenes'),
       recordArrangement: async ({ bars, stop } = {}) => okOrThrow(await (await liveClient())(stop ? { cmd: 'arrangement_record', stop: true } : { cmd: 'arrangement_record', bars: clamp(Number(bars) || 8, 1, 64) }), 'arrangement_record'),
       async loadSample({ name, samplePath, role }) {
