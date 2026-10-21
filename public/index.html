@@ -935,7 +935,7 @@ $('l-go').onclick = async () => {
   if (!r.ok) return setStatus('l-status', r.error, true);
   const sc = r.score || {};
   const dims = sc.dimensions ? Object.entries(sc.dimensions).map(([k, v]) => `${k} ${v}`).join(' · ') : '';
-  setStatus('l-status', sc.overall != null ? `Authenticity ${sc.overall}/10 · ${sc.verdict}` : (sc.error ? 'score failed: ' + sc.error : 'generated'));
+  setStatus('l-status', sc.overall != null ? `Authenticity ${sc.overall}/10 · ${sc.verdict}${sc.spread != null ? ` · judge spread ±${sc.spread}` : ''}${/lite/.test(sc.provider || '') ? ' · lite judge (indicative, not precise)' : ''}` : (sc.error ? 'score failed: ' + sc.error : 'generated'));
   const card = fileCard({ name: r.url.split('/').pop(), url: r.url, path: r.path, kind: 'loop' }, `<div class="path" style="white-space:pre-wrap">${dims}\n${sc.why || ''}${(sc.markersMissing || []).length ? '\nmissing: ' + sc.markersMissing.join('; ') : ''}${sc.fixPrompt ? '\nsuggested prompt: ' + sc.fixPrompt : ''}\nseed ${r.seed} · ${r.prompt}</div>`);
   const use = document.createElement('button'); use.textContent = '→ Live as kit'; use.title = 'slice this loop into a Drum Rack and play its groove';
   use.onclick = async () => { use.disabled = true; use.textContent = 'building…'; const u = await postJson('/api/lab/use-kit', { path: r.path, bpm: body.bpm, bars: body.bars }); use.textContent = u.ok ? '✓ in Live' : '→ Live as kit'; if (!u.ok) setStatus('l-status', u.error, true); use.disabled = false; };

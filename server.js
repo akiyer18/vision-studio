@@ -802,10 +802,15 @@ function makeCtx(emit) {
       }
       const ok = cands.filter((c) => c.path);
       if (!ok.length) throw new Error(`design_kit: no loop generated (${cands.map((c) => c.error).join('; ')})`);
-      const best = ok.sort((a, b) => (b.score ?? -1) - (a.score ?? -1))[0];
+      // pairwise comparison is far more stable than absolute scores on the lite judge: let A/B decide when there are two
+      let best = ok[0], comparison = null;
+      if (ok.length >= 2) {
+        try { const cmp = await ears.compareAuthenticity(ok[0].path, ok[1].path, { genreTarget: target, scope: 'drums' }); best = cmp.winner === 'B' ? ok[1] : ok[0]; comparison = { winner: cmp.winner, confidence: cmp.confidence, why: cmp.why, provider: cmp.provider }; }
+        catch (e) { best = ok.sort((a, b) => (b.score ?? -1) - (a.score ?? -1))[0]; comparison = { error: e.message.slice(0, 120) }; }
+      }
       const r = await this.loopToPattern(best.path, { bpm, bars });
       this.setGroove(r.groove);
-      return { genre: bp?.title || genre, best: { path: best.path, url: best.url, prompt: best.prompt, verdict: best.verdict, score: best.score, why: best.why }, candidates: cands.map((c) => ({ url: c.url, verdict: c.verdict, score: c.score, why: c.why, error: c.error })), kit: best.kit, pattern: r.pattern, groove: r.groove };
+      return { genre: bp?.title || genre, best: { path: best.path, url: best.url, prompt: best.prompt, verdict: best.verdict, score: best.score, why: best.why }, comparison, scoreNote: 'absolute scores from the lite judge vary ±2 between runs; the A/B comparison decided the pick', candidates: cands.map((c) => ({ url: c.url, verdict: c.verdict, score: c.score, why: c.why, error: c.error })), kit: best.kit, pattern: r.pattern, groove: r.groove };
     },
     // slice the best hit per drum class out of any drum audio (loop or Demucs drum stem)
     async sliceKitFromAudio(srcPath, { name = 'kit' } = {}) {
