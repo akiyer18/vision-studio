@@ -160,7 +160,7 @@ app.post('/api/reveal', (req, res) => {
 // overwrite them with the latest sound before each load. Simpler reads the file from disk, so it gets the new audio.
 // Slot pool: Live keeps a loaded sample in memory, so a filename must not be reused while a track may still hold it.
 // Each role has numbered slots (ADE Kick 1..6, ADE Synth 1..8); we rotate through them (counter persisted in .tmp).
-const ROLE_OF = { kick: 'Kick', snare: 'Snare', clap: 'Clap', hat_closed: 'Hat', hat: 'Hat', hat_open: 'OpenHat', rim: 'Rim', perc: 'Perc', tom_low: 'Tom', tom_high: 'Tom', tom: 'Tom', ride: 'Perc', crash: 'Perc', drum: 'Snare',
+const ROLE_OF = { kick: 'Kick', snare: 'Snare', clap: 'Clap', hat_closed: 'Hat', hat: 'Hat', hat_open: 'OpenHat', rim: 'Rim', perc: 'Perc', tom_low: 'Tom', tom_high: 'Tom', tom: 'Tom', ride: 'Perc', crash: 'Perc', drum: 'Snare', shaker: 'Perc', snap: 'Clap', cowbell: 'Perc', conga: 'Perc', vox: 'Synth', fx: 'Synth', texture: 'Synth',
   synth: 'Synth', saw: 'Synth', bass: 'Synth', pad: 'Synth', pluck: 'Synth', lead: 'Synth', keys: 'Synth', melody: 'Synth', rhodes: 'Synth', piano: 'Synth' };
 const POOL_SIZE = { Kick: 6, Snare: 6, Clap: 6, Hat: 6, OpenHat: 6, Rim: 6, Perc: 6, Tom: 6, Synth: 8 };
 const COUNTER_FILE = path.join(TMP, 'slot-counter.json');
