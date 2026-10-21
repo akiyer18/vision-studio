@@ -118,7 +118,8 @@
 <main>
   <section class="wide chat">
     <h2>Your producer</h2>
-    <div class="sub">Talk to it like a collaborator with Ableton open. Type, beatbox, hum, or attach audio files as references ("make the kick like this"). It plans, synthesizes every sound with Stability AI, lays the layers into Live itself, and tells you what to try next.</div>
+    <div class="sub">Your producer, with Ableton open. Type, beatbox, hum, or attach audio. It hears your set, builds in Live, and explains what it did.</div>
+    <div id="c-session" class="file" style="display:none;font-size:12px;color:var(--muted)"></div>
     <div class="rooms" id="c-rooms">
       <span class="room on" data-room="create">Create<small>make something new</small></span>
       <span class="room" data-room="analyse">Analyse<small>improve a track</small></span>
@@ -134,13 +135,13 @@
     </div>
     <div class="composer">
       <textarea id="c-text" placeholder="e.g. let's build a lo-fi beat around my beatbox, 88 bpm"></textarea>
-      <select id="c-level" title="How deep the explanations go" style="width:auto;align-self:stretch">
+      <select id="c-level" title="How deep the explanations go" style="width:auto;align-self:stretch;font-size:12px">
         <option value="beginner">Beginner</option>
         <option value="intermediate" selected>Intermediate</option>
         <option value="pro">Pro</option>
       </select>
       <input type="range" id="c-strength" min="0.3" max="0.8" step="0.05" value="0.5" title="Tweak: how different (subtle → new sound)" style="display:none;width:120px;align-self:center" />
-      <select id="c-density" title="How many layers the producer builds by default" style="width:auto;align-self:stretch">
+      <select id="c-density" title="How many layers the producer builds by default" style="width:auto;align-self:stretch;font-size:12px">
         <option value="minimal">Minimal (3 layers)</option>
         <option value="standard" selected>Standard (4–5)</option>
         <option value="rich">Rich (up to 7)</option>
@@ -160,7 +161,8 @@
     </div>
     <div class="chips" id="c-refs"></div>
   </section>
-  <details class="wide" id="lab"><summary>Prompt Lab: pick a genre, edit the Stability prompt and parameters, generate, get a strict authenticity score, use it as a kit</summary>
+  <details class="wide" id="tools"><summary>Tools: Prompt Lab · one-button build · advanced controls</summary>
+  <details class="wide" id="lab" style="margin-top:8px"><summary>Prompt Lab: pick a genre, edit the Stability prompt and parameters, generate, get a strict authenticity score, use it as a kit</summary>
   <section class="wide">
     <div class="row3">
       <div><label>Genre blueprint</label><select id="l-genre"></select></div>
@@ -304,6 +306,7 @@
     <div class="steps" id="b-steps"></div>
   </section>
   </div></details>
+  </details>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -328,7 +331,13 @@ function renderHealth(h) {
   const ears = document.createElement('span'); ears.className = 'badge dyn ' + (h.ears ? 'ok' : ''); ears.textContent = h.ears ? 'Ears: ' + ((h.earsProviders && h.earsProviders.length) ? h.earsProviders.map(p => p === 'flamingo' ? 'Music Flamingo' : 'Gemini').join(' + ') : 'quota exhausted') : 'Ears off (add HF_TOKEN or GEMINI_API_KEY)'; $('b-claude').after(ears);
   $('b-dir').title = h.outDir; $('b-dir').textContent = '📁 ' + h.outDir.split('/').slice(-2).join('/');
 }
-async function pollHealth() { try { renderHealth(await (await fetch('/api/health')).json()); } catch {} }
+async function pollHealth() { try { renderHealth(await (await fetch('/api/health')).json()); } catch {} try { renderSession(await (await fetch('/api/live/state')).json()); } catch {} }
+function renderSession(st) {
+  const el = $('c-session'); if (!el) return;
+  const tracks = Object.values(st.tracks || {}).map(t => t.name); const sounds = Object.keys(st.samples || {}).length;
+  if (!tracks.length && !sounds) { el.style.display = 'none'; return; }
+  el.style.display = ''; el.innerHTML = `<b style="color:var(--text)">Session as the producer sees it</b> · ${st.bpm ? st.bpm + ' BPM · ' : ''}${tracks.length} tracks it built${tracks.length ? ': ' + tracks.join(', ') : ''}${st.genreTarget ? ' · style: ' + st.genreTarget.split(':')[0] : ''}${st.groove ? ' · groove template loaded' : ''}`;
+}
 pollHealth(); setInterval(pollHealth, 15000);   // the Live badge self-corrects after a Live or server restart
 INSTR.forEach(i => { const o = document.createElement('option'); o.value = i; o.textContent = i.replace('_',' '); $('p-lane').appendChild(o); });
 $('p-lane').value = 'snare';
