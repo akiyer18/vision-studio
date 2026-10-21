@@ -52,11 +52,12 @@ function buildPrompt(prompt, mode, kind) {
   return `${p || 'drum hit'}, single one-shot drum sample, dry, punchy, clean transient, no melody, no music`;
 }
 
-app.get('/api/health', (_req, res) => {
+app.get('/api/health', async (_req, res) => {
   res.json({
     stabilityKey: hasKey(process.env.STABILITY_API_KEY),
     anthropicKey: hasKey(process.env.ANTHROPIC_API_KEY),
     ears: Boolean(process.env.HF_TOKEN || process.env.HUGGING_FACE_HUB_TOKEN),
+    earsStatus: (await import('./lib/ears.js')).earsStatus(),
     outDir: OUT_DIR,
   });
 });
