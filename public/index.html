@@ -294,15 +294,18 @@ let pattern = null, playing = null;
 const ctx = new (window.AudioContext || window.webkitAudioContext)();
 
 // ---------- health ----------
-fetch('/api/health').then(r => r.json()).then(h => {
+function renderHealth(h) {
+  document.querySelectorAll('.badge.dyn').forEach(el => el.remove());
   $('b-stab').textContent = 'Stability ' + (h.stabilityKey ? 'key ok' : 'key missing');
   $('b-stab').className = 'badge ' + (h.stabilityKey ? 'ok' : 'bad');
   $('b-claude').textContent = h.anthropicKey ? 'Claude patterns' : 'Rule-based patterns';
   $('b-claude').className = 'badge ' + (h.anthropicKey ? 'ok' : '');
-  if (h.live) { const lv = document.createElement('span'); lv.className = 'badge ' + (!h.live.reachable ? 'bad' : h.live.restartNeeded ? '' : 'ok'); lv.textContent = !h.live.reachable ? 'Live: not connected' : h.live.restartNeeded ? `Live: restart to load script v${h.live.installed}` : `Live script v${h.live.running}`; lv.title = 'Ableton remote script status'; $('b-dir').before(lv); }
-  const ears = document.createElement('span'); ears.className = 'badge ' + (h.ears ? 'ok' : ''); ears.textContent = h.ears ? 'Ears: ' + ((h.earsProviders && h.earsProviders.length) ? h.earsProviders.map(p => p === 'flamingo' ? 'Music Flamingo' : 'Gemini').join(' + ') : 'quota exhausted') : 'Ears off (add HF_TOKEN or GEMINI_API_KEY)'; $('b-claude').after(ears);
+  if (h.live) { const lv = document.createElement('span'); lv.className = 'badge dyn ' + (!h.live.reachable ? 'bad' : h.live.restartNeeded ? '' : 'ok'); lv.textContent = !h.live.reachable ? 'Live: not connected' : h.live.restartNeeded ? `Live: restart to load script v${h.live.installed}` : `Live script v${h.live.running}`; lv.title = 'Ableton remote script status'; $('b-dir').before(lv); }
+  const ears = document.createElement('span'); ears.className = 'badge dyn ' + (h.ears ? 'ok' : ''); ears.textContent = h.ears ? 'Ears: ' + ((h.earsProviders && h.earsProviders.length) ? h.earsProviders.map(p => p === 'flamingo' ? 'Music Flamingo' : 'Gemini').join(' + ') : 'quota exhausted') : 'Ears off (add HF_TOKEN or GEMINI_API_KEY)'; $('b-claude').after(ears);
   $('b-dir').title = h.outDir; $('b-dir').textContent = '📁 ' + h.outDir.split('/').slice(-2).join('/');
-});
+}
+async function pollHealth() { try { renderHealth(await (await fetch('/api/health')).json()); } catch {} }
+pollHealth(); setInterval(pollHealth, 15000);   // the Live badge self-corrects after a Live or server restart
 INSTR.forEach(i => { const o = document.createElement('option'); o.value = i; o.textContent = i.replace('_',' '); $('p-lane').appendChild(o); });
 $('p-lane').value = 'snare';
 $('s-strength').oninput = () => $('s-strength-v').textContent = Number($('s-strength').value).toFixed(2);
