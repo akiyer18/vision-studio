@@ -437,6 +437,11 @@ await T("update_layer").run(T("update_layer").parse({ ...sample.update_layer, us
 assert.equal(calls.filter((c) => c[0] === "updateLayer").at(-1)[1].useGroove, true);
 for (const k of ["TOOL ROLES", "SAMPLING WORKFLOW", "separate_stems", "analyze_music", "production_dna", "critique_mix", "label_pieces", "generate_loop", "restyle_mix", "process_audio", "master_preview", "useGroove:true", "run tools/py/setup.sh", "never guess what audio sounds like"]) assert.ok(PRODUCER_SYSTEM.includes(k), `system prompt has ${k}`);
 
+// v7.1: official Stable Audio prompt grammar
+for (const k of ["TrackType", "in this ORDER", "tags first", "production character", "performance details last", "Always include the BPM", "never instruct", "init noise level", "re-roll ONCE", "14-inch hi-hats", "Genre: Deep House", "non-lexical"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt grammar has ${k}`);
+assert.ok(PRODUCER_SYSTEM.indexOf("tags first") < PRODUCER_SYSTEM.indexOf("genre / style reference") && PRODUCER_SYSTEM.indexOf("genre / style reference") < PRODUCER_SYSTEM.indexOf("production character (recording"), "ordering rule in order");
+assert.match(T("synthesize_sound").description, /TrackType: SFX/); assert.match(T("generate_loop").description, /TrackType: Instrument/); assert.match(T("restyle_mix").description, /TrackType: Music/);
+
 // persistent attachments: note lists all, marks new vs earlier
 const fc = { beta: { messages: { toolRunner(params) { return { params, pushMessages() {}, async *[Symbol.asyncIterator]() { yield { role: "assistant", stop_reason: "end_turn", content: [] }; } }; } } } };
 const h2 = (await runProducer({ history: [], userText: "use that loop again", recordings: { beat: "/tmp/beat.wav", refs: [{ name: "loop.wav", path: "/tmp/ref1.wav" }, { name: "vox.wav", path: "/tmp/ref2.wav" }], attachedThisTurn: ["ref#2"] }, ctx, client: fc })).history;
