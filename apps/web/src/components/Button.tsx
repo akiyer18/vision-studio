@@ -1,9 +1,9 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react"
 
 const tones = {
-  primary: "bg-vu-amber text-studio-night",
-  secondary: "border border-walnut-line bg-walnut-glass text-tape-cream",
-  ghost: "bg-transparent text-tape-cream",
+  primary: "btn-primary bg-accent text-canvas",
+  secondary: "border border-white/15 bg-transparent text-ink",
+  ghost: "bg-transparent text-secondary",
 } as const
 
 type Props = {
@@ -15,7 +15,7 @@ export function Button({ tone = "primary", className = "", type = "button", chil
   return (
     <button
       type={type}
-      className={`inline-flex min-h-11 max-w-full shrink-0 items-center justify-center rounded-button px-4 py-2 text-sm font-medium transition-colors hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:brightness-100 ${tones[tone]} ${className}`}
+      className={`inline-flex min-h-11 max-w-full shrink-0 items-center justify-center rounded-xl px-4 py-2 text-sm font-medium transition-shadow focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40 ${tones[tone]} ${className}`}
       {...props}
     >
       {children}

@@ -9,19 +9,19 @@ type LanePaint = {
   progress: string
 }
 
-const lamp = "#F6F1E8"
-const desk = "#3F3832"
+const ink = "#0B0A1A"
+const light = "#F4F2FF"
 
 export const LANE_PAINT: Record<LaneId, LanePaint> = {
-  drums: { fill: "#B84532", ink: lamp, wave: "rgba(246, 241, 232, 0.55)", progress: lamp },
-  chords: { fill: "#D7A441", ink: desk, wave: "rgba(63, 56, 50, 0.55)", progress: desk },
-  bass: { fill: "#1F6E5C", ink: lamp, wave: "rgba(246, 241, 232, 0.55)", progress: lamp },
-  melody: { fill: "#3D62C4", ink: lamp, wave: "rgba(246, 241, 232, 0.55)", progress: lamp },
-  texture: { fill: "#7A4EA8", ink: lamp, wave: "rgba(246, 241, 232, 0.55)", progress: lamp },
-  full_mix: { fill: lamp, ink: desk, wave: "rgba(63, 56, 50, 0.55)", progress: desk },
+  drums: { fill: "#FF6B57", ink, wave: "rgba(11, 10, 26, 0.45)", progress: ink },
+  chords: { fill: "#F5C451", ink, wave: "rgba(11, 10, 26, 0.45)", progress: ink },
+  bass: { fill: "#3FD0A8", ink, wave: "rgba(11, 10, 26, 0.4)", progress: ink },
+  melody: { fill: "#6C8CFF", ink, wave: "rgba(11, 10, 26, 0.4)", progress: ink },
+  texture: { fill: "#B07CFF", ink, wave: "rgba(11, 10, 26, 0.4)", progress: ink },
+  full_mix: { fill: "#16142C", ink: light, wave: "rgba(244, 242, 255, 0.55)", progress: "#8B6CFF" },
 }
 
 export function lanePaint(layer: string): LanePaint {
   if (layer in LANE_PAINT) return LANE_PAINT[layer as LaneId]
-  return { fill: "transparent", ink: lamp, wave: "rgba(246, 241, 232, 0.55)", progress: lamp }
+  return { fill: "#16142C", ink: light, wave: "rgba(244, 242, 255, 0.55)", progress: "#8B6CFF" }
 }

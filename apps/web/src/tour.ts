@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
 
 import { features } from "./features.ts"
-import { FLOW, tourBody, type FlowStep } from "./flow.ts"
 
 const seenKey = "vision-studio-tour"
 
@@ -19,7 +18,30 @@ function welcomeBody(): string {
 export function tourSteps(): TourStep[] {
   return [
     { id: "welcome", title: "Vision Studio", body: welcomeBody() },
-    ...FLOW.map((step) => ({ id: step.id, title: step.name, body: tourBody(step.id as FlowStep) })),
+    {
+      id: "sidebar",
+      title: "Sidebar",
+      body: "Song idea is where you start. Recent ideas stay on this side.",
+    },
+    {
+      id: "composer",
+      title: "Composer",
+      body: features.record
+        ? "Describe a feeling, attach a sound, or record one, then send it."
+        : "Describe a feeling, or attach a sound, then send it.",
+    },
+    {
+      id: "brief",
+      title: "Song brief",
+      body: "Tempo and key sit large. Each filled slot shows where it came from.",
+    },
+    {
+      id: "build",
+      title: "Build",
+      body: features.fullMix
+        ? "Choose the layers, including a full mix, then build."
+        : "Choose the layers, then build. Each one comes back as three variations.",
+    },
   ]
 }
 

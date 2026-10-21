@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 
-import { tourSteps, type TourStep } from "../tour.ts"
+import { tourSteps, type TourStep } from "../../tour.ts"
 
 export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [index, setIndex] = useState(0)
@@ -67,13 +67,13 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
       {box ? (
         <div
           aria-hidden
-          className="pointer-events-none fixed z-40 outline outline-2 outline-offset-2 outline-lamp"
+          className="pointer-events-none fixed z-40 rounded-3xl"
           style={{
-            top: box.top,
-            left: box.left,
-            width: box.width,
-            height: box.height,
-            boxShadow: "0 0 0 9999px rgba(63, 56, 50, 0.72)",
+            top: box.top - 6,
+            left: box.left - 6,
+            width: box.width + 12,
+            height: box.height + 12,
+            boxShadow: "0 0 0 2px #8B6CFF, 0 0 24px rgba(139, 108, 255, 0.55), 0 0 0 9999px rgba(11, 10, 26, 0.72)",
           }}
         />
       ) : null}
@@ -83,7 +83,7 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
         aria-modal="true"
         aria-labelledby="tour-title"
         tabIndex={-1}
-        className="fixed z-50 w-[min(20rem,calc(100vw-1.5rem))] border border-rule bg-desk p-4 text-lamp outline-none"
+        className="glass fixed z-50 w-[min(20rem,calc(100vw-1.5rem))] p-4 text-ink outline-none"
         style={{ top: Math.max(12, cardTop), left: cardLeft }}
         onKeyDown={(event) => {
           if (event.key !== "Escape") return
@@ -93,37 +93,21 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
         }}
       >
         <div className="flex items-start justify-between gap-3">
-          {step ? (
-            <p id="tour-title">
-              <strong>{step.title}</strong>
-            </p>
-          ) : (
-            <p id="tour-title">
-              <strong>Tour</strong>
-            </p>
-          )}
-          <button
-            type="button"
-            aria-label="Close the tour"
-            className="text-dust focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lamp"
-            onClick={onClose}
-          >
+          <p id="tour-title">
+            <strong>{step?.title ?? "Tour"}</strong>
+          </p>
+          <button type="button" aria-label="Close the tour" className="text-secondary" onClick={onClose}>
             Close
           </button>
         </div>
-        <p className="mt-2 text-dust">{step?.body}</p>
+        <p className="mt-2 text-secondary">{step?.body}</p>
         <div className="mt-4 flex flex-wrap gap-2">
-          <button
-            type="button"
-            className="min-h-11 px-3 text-dust focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lamp disabled:opacity-40"
-            disabled={index === 0}
-            onClick={() => setIndex((value) => Math.max(0, value - 1))}
-          >
+          <button type="button" className="min-h-11 px-3 text-secondary disabled:opacity-40" disabled={index === 0} onClick={() => setIndex((value) => Math.max(0, value - 1))}>
             Back
           </button>
           <button
             type="button"
-            className="min-h-11 bg-lamp px-4 text-desk focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lamp"
+            className="btn-primary min-h-11 rounded-xl bg-accent px-4 text-canvas"
             onClick={() => {
               if (last || visible.length === 0) onClose()
               else setIndex((value) => value + 1)

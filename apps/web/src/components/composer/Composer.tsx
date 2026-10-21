@@ -1,24 +1,36 @@
+import { ArrowUp, Headphones, ListChecks, Mic, Paperclip, Sparkles, Square } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
-import { ApiError, upload } from "../api/client.ts"
-import { postTurn } from "../conversation/postTurn.ts"
-import { runScenario } from "../demo/runScenario.ts"
-import { features as flags } from "../features.ts"
-import { applyCorrection, fileProblem, fileKind, inputTypeFor, keyPhrase } from "../input/describe.ts"
-import { registerInput } from "../input/bridge.ts"
-import type { AudioFeatures } from "../types/audio_features.ts"
-import type { InputType } from "../types/input_type.ts"
-import { useStudio } from "../state/studio.ts"
-import { Button } from "./Button.tsx"
-import { RecognitionCard } from "./RecognitionCard.tsx"
-import { VuMeter } from "./VuMeter.tsx"
+import { ApiError, upload } from "../../api/client.ts"
+import { postTurn } from "../../conversation/postTurn.ts"
+import { runScenario } from "../../demo/runScenario.ts"
+import { features as flags } from "../../features.ts"
+import { registerInput } from "../../input/bridge.ts"
+import { applyCorrection, describeFeatures, fileKind, fileProblem, inputTypeFor, keyPhrase } from "../../input/describe.ts"
+import { rememberIdea } from "../../recentIdeas.ts"
+import { useStudio } from "../../state/studio.ts"
+import type { AudioFeatures } from "../../types/audio_features.ts"
+import type { InputType } from "../../types/input_type.ts"
+import { Button } from "../Button.tsx"
 
 type Held = {
   file: File
   inputType: InputType
 }
 
-export function InputPanel() {
+const STARTS = [
+  { label: "Rainy night drive", text: "a rainy night drive, missing someone" },
+  { label: "Summer festival", text: "a summer festival" },
+  { label: "Calm morning", text: "a calm morning" },
+]
+
+type Props = {
+  started: boolean
+  onBegin: () => void
+  onBubble: (text: string) => void
+}
+
+export function Composer({ started, onBegin, onBubble }: Props) {
   const [text, setText] = useState("")
   const [held, setHeld] = useState<Held | null>(null)
   const [hint, setHint] = useState<string | null>(null)
@@ -53,6 +65,8 @@ export function InputPanel() {
   const tempoTextRef = useRef("")
   const submitRef = useRef<() => Promise<"sent" | "confirm" | "blocked">>(async () => "blocked")
   const confirmRef = useRef<() => Promise<void>>(async () => undefined)
+  const onBeginRef = useRef(onBegin)
+  const onBubbleRef = useRef(onBubble)
 
   function markRecording(value: boolean) {
     recordingRef.current = value
@@ -197,12 +211,20 @@ export function InputPanel() {
     rememberFeatures(audio ?? null)
   }
 
+  async function answerQuestion(value: string) {
+    const current = useStudio.getState().turn
+    if (current?.status !== "question" || !current.question) return false
+    await postTurn({ answer: { slot: current.question.slot, action: "answer", value } })
+    return true
+  }
+
   async function submit(): Promise<"sent" | "confirm" | "blocked"> {
     if (recordingRef.current || waitingRef.current) return "blocked"
     const currentText = textRef.current
     const currentHeld = heldRef.current
+    const openQuestion = useStudio.getState().turn?.status === "question"
     if (!currentText.trim() && !currentHeld) {
-      setHint("Write a line, or add a sound, before sending.")
+      if (!openQuestion) setHint("Write a line, or add a sound, before sending.")
       return "blocked"
     }
     setHint(null)
@@ -210,6 +232,15 @@ export function InputPanel() {
     setBusy(true)
     useStudio.getState().setStatus("working")
     try {
+      if (openQuestion && currentText.trim() && !currentHeld) {
+        const value = currentText.trim()
+        await answerQuestion(value)
+        onBubbleRef.current(value)
+        textRef.current = ""
+        setText("")
+        onBeginRef.current()
+        return "sent"
+      }
       let audio = featuresRef.current ?? undefined
       if (currentHeld) {
         audio = await upload({
@@ -226,10 +257,18 @@ export function InputPanel() {
           setKeyText(keyTextRef.current)
           setTempoText(tempoTextRef.current)
           useStudio.getState().setStatus("idle")
+          onBubbleRef.current(currentText.trim() || currentHeld.file.name)
+          onBeginRef.current()
           return "confirm"
         }
       }
+      const said = currentText.trim()
       await sendTurn(audio)
+      if (said) rememberIdea(said)
+      onBubbleRef.current(said || currentHeld?.file.name || "A sound")
+      onBeginRef.current()
+      textRef.current = ""
+      setText("")
       return "sent"
     } catch (err) {
       useStudio.getState().setStatus("error")
@@ -249,8 +288,12 @@ export function InputPanel() {
     try {
       const next = fixingRef.current ? applyCorrection(audio, keyTextRef.current, tempoTextRef.current) : audio
       rememberFeatures(next)
+      const said = textRef.current.trim()
       await sendTurn(next)
+      if (said) rememberIdea(said)
       markFixing(false)
+      textRef.current = ""
+      setText("")
     } catch (err) {
       useStudio.getState().setStatus("error")
       setError(err instanceof ApiError ? plainFailure(err.message) : "That did not go through. Try sending it again.")
@@ -290,6 +333,8 @@ export function InputPanel() {
   useEffect(() => {
     submitRef.current = submit
     confirmRef.current = confirm
+    onBeginRef.current = onBegin
+    onBubbleRef.current = onBubble
   })
 
   useEffect(() => {
@@ -313,20 +358,90 @@ export function InputPanel() {
     }
   }
 
-  const soundDoor = flags.record ? "Drop or record a sound" : "Drop a sound"
+  async function quick(next: string) {
+    apply(next, null)
+    await submitRef.current()
+  }
+
+  const confirmLabel = error && waiting ? "Try again" : "Confirm this reading"
+  const unsure = waiting && features !== null && features.confidence < 0.6
 
   return (
-    <div className="flex flex-col gap-6 p-4">
-      <h1 data-tour="welcome">Turn a feeling into editable layers for your song.</h1>
-      <section aria-label="Describe an idea" className="flex flex-col gap-3">
-        <h2>Describe an idea</h2>
+    <div className="flex flex-col gap-4 px-4 pb-4">
+      {features ? (
+        <div className="rounded-2xl border border-white/15 px-4 py-3">
+          <p className="text-secondary">{describeFeatures(features)}</p>
+          {unsure ? (
+            <div className="mt-3 flex flex-col gap-3">
+              {fixing ? (
+                <div className="flex flex-col gap-2">
+                  <label className="text-sm text-muted" htmlFor="fix-key">
+                    Key
+                  </label>
+                  <input
+                    id="fix-key"
+                    value={keyText}
+                    onChange={(event) => {
+                      keyTextRef.current = event.target.value
+                      setKeyText(event.target.value)
+                    }}
+                    className="rounded-xl border border-white/15 bg-transparent px-3 py-2 text-ink outline-none"
+                  />
+                  <label className="text-sm text-muted" htmlFor="fix-tempo">
+                    Tempo
+                  </label>
+                  <input
+                    id="fix-tempo"
+                    inputMode="decimal"
+                    value={tempoText}
+                    onChange={(event) => {
+                      tempoTextRef.current = event.target.value
+                      setTempoText(event.target.value)
+                    }}
+                    className="rounded-xl border border-white/15 bg-transparent px-3 py-2 text-ink outline-none"
+                  />
+                </div>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => void confirm()} disabled={busy}>
+                  {confirmLabel}
+                </Button>
+                {fixing ? null : (
+                  <Button tone="secondary" onClick={() => markFixing(true)} disabled={busy}>
+                    Fix the key or tempo
+                  </Button>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      <form
+        data-tour="composer"
+        className={`glass flex flex-col gap-3 p-3 ${dragging ? "outline outline-2 outline-accent" : ""}`}
+        onSubmit={(event) => {
+          event.preventDefault()
+          void submit()
+        }}
+        onDragOver={(event) => {
+          event.preventDefault()
+          setDragging(true)
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(event) => {
+          event.preventDefault()
+          setDragging(false)
+          const file = event.dataTransfer.files[0]
+          if (file) acceptFile(file, "drop")
+        }}
+      >
         <label className="sr-only" htmlFor="idea">
           The idea
         </label>
         <textarea
           id="idea"
           value={text}
-          rows={5}
+          rows={3}
           placeholder="a rainy night drive, missing someone"
           aria-invalid={hint ? true : undefined}
           aria-describedby={hint ? "idea-hint" : undefined}
@@ -335,30 +450,53 @@ export function InputPanel() {
             setText(event.target.value)
             if (hint) setHint(null)
           }}
-          className="min-h-36 w-full resize-y rounded-panel border border-walnut-line bg-studio-night/40 px-3 py-3 text-base text-tape-cream outline-none placeholder:text-dust focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return
+            event.preventDefault()
+            event.currentTarget.form?.requestSubmit()
+          }}
+          className="min-h-24 w-full resize-y bg-transparent px-2 py-2 text-base text-ink outline-none placeholder:text-muted"
         />
         {hint ? (
-          <p id="idea-hint" role="status" className="text-sm text-dust">
+          <p id="idea-hint" role="status" className="px-2 text-sm text-secondary">
             {hint}
           </p>
         ) : null}
-      </section>
-      <section aria-label={soundDoor} className="flex flex-col gap-3">
-        <h2>{soundDoor}</h2>
-        <div
-          className={`rounded-panel border border-dashed px-3 py-4 text-center ${dragging ? "border-vu-amber" : "border-walnut-line"}`}
-          onDragOver={(event) => {
-            event.preventDefault()
-            setDragging(true)
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(event) => {
-            event.preventDefault()
-            setDragging(false)
-            const file = event.dataTransfer.files[0]
-            if (file) acceptFile(file, "drop")
-          }}
-        >
+        {held ? (
+          <p className="px-2 text-sm text-secondary">
+            {held.file.name}{" "}
+            <button type="button" className="text-ink underline-offset-4 hover:underline" onClick={clearHeld}>
+              Remove
+            </button>
+          </p>
+        ) : null}
+        {fileNote ? (
+          <p role="status" className="px-2 text-sm text-secondary">
+            {fileNote}
+          </p>
+        ) : null}
+        {recording ? (
+          <div className="flex items-center gap-3 px-2">
+            <div
+              className="h-2 flex-1 overflow-hidden rounded-full bg-white/10"
+              role="meter"
+              aria-label="Input level"
+              aria-valuemin={0}
+              aria-valuemax={1}
+              aria-valuenow={level}
+            >
+              <div className="h-full bg-accent" style={{ width: `${Math.round(level * 100)}%` }} />
+            </div>
+            <p className="text-sm text-ink tabular-nums" aria-live="polite">
+              {formatElapsed(elapsed)}
+            </p>
+            <button type="button" className="inline-flex items-center gap-2 text-ink" onClick={stopRecording}>
+              <Square size={14} aria-hidden />
+              Stop
+            </button>
+          </div>
+        ) : null}
+        <div className="flex items-center gap-2">
           <input
             ref={fileInput}
             type="file"
@@ -372,95 +510,92 @@ export function InputPanel() {
           />
           <button
             type="button"
-            className="text-sm text-tape-cream underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
+            aria-label="Attach a sound"
+            className="inline-flex size-11 items-center justify-center rounded-full text-secondary"
             onClick={() => fileInput.current?.click()}
           >
-            Drop a wav, mp3, m4a, webm, or MIDI file
+            <Paperclip size={18} aria-hidden />
           </button>
-          {held ? (
-            <p className="mt-2 text-sm text-dust">
-              {held.file.name}{" "}
+          {flags.record ? (
+            <button
+              type="button"
+              aria-label="Record"
+              className="inline-flex size-11 items-center justify-center rounded-full text-secondary disabled:opacity-40"
+              onClick={() => void startRecording()}
+              disabled={busy || recording}
+            >
+              <Mic size={18} aria-hidden />
+            </button>
+          ) : null}
+          <span className="ml-auto">
+            {waiting ? null : error ? (
+              <Button onClick={() => void submit()}>Try again</Button>
+            ) : (
               <button
-                type="button"
-                aria-label="Remove the file"
-                className="text-tape-cream underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
-                onClick={clearHeld}
+                type="submit"
+                aria-label="Send the idea"
+                disabled={busy || recording}
+                className="btn-primary inline-flex size-11 items-center justify-center rounded-full bg-accent text-canvas disabled:opacity-40"
               >
-                Remove
+                <ArrowUp size={18} aria-hidden />
+                <span className="sr-only">Send the idea</span>
               </button>
-            </p>
-          ) : null}
-          {fileNote ? (
-            <p role="status" className="mt-2 text-sm text-dust">
-              {fileNote}
-            </p>
-          ) : null}
+            )}
+          </span>
         </div>
-        {flags.record ? (
-          recording ? (
-            <div className="flex items-center gap-3">
-              <VuMeter value={level} label="Input level" />
-              <p className="text-sm text-tape-cream tabular-nums" aria-live="polite">
-                {formatElapsed(elapsed)}
-              </p>
-              <Button tone="secondary" onClick={stopRecording}>
-                Stop
-              </Button>
-            </div>
-          ) : (
-            <Button tone="secondary" onClick={() => void startRecording()} disabled={busy}>
-              Record
-            </Button>
-          )
-        ) : null}
-      </section>
-      {flags.demo ? (
-        <section aria-label="Try a 30 second demo" className="flex flex-col items-start gap-3">
-          <h2>Try a 30 second demo</h2>
-          <p className="text-dust">A rainy night, from the first question through the takes.</p>
-          <Button tone="secondary" onClick={() => void runDemo()} disabled={demoBusy || busy || recording}>
-            Try a 30 second demo
-          </Button>
-          {demoError ? (
-            <p role="alert" className="text-fault">
-              {demoError}
-            </p>
-          ) : null}
-        </section>
-      ) : null}
+      </form>
       {error ? (
-        <p role="alert" className="text-fault">
+        <p role="alert" className="text-danger">
           {error}
         </p>
       ) : null}
-      {features ? (
-        <RecognitionCard
-          features={features}
-          fixing={fixing}
-          keyText={keyText}
-          tempoText={tempoText}
-          onKeyText={(value) => {
-            keyTextRef.current = value
-            setKeyText(value)
-          }}
-          onTempoText={(value) => {
-            tempoTextRef.current = value
-            setTempoText(value)
-          }}
-          onFix={() => markFixing(true)}
-          onConfirm={() => void confirm()}
-          busy={busy}
-          ask={waiting}
-          confirmLabel={error && waiting ? "Try again" : "Confirm this reading"}
-        />
-      ) : null}
-      {waiting ? null : error ? (
-        <Button onClick={() => void submit()}>Try again</Button>
-      ) : (
-        <Button onClick={() => void submit()} disabled={busy || recording}>
-          Send the idea
-        </Button>
+      {started ? null : (
+        <>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Quick start">
+            {STARTS.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                className="rounded-full border border-white/15 px-3 py-1.5 text-sm text-secondary"
+                onClick={() => void quick(item.text)}
+                disabled={demoBusy || busy || recording}
+              >
+                {item.label}
+              </button>
+            ))}
+            {flags.demo ? (
+              <button
+                type="button"
+                className="rounded-full border border-white/15 px-3 py-1.5 text-sm text-secondary disabled:opacity-40"
+                onClick={() => void runDemo()}
+                disabled={demoBusy || busy || recording}
+              >
+                Try the demo
+              </button>
+            ) : null}
+          </div>
+          {demoError ? (
+            <p role="alert" className="text-danger">
+              {demoError}
+            </p>
+          ) : null}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <HowCard icon={Sparkles} title="Describe it" text="Write a feeling, or bring a sound." />
+            <HowCard icon={ListChecks} title="Answer or skip" text="A few questions, or skip them all." />
+            <HowCard icon={Headphones} title="Hear your layers" text="Build, listen, and pick a take." />
+          </div>
+        </>
       )}
+    </div>
+  )
+}
+
+function HowCard({ icon: Icon, title, text }: { icon: typeof Sparkles; title: string; text: string }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/3 px-3 py-3">
+      <Icon size={18} aria-hidden className="text-accent" />
+      <p className="mt-2 font-medium">{title}</p>
+      <p className="text-sm text-secondary">{text}</p>
     </div>
   )
 }

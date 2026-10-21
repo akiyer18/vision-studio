@@ -31,8 +31,8 @@ export function DemoMenu() {
   }
 
   return (
-    <div id="demo-menu" className="border-b border-walnut-line px-4 py-3">
-      <p className="text-sm text-dust">Demo</p>
+    <div id="demo-menu" className="mb-4 border-b border-white/15 pb-3">
+      <p className="text-sm text-muted">Demo</p>
       <div className="mt-2 flex flex-wrap gap-2" role="group" aria-label="Demo scenarios">
         {SCENARIOS.map((item) => (
           <Button key={item.id} tone="secondary" aria-busy={running === item.id || undefined} onClick={() => void run(item.id)}>
@@ -40,25 +40,25 @@ export function DemoMenu() {
           </Button>
         ))}
       </div>
-      <ul className="mt-3 flex max-w-3xl flex-col gap-1 text-sm text-dust">
+      <ul className="mt-3 flex max-w-3xl flex-col gap-1 text-sm text-muted">
         {SCENARIOS.map((item) => (
           <li key={item.id}>
-            <span className="text-tape-cream">{item.label}.</span> {item.detail}
+            <span className="text-ink">{item.label}.</span> {item.detail}
           </li>
         ))}
       </ul>
       {running ? (
-        <p role="status" className="mt-2 text-sm text-signal-violet">
+        <p role="status" className="mt-2 text-sm text-accent">
           Running {SCENARIOS.find((item) => item.id === running)?.label}.
         </p>
       ) : null}
       {note ? (
-        <p role="status" className="mt-2 text-sm text-tape-cream">
+        <p role="status" className="mt-2 text-sm text-ink">
           {note}
         </p>
       ) : null}
       {problem ? (
-        <p role="alert" className="mt-2 text-sm text-clip-red">
+        <p role="alert" className="mt-2 text-sm text-danger">
           {problem}
         </p>
       ) : null}

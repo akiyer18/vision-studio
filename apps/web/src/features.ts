@@ -4,6 +4,8 @@ type Flags = {
   fullMix: boolean
   styleguideLink: boolean
   demo: boolean
+  analyser: boolean
+  edits: boolean
 }
 
 export const features: Flags = {
@@ -12,4 +14,6 @@ export const features: Flags = {
   fullMix: true,
   styleguideLink: true,
   demo: true,
+  analyser: false,
+  edits: false,
 }
