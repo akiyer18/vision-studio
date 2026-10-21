@@ -4,12 +4,18 @@ Tabs list: 5 tabs
 
 - create from scratch (prompt text, sound)
 	- TODO ask if we can do both text and sound simultaneously
+	- listen to my mic for 7 seconds and initiate the sound with ambiente
 - analyse uploaded track / from DAW to suggest improvements 
 - generate alternatives
 	- comparative analysis of new alternatives, ai should describe changes made
 
 - analyse genre history, suggest artists to listen to as reference (maybe use Soundcharts API for that?)
+	- add the ability to rank references based on popularity
+	- geolocation
+	- trends in the recent time
+	- sometimes the artist brings references to the producer - TODO how can we use that?
 - tweak on a sample to create a new sample (suggest samples?)
+- carry on tab which generates how the track can develop?
 
 
 different levels of musicians - select your level?
