@@ -6,7 +6,7 @@ UV="${UV:-$HOME/.local/bin/uv}"; command -v uv >/dev/null 2>&1 && UV=uv
 echo "[setup] creating venv (Python 3.11) ..." >&2
 "$UV" venv .venv --python 3.11 --quiet
 echo "[setup] installing packages (torch CPU wheels, demucs, basic-pitch[onnx], librosa, pedalboard) ..." >&2
-"$UV" pip install --python .venv/bin/python --quiet -r requirements.txt
+UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-900}" UV_CONCURRENT_DOWNLOADS="${UV_CONCURRENT_DOWNLOADS:-4}" "$UV" pip install --python .venv/bin/python -r requirements.txt
 echo "[setup] pre-downloading demucs htdemucs weights ..." >&2
 .venv/bin/python - <<'PY' >&2
 import warnings; warnings.filterwarnings("ignore")

@@ -464,7 +464,7 @@ app.post('/api/tweak', async (req, res) => {
 // ================= v3: the producer agent (Claude with tools) =================
 const STATE_FILE = path.join(TMP, 'chat-state.json');
 const chat = { history: [], recordings: { refs: [] } };   // attachments persist for the whole session (and across restarts)
-try { const st = JSON.parse(await fs.readFile(STATE_FILE, 'utf8')); chat.history = st.history || []; chat.recordings = st.recordings || { refs: [] }; if (st.samples) lastBuild.samples = st.samples; if (st.tracks) lastBuild.tracks = st.tracks; if (st.bpm) lastBuild.bpm = st.bpm; if (st.clips) lastBuild.clips = st.clips; if (st.groove) lastBuild.groove = st.groove; if (st.lastRender) lastBuild.lastRender = st.lastRender; chat.promptHash = st.promptHash; } catch {}
+try { const st = JSON.parse(await fs.readFile(STATE_FILE, 'utf8')); chat.history = st.history || []; chat.recordings = st.recordings || { refs: [] }; if (st.samples) lastBuild.samples = st.samples; if (st.tracks) lastBuild.tracks = st.tracks; if (st.bpm) lastBuild.bpm = st.bpm; if (st.clips) lastBuild.clips = st.clips; if (st.soundHistory) lastBuild.soundHistory = st.soundHistory; if (st.groove) lastBuild.groove = st.groove; if (st.lastRender) lastBuild.lastRender = st.lastRender; chat.promptHash = st.promptHash; } catch {}
 lastBuild.samples ||= {};   // track name (lower) -> { samplePath, slotPath, role }
 // Thinking blocks are bound to the system prompt + tool list that produced them; after we change either, replaying them is a 400.
 import { createHash } from 'node:crypto';
@@ -490,8 +490,16 @@ function safeHistory(h, max = 60) {   // cut only at a plain user text message s
   while (i < h.length && !(h[i].role === 'user' && typeof h[i].content === 'string')) i++;
   return i < h.length ? h.slice(i) : [];
 }
-async function saveChat() { try { await fs.writeFile(STATE_FILE, JSON.stringify({ history: safeHistory(chat.history), recordings: chat.recordings, samples: lastBuild.samples, tracks: lastBuild.tracks, bpm: lastBuild.bpm, clips: lastBuild.clips, groove: lastBuild.groove || null, lastRender: lastBuild.lastRender || null, promptHash: chat.promptHash })); } catch (e) { console.warn('[state]', e.message); } }
-function rememberSound(trackName, samplePath, slotPath, role) { reservedSlots.delete(path.basename(slotPath || '')); lastBuild.samples[String(trackName).toLowerCase()] = { samplePath, slotPath, role, at: Date.now() }; }
+async function saveChat() { try { await fs.writeFile(STATE_FILE, JSON.stringify({ history: safeHistory(chat.history), recordings: chat.recordings, samples: lastBuild.samples, soundHistory: lastBuild.soundHistory, tracks: lastBuild.tracks, bpm: lastBuild.bpm, clips: lastBuild.clips, groove: lastBuild.groove || null, lastRender: lastBuild.lastRender || null, promptHash: chat.promptHash })); } catch (e) { console.warn('[state]', e.message); } }
+lastBuild.soundHistory ||= {};   // track -> previous sounds (newest last), so a change is always undoable
+function rememberSound(trackName, samplePath, slotPath, role) {
+  reservedSlots.delete(path.basename(slotPath || ''));
+  const key = String(trackName).toLowerCase();
+  const prev = lastBuild.samples[key];
+  if (prev?.samplePath && prev.samplePath !== samplePath) (lastBuild.soundHistory[key] ||= []).push(prev);
+  if (lastBuild.soundHistory[key]?.length > 8) lastBuild.soundHistory[key].shift();
+  lastBuild.samples[key] = { samplePath, slotPath, role, at: Date.now() };
+}
 lastBuild.clips ||= {};   // track name (lower) -> { steps|notes, bars, swing, slot }
 function rememberClip(trackName, clip) { lastBuild.clips[String(trackName).toLowerCase()] = { ...clip, at: Date.now() }; }
 function forgetTrack(trackName) {
@@ -622,6 +630,41 @@ function makeCtx(emit) {
       const result = await audioToAudio({ wavPath: input, prompt: `TrackType: Music, ${String(prompt).trim().replace(/^(TrackType|Genre|Format):[^,]+,\s*/i, '')}, cohesive full mix at ${Math.round(lastBuild.bpm || 120)} BPM`, strength: clamp(Number(strength), 0.2, 0.8), duration: Math.min(Math.max(6, Math.ceil(dur)), 60), model: LOOP_MODEL });
       const f = await publish(result.buffer, 'restyle', '.wav', 'loop');
       return { path: f.path, url: f.url, name: f.name, strength, basedOn: r.url };
+    },
+    // closed loop: Gemini hears -> proposes a prompt -> Stability regenerates -> Gemini scores; keep the best
+    async refineSound({ path: startPath, intent, currentPrompt = intent, role = 'drum', rounds = 2, track }) {
+      if (!audioPathOk(startPath)) throw new Error('refine: path outside project audio');
+      const ears = await import('./lib/ears.js');
+      const kind = TONAL.has(String(role).toLowerCase()) ? 'tone' : 'drum';
+      let best = { path: startPath, prompt: currentPrompt, match: null, round: 0 };
+      const history = [];
+      let current = { ...best };
+      for (let r = 1; r <= clamp(Number(rounds), 1, 3); r++) {
+        const prop = await ears.proposePrompt(current.path, { intent, currentPrompt: current.prompt, kind });
+        if (r === 1) { best.match = prop.match; history.push({ round: 0, prompt: current.prompt, heard: prop.heard, match: prop.match }); }
+        if (prop.match >= 9) break;
+        const useA2A = Boolean(prop.useAudioToAudio);
+        const out = await synthesize({ prompt: prop.newPrompt, name: `${role}-refined`, kind: kind === 'tone' ? 'tone' : undefined, mode: useA2A ? 'oneshot' : 'text', audioPath: useA2A ? current.path : undefined, strength: useA2A ? clamp(Number(prop.strength) || 0.5, 0.3, 0.8) : undefined, oneshotSeconds: kind === 'tone' ? 2.5 : 1.0 });
+        const one = out.files.find((f) => f.kind === 'oneshot') || out.files[0];
+        const judged = await ears.judge(one.path, intent);
+        history.push({ round: r, prompt: prop.newPrompt, viaAudioToAudio: useA2A, gap: prop.gap, heard: judged.text.split('\n')[0], match: judged.match });
+        current = { path: one.path, url: one.url, prompt: prop.newPrompt, match: judged.match, round: r };
+        if (judged.match != null && (best.match == null || judged.match > best.match)) best = { ...current };
+        if (judged.match >= 9) break;
+      }
+      let applied = null;
+      if (track && best.path !== startPath) { try { applied = await this.live.loadSample({ name: track, samplePath: best.path, role }); } catch (e) { applied = { error: e.message }; } }
+      return { best: { path: best.path, url: best.url || `/out/${encodeURIComponent(path.basename(best.path))}`, prompt: best.prompt, match: best.match, round: best.round }, history, appliedToTrack: applied ? track : null, applied };
+    },
+    async undoSound({ track }) {
+      const key = String(track).toLowerCase();
+      const hist = lastBuild.soundHistory[key] || [];
+      if (!hist.length) throw new Error(`no previous sound recorded for ${track}`);
+      const prev = hist.pop();
+      const r = await this.live.loadSample({ name: track, samplePath: prev.samplePath, role: prev.role });
+      lastBuild.soundHistory[key] = hist;   // loadSample pushed the current one; keep the stack sane
+      lastBuild.soundHistory[key].pop();
+      return { restored: path.basename(prev.samplePath), remainingUndos: hist.length, live: r };
     },
     productionDna: async (p) => { if (!audioPathOk(p)) throw new Error('dna: path outside project audio'); return (await import('./lib/ears.js')).productionDna(p); },
     async critiqueMix(refPath) {
