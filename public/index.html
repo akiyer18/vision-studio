@@ -783,8 +783,29 @@ async function sendChat() {
         $('c-log').scrollTop = 1e9;
       }
     }
-  } catch (e) { body.textContent = 'Error: ' + e.message; }
+  } catch (e) {
+    // connection dropped (server restart, sleep, long silence): recover the finished turn from the server instead of showing a dead error
+    body.textContent = 'Connection dropped, recovering the answer…';
+    const recovered = await recoverLastTurn(tools, body, live);
+    if (!recovered) { body.textContent = 'Error: ' + e.message + ' (the server may have restarted; your request may still have completed in Live)'; body.style.color = 'var(--danger)'; }
+  }
   chatBusy = false; $('c-send').disabled = false; $('c-text').focus();
+}
+async function recoverLastTurn(tools, body) {
+  for (let i = 0; i < 40; i++) {           // up to ~6 minutes
+    await new Promise(r => setTimeout(r, i < 5 ? 3000 : 10000));
+    let t; try { t = await (await fetch('/api/chat/last')).json(); } catch { continue; }
+    if (!t || t.status === 'none') return false;
+    tools.innerHTML = '';
+    for (const ev of t.events) {
+      if (ev.type === 'tool') { const li = document.createElement('li'); li.textContent = ev.summary || ev.name; li.dataset.name = ev.name; tools.appendChild(li); }
+      else if (ev.type === 'tool_done') { const li = [...tools.children].reverse().find(l => l.dataset.name === ev.name && !l.className); if (li) { li.className = ev.ok === false ? 'bad' : 'ok'; if (ev.summary) li.textContent = ev.summary; } }
+    }
+    if (t.status === 'running') { body.textContent = `Still working… (${Math.round((Date.now() - t.startedAt) / 1000)} s)`; continue; }
+    body.textContent = t.status === 'error' ? 'Error: ' + ((t.events.find(e => e.type === 'error') || {}).error || 'unknown') : (t.text || 'Done.');
+    return true;
+  }
+  return false;
 }
 addBot('Hi. Tell me what you hear, or beatbox a beat and hum a melody, and I\'ll build it in Live layer by layer. I\'ll tell you what I did and what to try next.');
 </script>

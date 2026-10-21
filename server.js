@@ -1005,8 +1005,14 @@ app.post('/api/chat', async (req, res) => {
   chatQueue = myTurn.catch(() => {});
   await myTurn;
 });
-async function runChatTurn(req, res, emit) {
+const turns = { last: null };   // { id, status:'running'|'done'|'error', events:[], text, startedAt, endedAt }
+async function runChatTurn(req, res, emit0) {
   chatBusy = true;
+  const turn = { id: `${Date.now()}`, status: 'running', events: [], text: '', startedAt: Date.now() };
+  turns.last = turn;
+  const emit = (e) => { turn.events.push(e); if (e.type === 'text') turn.text = e.text; try { emit0(e); } catch {} };
+  emit({ type: 'turn', id: turn.id });
+  const beat = setInterval(() => { try { res.write(': keepalive\n\n'); } catch {} }, 15000);   // SSE comment, keeps proxies/browsers from idling the stream
   try {
     const { text = '', beatId, humId, refIds = [], reset } = req.body || {};
     if (reset) { chat.history = []; chat.recordings = { refs: [] }; lastBuild.samples = {}; lastBuild.tracks = {}; await saveChat(); }
@@ -1030,13 +1036,16 @@ async function runChatTurn(req, res, emit) {
     chat.history = out.history;
     await saveChat();
     emit({ type: 'text', text: out.text });
+    turn.status = 'done';
     emit({ type: 'done', tracks: lastBuild.tracks });
   } catch (e) {
     console.error('[chat]', e);
+    turn.status = 'error';
     emit({ type: 'error', error: e.message });
-  } finally { chatBusy = false; }
+  } finally { chatBusy = false; turn.endedAt = Date.now(); clearInterval(beat); }
   res.end();
 }
+app.get('/api/chat/last', (_req, res) => res.json(turns.last ? { ...turns.last, events: turns.last.events.slice(-200) } : { status: 'none' }));
 app.post('/api/chat/reset', async (_req, res) => { chat.history = []; chat.recordings = { refs: [] }; lastBuild.samples = {}; lastBuild.tracks = {}; await saveChat(); res.json({ ok: true }); });
 
 app.use((err, req, res, _next) => {   // multer limits, bad JSON, anything thrown synchronously -> JSON, not HTML
@@ -1045,8 +1054,11 @@ app.use((err, req, res, _next) => {   // multer limits, bad JSON, anything throw
   res.status(err.status || err.statusCode || 500).json({ error: err.message || 'server error' });
 });
 
-app.listen(PORT, () => {
+process.on('unhandledRejection', (e) => console.error('[unhandledRejection]', e?.message || e));
+process.on('uncaughtException', (e) => console.error('[uncaughtException]', e?.message || e));
+const server = app.listen(PORT, () => {
   console.log(`ADE Hack running at http://localhost:${PORT}`);
   console.log(`Ableton sees: ${OUT_DIR}`);
   console.log(`Stability key: ${hasKey(process.env.STABILITY_API_KEY) ? 'ok' : 'MISSING'} | Anthropic key: ${hasKey(process.env.ANTHROPIC_API_KEY) ? 'ok' : 'not set (rule-based patterns)'}`);
 });
+server.requestTimeout = 0; server.headersTimeout = 0; server.keepAliveTimeout = 65000; server.timeout = 0;   // producer turns can run for many minutes
