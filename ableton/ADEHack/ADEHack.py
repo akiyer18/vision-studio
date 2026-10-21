@@ -11,7 +11,7 @@ import socket
 import Live
 from _Framework.ControlSurface import ControlSurface
 
-VERSION = '5.5'
+VERSION = '5.6'
 HOST = '127.0.0.1'
 PORT = 9004
 GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 42,
@@ -19,7 +19,7 @@ GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 4
                  'crash': 49, 'perc': 54}
 WOULD_BLOCK = (errno.EAGAIN, errno.EWOULDBLOCK, errno.EINPROGRESS)
 PENDING = object()  # returned by a command that will reply later via schedule_message
-COMMANDS = ['arrangement_info', 'arrangement_record', 'browse', 'capture_midi', 'clip_edit', 'create_clip', 'create_midi_track', 'create_scene', 'delete_device', 'delete_track', 'describe_set', 'duplicate_clip', 'duplicate_scene', 'duplicate_track', 'fire_scene', 'focus_clip', 'get_clip_notes', 'list_devices', 'list_scenes', 'list_tracks', 'load_device', 'load_sample', 'ping', 'play', 'play_for', 'play_scene_for', 'rename_scene', 'rename_track', 'sample_info', 'select_track', 'set_device_param', 'set_mixer', 'set_send', 'set_simpler', 'set_tempo', 'set_track_color', 'show_view', 'stop', 'stop_clip', 'transport_setup', 'version']
+COMMANDS = ['arrangement_info', 'arrangement_record', 'browse', 'capture_midi', 'clip_edit', 'create_clip', 'create_midi_track', 'create_scene', 'delete_device', 'delete_track', 'describe_set', 'duplicate_clip', 'duplicate_scene', 'duplicate_track', 'fire_scene', 'focus_clip', 'get_clip_notes', 'list_devices', 'list_scenes', 'list_tracks', 'load_device', 'load_sample', 'load_to_pad', 'pad_info', 'ping', 'play', 'play_for', 'play_scene_for', 'rename_scene', 'rename_track', 'sample_info', 'select_track', 'set_device_param', 'set_mixer', 'set_send', 'set_simpler', 'set_tempo', 'set_track_color', 'show_view', 'stop', 'stop_clip', 'transport_setup', 'version']
 LOAD_RETRY_TICKS = 3   # ~0.3 s between browser re-scans
 LOAD_RETRY_MAX = 8     # ~2.4 s total before replying not found
 
@@ -155,6 +155,10 @@ class ADEHack(ControlSurface):
                 return self._cmd_load_device(msg)
             if cmd == 'set_send':
                 return self._cmd_set_send(msg)
+            if cmd == 'load_to_pad':
+                return self._cmd_load_to_pad(msg)
+            if cmd == 'pad_info':
+                return self._cmd_pad_info(msg)
             if cmd == 'arrangement_info':
                 return dict(self._arrangement_info(), ok=True)
             if cmd == 'describe_set':
@@ -1064,6 +1068,164 @@ class ADEHack(ControlSurface):
         return {'ok': not errors or bool(done), 'track': track.name,
                 'device': {'index': index, 'name': dev.name, 'class_name': getattr(dev, 'class_name', '')},
                 'done': done, 'errors': errors, 'state': self._simpler_state(dev)}
+
+    # ------------------------------------------------------- v5.6: Drum Rack pads
+    def _drum_rack(self, track, spec=None):
+        if spec is not None:
+            return self._device(track, spec)
+        for i, d in enumerate(track.devices):
+            if getattr(d, 'class_name', '') == 'DrumGroupDevice' or getattr(d, 'can_have_drum_pads', False):
+                return i, d
+        return -1, None
+
+    def _ensure_drum_rack(self, track, browser):
+        index, rack = self._drum_rack(track)
+        if rack is not None:
+            return index, rack, False
+        item, root_name, searched, how = self._find_device_item(browser, 'Drum Rack')
+        if item is None:
+            raise ValueError('no Drum Rack in browser roots %r' % (searched,))
+        self.song().view.selected_track = track
+        before = len(list(track.devices))
+        browser.load_item(item)
+        devices = list(track.devices)
+        if len(devices) <= before:
+            raise ValueError('loading Drum Rack onto %r added no device' % (track.name,))
+        return len(devices) - 1, devices[-1], True
+
+    def _pad_state(self, pad):
+        info = {'note': int(pad.note), 'name': u'%s' % (pad.name,), 'has_chain': False, 'sample': None}
+        try:
+            info['mute'] = bool(pad.mute)
+            info['solo'] = bool(pad.solo)
+        except Exception:
+            pass
+        try:
+            chains = list(pad.chains)
+        except Exception:
+            chains = []
+        if chains:
+            info['has_chain'] = True
+            chain = chains[0]
+            info['chain_name'] = u'%s' % (chain.name,)
+            try:
+                devs = list(chain.devices)
+                info['chain_devices'] = [getattr(d, 'class_name', '') or d.name for d in devs]
+                for d in devs:
+                    if getattr(d, 'class_name', '') in self.SIMPLER_CLASSES:
+                        info['sample'] = u'%s' % (d.sample.file_path,) if d.sample is not None else None
+                        break
+            except Exception as e:
+                info['chain_error'] = '%r' % (e,)
+        return info
+
+    def _cmd_pad_info(self, msg):
+        track = self._track(msg.get('track', 'selected'))
+        index, rack = self._drum_rack(track, msg.get('device'))
+        if rack is None:
+            return {'ok': False, 'error': 'no Drum Rack on %r; devices: %r' % (track.name, [d.name for d in track.devices])}
+        pads = []
+        for pad in rack.drum_pads:
+            try:
+                st = self._pad_state(pad)
+            except Exception:
+                continue
+            if st['has_chain'] or msg.get('all'):
+                pads.append(st)
+        return {'ok': True, 'track': track.name, 'device_index': index, 'device': rack.name,
+                'pad_count': len(pads), 'pads': pads}
+
+    def _cmd_load_to_pad(self, msg):
+        """Load a sample into one Drum Rack pad. Route (what Push does in its PadHotswapping
+        mode): select the rack and the pad, set browser.hotswap_target = pad, load_item(sample).
+        Live then creates a Simpler chain in that pad (or replaces the pad's sample)."""
+        track = self._track(msg.get('track', 'selected'))
+        note = int(msg['note'])
+        if note < 0 or note > 127:
+            return {'ok': False, 'error': 'note %d out of range 0..127' % (note,)}
+        path = msg['path']
+        base = os.path.basename(path)
+        stem = os.path.splitext(base)[0]
+        browser = Live.Application.get_application().browser
+        # the sample item first, so a not-indexed file fails before we touch the set
+        item, searched = None, []
+        for root_name, root in self._roots(browser):
+            searched.append('%s:%s' % (root_name, getattr(root, 'name', '')))
+            item = self._find_item(root, (base, stem))
+            if item is not None:
+                break
+        if item is None:
+            return {'ok': False, 'error': 'not found in Live browser: %r; searched %r. '
+                    'Add the output folder via Places > "Add Folder..." in Live.' % (base, searched)}
+        song = self.song()
+        song.view.selected_track = track
+        rack_index, rack, created = self._ensure_drum_rack(track, browser)
+        pads = list(rack.drum_pads)
+        if note >= len(pads):
+            return {'ok': False, 'error': 'rack exposes %d pads, note %d not addressable' % (len(pads), note)}
+        pad = pads[note]
+        before = self._pad_state(pad)
+        observed = []
+        try:
+            song.view.select_device(rack)
+            observed.append('select_device ok')
+        except Exception as e:
+            observed.append('select_device failed: %r' % (e,))
+        try:
+            rack.view.selected_drum_pad = pad
+            observed.append('selected_drum_pad ok')
+        except Exception as e:
+            observed.append('selected_drum_pad failed: %r' % (e,))
+        route = None
+        hot = False
+        try:
+            browser.hotswap_target = pad
+            hot = browser.hotswap_target is not None
+            observed.append('hotswap_target=pad %s' % ('accepted' if hot else 'ignored'))
+        except Exception as e:
+            observed.append('hotswap_target=pad failed: %r' % (e,))
+        if not hot and before['has_chain']:
+            # fallback: hot-swap the pad's existing Simpler
+            try:
+                simpler = None
+                for d in pad.chains[0].devices:
+                    if getattr(d, 'class_name', '') in self.SIMPLER_CLASSES:
+                        simpler = d
+                        break
+                if simpler is not None:
+                    browser.hotswap_target = simpler
+                    hot = browser.hotswap_target is not None
+                    observed.append('hotswap_target=pad simpler %s' % ('accepted' if hot else 'ignored'))
+            except Exception as e:
+                observed.append('hotswap_target=simpler failed: %r' % (e,))
+        route = 'pad_hotswap' if hot else 'plain_load_item'
+        devices_before = len(list(track.devices))
+        try:
+            browser.load_item(item)
+            observed.append('load_item ok')
+        finally:
+            if hot:
+                try:
+                    browser.hotswap_target = None
+                except Exception as e:
+                    observed.append('leave hotswap failed: %r' % (e,))
+        after = self._pad_state(pad)
+        appended = len(list(track.devices)) - devices_before
+        if msg.get('name') and after['has_chain']:
+            try:
+                pad.chains[0].name = u'%s' % (msg['name'],)
+                after = self._pad_state(pad)
+            except Exception as e:
+                observed.append('chain rename failed: %r' % (e,))
+        landed = after['has_chain'] and (after.get('sample') or '').lower().endswith(stem.lower() + os.path.splitext(base)[1].lower()) \
+            or (after['has_chain'] and after.get('sample') != before.get('sample'))
+        reply = {'ok': bool(landed), 'track': track.name, 'note': note, 'route': route,
+                'device_index': rack_index, 'rack_created': created, 'pad': after,
+                'devices_appended_to_track': appended, 'observed': observed, 'item': item.name}
+        if not landed:
+            reply['error'] = ('sample did not land in pad %d (route %s); pad before=%r after=%r; '
+                              '%d device(s) appended to the track instead' % (note, route, before, after, appended))
+        return reply
 
     # ------------------------------------------------------- v5.4: read the set
     NOTE_PREVIEW = 16

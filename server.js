@@ -1187,6 +1187,10 @@ app.post('/api/refine', async (req, res) => {
 app.get('/api/settings', (_req, res) => res.json(chat.settings));
 app.post('/api/settings', async (req, res) => { chat.settings = { ...chat.settings, ...(req.body || {}) }; await saveChat(); res.json(chat.settings); });
 app.get('/api/explanations', (_req, res) => res.json(lastBuild.explanations || {}));
+app.post('/api/loop-pattern', async (req, res) => {   // Stability loop (or any drum audio) -> MIDI pattern + groove
+  try { const ctx = makeCtx(() => {}); res.json(await ctx.loopToPattern(String(req.body?.path || ''), { bpm: Number(req.body?.bpm) || lastBuild.bpm || 120, bars: Number(req.body?.bars) || 2 })); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.post('/api/render', async (req, res) => {
   try { const ctx = makeCtx(() => {}); const r = await ctx.render({ bars: req.body?.bars }); res.json(r); }
   catch (e) { res.status(500).json({ error: e.message }); }
