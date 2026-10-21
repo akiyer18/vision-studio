@@ -56,8 +56,9 @@ app.get('/api/health', async (_req, res) => {
   res.json({
     stabilityKey: hasKey(process.env.STABILITY_API_KEY),
     anthropicKey: hasKey(process.env.ANTHROPIC_API_KEY),
-    ears: Boolean(process.env.HF_TOKEN || process.env.HUGGING_FACE_HUB_TOKEN),
+    ears: Boolean(process.env.HF_TOKEN || process.env.HUGGING_FACE_HUB_TOKEN || process.env.GEMINI_API_KEY),
     earsStatus: (await import('./lib/ears.js')).earsStatus(),
+    earsProviders: (await import('./lib/ears.js')).earsProviders(),
     outDir: OUT_DIR,
   });
 });
@@ -443,10 +444,18 @@ app.post('/api/upload', upload.single('audio'), async (req, res) => {
     await toWav(req.file.path, wav);
     const name = String(req.body?.name || req.file.originalname || 'audio').replace(/[^\w .()-]+/g, '_').slice(0, 80);
     uploads.set(id, { path: wav, name });
+    await fs.writeFile(path.join(TMP, `${id}-upload.json`), JSON.stringify({ path: wav, name }));   // survives server restarts
     res.json({ id, name, seconds: await (await import('./lib/audio.js')).durationSeconds(wav) });
   } catch (e) { res.status(500).json({ error: e.message }); }
   finally { if (req.file) fs.unlink(req.file.path).catch(() => {}); }
 });
+
+async function getUpload(id) {
+  id = String(id || '');
+  if (!/^[\w-]+$/.test(id)) return null;
+  if (uploads.has(id)) return uploads.get(id);
+  try { const u = JSON.parse(await fs.readFile(path.join(TMP, `${id}-upload.json`), 'utf8')); await fs.access(u.path); uploads.set(id, u); return u; } catch { return null; }
+}
 
 async function trackByName(send, name) {
   const r = await send({ cmd: 'list_tracks' });
@@ -535,9 +544,11 @@ app.post('/api/chat', async (req, res) => {
     if (!hasKey(process.env.ANTHROPIC_API_KEY)) throw new Error('ANTHROPIC_API_KEY is not set in .env (the producer agent needs Claude)');
     const { runProducer } = await import('./lib/agent.js');
     const recordings = {};
-    if (beatId && uploads.get(String(beatId))) recordings.beat = uploads.get(String(beatId)).path;
-    if (humId && uploads.get(String(humId))) recordings.hum = uploads.get(String(humId)).path;
-    const refs = (Array.isArray(refIds) ? refIds : []).map((id) => uploads.get(String(id))).filter(Boolean);
+    const beat = beatId && await getUpload(beatId); if (beat) recordings.beat = beat.path;
+    const hum = humId && await getUpload(humId); if (hum) recordings.hum = hum.path;
+    const refs = (await Promise.all((Array.isArray(refIds) ? refIds : []).map(getUpload))).filter(Boolean);
+    const missing = (Array.isArray(refIds) ? refIds.length : 0) + (beatId ? 1 : 0) + (humId ? 1 : 0) - refs.length - (beat ? 1 : 0) - (hum ? 1 : 0);
+    if (missing) emit({ type: 'tool_done', name: 'attachments', ok: false, summary: `${missing} attachment(s) could not be found on the server, please re-attach` });
     if (refs.length) recordings.refs = refs.map((r) => ({ name: r.name, path: r.path }));
     const out = await runProducer({ history: chat.history, userText: String(text), recordings, ctx: makeCtx(emit) });
     chat.history = out.history;
