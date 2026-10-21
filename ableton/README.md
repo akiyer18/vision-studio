@@ -11,7 +11,11 @@ instrument via `browser.hotswap_target = device` so `load_item` swaps the sample
 every ~0.3 s for up to ~2.4 s via schedule_message before replying not found — freshly written wavs take a moment to index; use a client timeout >= 5 s),
 `focus_clip {track, slot?}` (highlight slot, detail_clip, Session + Detail/Clip views, clip.view.show_loop()),
 `arrangement_record {bars?, stop?}` (record_mode + start_playing; auto-stops after bars via schedule_message), `show_view {view:"Session"|"Arranger"|"Detail/Clip"|"Detail/DeviceChain"}`, `play`, `stop`,
-`list_devices {track}`, `delete_track {track}`, `rename_track {track,name}`,
+`list_devices {track, params?:true}` (params: first 32 of each device with value/min/max/display),
+`load_device {track, name}` (BFS over browser.audio_effects > instruments > midi_effects > drums > sounds, exact then case-insensitive;
+selects the track, `load_item` appends the device; replies the new device + params), `set_device_param {track, device:int|name, param:int|name, value}` (clamped),
+`delete_device {track, device}`, `set_mixer {track, volume?:0..1 (0.85 = 0 dB), pan?:-1..1, mute?, solo?, arm?}`,
+`create_scene {index=-1, name?}`, `fire_scene {index}`, `list_scenes`, `stop_clip {track, slot}`, `delete_track {track}`, `rename_track {track,name}`,
 `browse {root?}` (debug: top-level names under each browser root).
 Replies: one JSON line, `{"ok":true,...}` or `{"ok":false,"error":"..."}`.
 

@@ -111,3 +111,31 @@ File naming: `${slug(name)}-${Date.now()}.wav|.mid`
 - ctx built from existing internals: synth (wraps the /api/synth pipeline as a function), writePattern, writeMelody, beatboxToPattern, humToNotes, live.* (sendToLive wrappers + slot pool + lastBuild registry keyed by track name), emit -> SSE.
 - POST /api/upload multipart audio -> { id, path(wav) }   (converted with toWav)
 - POST /api/chat json { text, beatId?, humId?, reset? } -> text/event-stream: events {type:'tool'|'tool_done'|'text'|'error'|'done', ...}; history kept in server memory (single session), `reset:true` clears it.
+
+# ---- v4: producer agent gets hands (sample surgery, devices, mixer, variations, arrangement) ----
+
+## ableton/ protocol additions (ADEHack.py v4)
+- {"cmd":"load_device","track":int|name,"name":"Saturator"|"Reverb"|"Auto Filter"|"Compressor"|"EQ Eight"|"Overdrive"|"Redux"|"Erosion"|"Ping Pong Delay"|"Echo"|"Glue Compressor"|"Drum Buss"|"Utility"|<any Core Library device/preset name>}
+    -> search browser.audio_effects (and browser.instruments for instrument names) recursively by exact then case-insensitive name; select the track; browser.load_item(item) APPENDS the device at the end of the chain (do not hot-swap). Reply {ok, track, device:{index,name,class_name}, params:[{index,name,value,min,max}]} (first 32 params).
+- {"cmd":"set_device_param","track":...,"device":int|name,"param":int|name,"value":number} -> clamp to min/max, set device.parameters[i].value; reply {ok, param:{name,value,min,max}}
+- {"cmd":"list_devices","track":...} exists; extend each device with params:[{index,name,value,min,max}] when "params":true
+- {"cmd":"set_mixer","track":...,"volume":0..1?,"pan":-1..1?,"mute":bool?,"solo":bool?,"arm":bool?} -> track.mixer_device.volume.value / panning.value, track.mute/solo/arm; reply {ok, mixer:{volume,pan,mute,solo,arm}}
+- {"cmd":"delete_device","track":...,"device":int|name} -> {ok}
+- create_clip already takes "slot" (0-based scene index); add {"cmd":"create_scene","index":-1,"name":"B"} -> song.create_scene(index), set name; {"cmd":"fire_scene","index":N}; {"cmd":"list_scenes"} -> [{index,name}]
+- {"cmd":"stop_clip","track":...,"slot":N} -> clip_slot.stop()
+
+## server ctx additions (makeCtx)
+- slice(refPath, { startSeconds, lengthSeconds, name, fadeMs=5 }) -> one-shot wav in OUT_DIR (ffmpeg -ss/-t, afade in/out, normalize) -> { path, name, durationSeconds }
+- chop(refPath, { maxPieces=8, pieceSeconds=0.35, name }) -> onsets via lib/rhythm detectOnsets, one wav per onset -> [{ path, name, time, instrument }]
+- live.loadDevice({ track, name }) / live.setParam({ track, device, param, value }) / live.listDevices({ track, params }) / live.setMixer({ track, ...}) / live.deleteDevice / live.createScene / live.fireScene / live.listScenes / live.recordArrangement({ bars })
+- Attachments persist for the whole chat session: recordings passed to runProducer every turn = all beat/hum/refs seen so far (latest beat/hum win), with `attachedThisTurn: string[]` listing the ones that arrived with this message.
+
+## lib/agent.js v4 tools
+- slice_sample { which:'beat'|'hum'|'ref#N', startSeconds, lengthSeconds (0.05-4), name } -> ctx.slice -> use as a layer sound (vox chops, stabs) without Stability
+- chop_sample { which, maxPieces?, pieceSeconds? } -> ctx.chop -> list of hits with times + classification; the agent then picks pieces for layers
+- add_effect { track, device, params?: [{ name, value }] } -> ctx.live.loadDevice then setParam for each; describe common recipes in the system prompt: dirtier = Saturator (Drive 12-24 dB) or Overdrive; wider/space = Reverb (Decay 1-3 s, Dry/Wet 15-30%); darker = Auto Filter lowpass (Frequency 800-3000 Hz); glue = Glue Compressor / Drum Buss on drums; lo-fi = Redux; movement = Ping Pong Delay / Echo on perc at low Dry/Wet
+- set_param { track, device, param, value }, list_devices { track }
+- set_mixer { track, volume?: 0..1 (0.85 = 0 dB), pan?, mute?, solo? }
+- build_drum_layer / build_melody_layer / update_layer gain optional `slot` (0 = scene A, 1 = scene B ...) for variations; create_scene { name }, fire_scene { index }
+- record_arrangement { bars } -> ctx.live.recordArrangement (records what is playing in Session into the Arrangement for N bars; then stops)
+- System prompt: attachments stay available across turns (ref names + paths listed each turn); when asked for vocal chops: chop_sample or slice_sample the reference and build a layer from the pieces (optionally run pieces through synthesize_sound source ref#N for new textures); "dirtier/warmer/wider/darker/punchier" map to add_effect recipes before re-synthesizing; keep listen/judge budget; variations go in scene B via slot 1; reply format unchanged.

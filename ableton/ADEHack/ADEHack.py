@@ -141,6 +141,41 @@ class ADEHack(ControlSurface):
                 return {'ok': True, 'playing': False}
             if cmd == 'list_devices':
                 return self._cmd_list_devices(msg)
+            if cmd == 'load_device':
+                return self._cmd_load_device(msg)
+            if cmd == 'set_device_param':
+                return self._cmd_set_device_param(msg)
+            if cmd == 'delete_device':
+                track = self._track(msg.get('track', 'selected'))
+                index, dev = self._device(track, msg.get('device'))
+                name = dev.name
+                track.delete_device(index)
+                return {'ok': True, 'track': track.name, 'index': index, 'name': name,
+                        'devices': self._devices(track)}
+            if cmd == 'set_mixer':
+                return self._cmd_set_mixer(msg)
+            if cmd == 'create_scene':
+                song = self.song()
+                index = int(msg.get('index', -1))
+                song.create_scene(index)
+                scenes = list(song.scenes)
+                scene = scenes[index] if 0 <= index < len(scenes) else scenes[-1]
+                if msg.get('name'):
+                    scene.name = u'%s' % (msg['name'],)
+                return {'ok': True, 'index': scenes.index(scene), 'name': scene.name}
+            if cmd == 'fire_scene':
+                scenes = list(self.song().scenes)
+                scene = scenes[int(msg.get('index', 0))]
+                scene.fire()
+                return {'ok': True, 'index': scenes.index(scene), 'name': scene.name}
+            if cmd == 'list_scenes':
+                return {'ok': True, 'scenes': [{'index': i, 'name': sc.name}
+                                               for i, sc in enumerate(self.song().scenes)]}
+            if cmd == 'stop_clip':
+                track = self._track(msg.get('track', 'selected'))
+                slot_index = int(msg.get('slot', 0))
+                track.clip_slots[slot_index].stop()
+                return {'ok': True, 'track': track.name, 'slot': slot_index}
             if cmd == 'delete_track':
                 track = self._track(msg.get('track', 'selected'))
                 index = self._index_of(track)
@@ -213,7 +248,166 @@ class ADEHack(ControlSurface):
 
     def _cmd_list_devices(self, msg):
         track = self._track(msg.get('track', 'selected'))
-        return {'ok': True, 'track': track.name, 'devices': self._devices(track)}
+        devices = self._devices(track)
+        if msg.get('params'):
+            for info, dev in zip(devices, track.devices):
+                info['params'] = self._params(dev)
+        return {'ok': True, 'track': track.name, 'devices': devices}
+
+    # ----------------------------------------------------------- devices (v4)
+    def _device(self, track, spec):
+        devices = list(track.devices)
+        if spec is None or spec == '' or spec == 'last':
+            if not devices:
+                raise ValueError('track %r has no devices' % (track.name,))
+            return len(devices) - 1, devices[-1]
+        if isinstance(spec, (int, float)) and not isinstance(spec, bool):
+            return int(spec), devices[int(spec)]
+        text = u'%s' % (spec,)
+        if text.lstrip('-').isdigit():
+            i = int(text)
+            return i, devices[i]
+        for i, d in enumerate(devices):
+            if d.name == text or getattr(d, 'class_name', '') == text:
+                return i, d
+        for i, d in enumerate(devices):
+            if d.name.lower() == text.lower() or getattr(d, 'class_name', '').lower() == text.lower():
+                return i, d
+        raise ValueError('no device %r on %r; devices: %r' % (text, track.name, [d.name for d in devices]))
+
+    def _params(self, dev, limit=32):
+        out = []
+        for i, p in enumerate(dev.parameters):
+            if i >= limit:
+                break
+            info = {'index': i, 'name': p.name, 'value': float(p.value),
+                    'min': float(p.min), 'max': float(p.max)}
+            try:
+                info['quantized'] = bool(p.is_quantized)
+                info['display'] = p.str_for_value(p.value)
+            except Exception:
+                pass
+            out.append(info)
+        return out
+
+    def _param(self, dev, spec):
+        params = list(dev.parameters)
+        if isinstance(spec, (int, float)) and not isinstance(spec, bool):
+            return int(spec), params[int(spec)]
+        text = u'%s' % (spec,)
+        if text.isdigit():
+            return int(text), params[int(text)]
+        for i, p in enumerate(params):
+            if p.name == text or getattr(p, 'original_name', '') == text:
+                return i, p
+        for i, p in enumerate(params):
+            if p.name.lower() == text.lower() or getattr(p, 'original_name', '').lower() == text.lower():
+                return i, p
+        raise ValueError('no param %r on %r; params: %r' % (text, dev.name, [p.name for p in params][:32]))
+
+    DEVICE_ROOTS = ('audio_effects', 'instruments', 'midi_effects', 'drums', 'sounds')
+
+    def _find_device_item(self, browser, name, max_items=5000, max_depth=6):
+        """Breadth-first so 'Reverb' hits the device itself before a preset named Reverb."""
+        text = u'%s' % (name,)
+        low = text.lower()
+        ci_hit = None
+        searched = []
+        for root_name in self.DEVICE_ROOTS:
+            try:
+                root = getattr(browser, root_name)
+            except Exception:
+                continue
+            searched.append(root_name)
+            queue = [(root, 0)]
+            seen = 0
+            while queue and seen < max_items:
+                item, depth = queue.pop(0)
+                seen += 1
+                try:
+                    loadable = item.is_loadable
+                    iname = item.name
+                except Exception:
+                    continue
+                if loadable and iname == text:
+                    return item, root_name, searched
+                if loadable and ci_hit is None and iname.lower() == low:
+                    ci_hit = (item, root_name)
+                if depth < max_depth:
+                    try:
+                        for child in item.children:
+                            queue.append((child, depth + 1))
+                    except Exception:
+                        pass
+            if ci_hit is not None:
+                return ci_hit[0], ci_hit[1], searched
+        return None, None, searched
+
+    def _cmd_load_device(self, msg):
+        track = self._track(msg.get('track', 'selected'))
+        name = msg['name']
+        browser = Live.Application.get_application().browser
+        item, root_name, searched = self._find_device_item(browser, name)
+        if item is None:
+            return {'ok': False, 'error': 'device %r not found in browser roots %r' % (name, searched)}
+        self.song().view.selected_track = track
+        before = len(list(track.devices))
+        browser.load_item(item)  # appends at the end of the selected track's chain
+        devices = list(track.devices)
+        if len(devices) <= before:
+            return {'ok': False, 'error': 'load_item(%r) did not add a device to %r' % (item.name, track.name),
+                    'devices': self._devices(track)}
+        dev = devices[-1]
+        return {'ok': True, 'track': track.name, 'item': item.name, 'uri': item.uri, 'root': root_name,
+                'device': {'index': len(devices) - 1, 'name': dev.name,
+                           'class_name': getattr(dev, 'class_name', '')},
+                'params': self._params(dev)}
+
+    def _cmd_set_device_param(self, msg):
+        track = self._track(msg.get('track', 'selected'))
+        dindex, dev = self._device(track, msg.get('device'))
+        pindex, param = self._param(dev, msg.get('param'))
+        value = float(msg['value'])
+        lo, hi = float(param.min), float(param.max)
+        value = max(lo, min(hi, value))
+        param.value = value
+        info = {'index': pindex, 'name': param.name, 'value': float(param.value), 'min': lo, 'max': hi}
+        try:
+            info['display'] = param.str_for_value(param.value)
+        except Exception:
+            pass
+        return {'ok': True, 'track': track.name, 'device': {'index': dindex, 'name': dev.name}, 'param': info}
+
+    def _mixer_state(self, track):
+        mixer = track.mixer_device
+        state = {'volume': float(mixer.volume.value), 'pan': float(mixer.panning.value),
+                 'mute': bool(track.mute), 'solo': bool(track.solo)}
+        try:
+            state['arm'] = bool(track.arm) if track.can_be_armed else None
+        except Exception:
+            state['arm'] = None
+        return state
+
+    def _cmd_set_mixer(self, msg):
+        track = self._track(msg.get('track', 'selected'))
+        mixer = track.mixer_device
+        if msg.get('volume') is not None:
+            v = mixer.volume
+            v.value = max(float(v.min), min(float(v.max), float(msg['volume'])))
+        if msg.get('pan') is not None:
+            p = mixer.panning
+            p.value = max(float(p.min), min(float(p.max), float(msg['pan'])))
+        if msg.get('mute') is not None:
+            track.mute = bool(msg['mute'])
+        if msg.get('solo') is not None:
+            track.solo = bool(msg['solo'])
+        if msg.get('arm') is not None:
+            if getattr(track, 'can_be_armed', False):
+                track.arm = bool(msg['arm'])
+            else:
+                return {'ok': False, 'error': 'track %r cannot be armed' % (track.name,),
+                        'mixer': self._mixer_state(track)}
+        return {'ok': True, 'track': track.name, 'mixer': self._mixer_state(track)}
 
     def _replace_target(self, browser, track):
         """Prepare a MIDI track so load_item REPLACES its sampler instead of appending.
