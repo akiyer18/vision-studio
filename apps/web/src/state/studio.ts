@@ -45,6 +45,7 @@ type StudioState = {
   setExport: (listing: ExportListing) => void
   setExportError: (message: string | null) => void
   setStatus: (status: UiStatus) => void
+  resetSession: () => void
 }
 
 export const useStudio = create<StudioState>((set) => ({
@@ -145,6 +146,24 @@ export const useStudio = create<StudioState>((set) => ({
   setExport: (listing) => set({ exportListing: listing, exportError: null }),
   setExportError: (message) => set({ exportError: message }),
   setStatus: (status) => set({ status }),
+  resetSession: () =>
+    set((state) => ({
+      sessionId: crypto.randomUUID(),
+      turn: null,
+      renders: [],
+      picks: {},
+      status: "idle",
+      overrides: {},
+      promptEdits: {},
+      streamToken: state.streamToken + 1,
+      runId: 0,
+      layerOrder: [],
+      runs: {},
+      failures: {},
+      takes: {},
+      exportListing: null,
+      exportError: null,
+    })),
 }))
 
 function without<T>(record: Record<string, T>, key: string): Record<string, T> {

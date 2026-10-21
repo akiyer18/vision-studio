@@ -49,6 +49,7 @@ export function QuestionCard({ question, onAnswer }: Props) {
     function onKey(event: KeyboardEvent) {
       if (event.metaKey || event.ctrlKey || event.altKey) return
       const target = event.target
+      if (target instanceof Node && document.getElementById("shortcut-help")?.contains(target)) return
       const typing = target instanceof HTMLElement && target.closest("input, textarea") !== null
       if (typing) return
       if (event.key === "S" && event.shiftKey) {
@@ -106,7 +107,7 @@ export function QuestionCard({ question, onAnswer }: Props) {
           placeholder="Or write your own"
         />
       </form>
-      <p className="mt-2 text-xs text-dust">Enter sends. S skips. Shift S skips all.</p>
+      <p className="mt-2 text-xs text-dust">Enter sends the written answer. S skips this. Shift S skips all and builds.</p>
       <div className="mt-3 flex flex-wrap gap-2">
         <Button tone="secondary" onClick={() => onAnswer("you_decide")}>
           You decide

@@ -1,11 +1,15 @@
+import { useStudio } from "../state/studio.ts"
 import { BriefPanel } from "./BriefPanel.tsx"
 import { Conversation } from "./Conversation.tsx"
+import { DemoMenu } from "./DemoMenu.tsx"
 import { GlassPanel } from "./GlassPanel.tsx"
 import { InputPanel } from "./InputPanel.tsx"
 import { PromptStudio } from "./PromptStudio.tsx"
 import { ResultsPanel } from "./ResultsPanel.tsx"
 import { SessionMark } from "./SessionMark.tsx"
-import { useStudio } from "../state/studio.ts"
+import { ShortcutHelp } from "./ShortcutHelp.tsx"
+
+const demo = new URLSearchParams(window.location.search).get("demo") === "1"
 
 export function Shell() {
   const sessionId = useStudio((state) => state.sessionId)
@@ -23,15 +27,19 @@ export function Shell() {
           </a>
           <div className="flex min-w-0 flex-col items-end gap-1">
             <SessionMark sessionId={sessionId} status={status} />
-            <a
-              href="/styleguide"
-              className="text-sm text-dust underline-offset-4 hover:text-tape-cream hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
-            >
-              Styleguide
-            </a>
+            <div className="flex max-w-full flex-wrap items-center justify-end gap-x-3 gap-y-1">
+              <ShortcutHelp />
+              <a
+                href="/styleguide"
+                className="text-sm text-dust underline-offset-4 hover:text-tape-cream hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
+              >
+                Styleguide
+              </a>
+            </div>
           </div>
         </div>
       </header>
+      {demo ? <DemoMenu /> : null}
       <main className="grid flex-1 gap-4 p-4 desk:grid-cols-[22rem_minmax(0,1fr)_minmax(20rem,28rem)]">
         <GlassPanel className="min-w-0">
           <InputPanel />

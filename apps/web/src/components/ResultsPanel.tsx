@@ -32,8 +32,6 @@ export function ResultsPanel() {
     heading.current?.focus()
   }, [runId])
 
-  if (layerOrder.length === 0) return null
-
   async function playTogether() {
     setTogetherNote(null)
     if (transport.getState().mode === "together") {
@@ -68,7 +66,10 @@ export function ResultsPanel() {
         >
           Results
         </h2>
-        {renders.length > 0 ? (
+        {layerOrder.length === 0 ? (
+          <p className="text-sm text-dust">Send the prompts to Stable Audio, and the variations land here.</p>
+        ) : null}
+        {layerOrder.length > 0 && renders.length > 0 ? (
           <div className="flex flex-col items-start gap-2">
             <Button
               tone="secondary"
@@ -88,7 +89,7 @@ export function ResultsPanel() {
         {layerOrder.map((layer) => (
           <LayerBlock key={layer} layer={layer} />
         ))}
-        {renders.length > 0 ? (
+        {layerOrder.length > 0 && renders.length > 0 ? (
           <div className="flex flex-col items-start gap-3">
             <Button onClick={() => void exportCurrent()}>Export to Logic</Button>
             {exportError ? (

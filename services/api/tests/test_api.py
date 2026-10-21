@@ -9,7 +9,7 @@ from contracts import RenderJob, RenderResult
 from fastapi.testclient import TestClient
 
 from agent.theory import midi_span
-from api.audio import bar_frames
+from api.audio import analyse, bar_frames
 from api.main import create_app
 from api.renderer import MockRenderer
 
@@ -303,6 +303,16 @@ def _assert_wav(path: Path, frames: int) -> None:
         raw = handle.readframes(frames)
     peak = max(max(abs(left), abs(right)) for left, right in struct.iter_unpack("<hh", raw))
     assert peak > 1000
+
+
+def test_demo_loop_reports_a_key_and_a_tempo() -> None:
+    fixture = Path(__file__).resolve().parents[3] / "apps" / "web" / "public" / "fixtures" / "detected-loop.wav"
+    features = analyse(fixture, "full_track")
+    assert features.key == "A"
+    assert features.mode == "minor"
+    assert features.bpm is not None
+    assert 90 <= features.bpm <= 102
+    assert features.confidence < 0.6
 
 
 def _write_tone(path: Path) -> None:

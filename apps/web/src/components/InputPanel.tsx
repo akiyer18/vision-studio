@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react"
 import { ApiError, upload } from "../api/client.ts"
 import { postTurn } from "../conversation/postTurn.ts"
 import { applyCorrection, fileProblem, fileKind, inputTypeFor, keyPhrase } from "../input/describe.ts"
+import { registerInput } from "../input/bridge.ts"
 import type { AudioFeatures } from "../types/audio_features.ts"
 import type { InputType } from "../types/input_type.ts"
 import { useStudio } from "../state/studio.ts"
@@ -16,8 +17,6 @@ type Held = {
 }
 
 export function InputPanel() {
-  const sessionId = useStudio((state) => state.sessionId)
-  const setStatus = useStudio((state) => state.setStatus)
   const [text, setText] = useState("")
   const [held, setHeld] = useState<Held | null>(null)
   const [hint, setHint] = useState<string | null>(null)
@@ -40,6 +39,36 @@ export function InputPanel() {
   const contextRef = useRef<AudioContext | null>(null)
   const startedRef = useRef(0)
   const timerRef = useRef(0)
+  const textRef = useRef("")
+  const heldRef = useRef<Held | null>(null)
+  const featuresRef = useRef<AudioFeatures | null>(null)
+  const recordingRef = useRef(false)
+  const waitingRef = useRef(false)
+  const fixingRef = useRef(false)
+  const keyTextRef = useRef("")
+  const tempoTextRef = useRef("")
+  const submitRef = useRef<() => Promise<"sent" | "confirm" | "blocked">>(async () => "blocked")
+  const confirmRef = useRef<() => Promise<void>>(async () => undefined)
+
+  function markRecording(value: boolean) {
+    recordingRef.current = value
+    setRecording(value)
+  }
+
+  function markWaiting(value: boolean) {
+    waitingRef.current = value
+    setWaiting(value)
+  }
+
+  function markFixing(value: boolean) {
+    fixingRef.current = value
+    setFixing(value)
+  }
+
+  function rememberFeatures(next: AudioFeatures | null) {
+    featuresRef.current = next
+    setFeatures(next)
+  }
 
   function release() {
     window.clearInterval(timerRef.current)
@@ -70,17 +99,20 @@ export function InputPanel() {
     if (kind === "other") return
     setFileNote(null)
     setError(null)
-    setFeatures(null)
-    setWaiting(false)
-    setFixing(false)
-    setHeld({ file, inputType: inputTypeFor(kind, source) })
+    rememberFeatures(null)
+    markWaiting(false)
+    markFixing(false)
+    const next = { file, inputType: inputTypeFor(kind, source) }
+    heldRef.current = next
+    setHeld(next)
   }
 
   function clearHeld() {
+    heldRef.current = null
     setHeld(null)
-    setFeatures(null)
-    setWaiting(false)
-    setFixing(false)
+    rememberFeatures(null)
+    markWaiting(false)
+    markFixing(false)
     setFileNote(null)
     if (fileInput.current) fileInput.current.value = ""
   }
@@ -110,7 +142,7 @@ export function InputPanel() {
         const blob = new Blob(chunksRef.current, { type: mime })
         acceptFile(new File([blob], nameForMime(mime), { type: mime }), "recording")
         release()
-        setRecording(false)
+        markRecording(false)
         setLevel(0)
       }
       void context.resume()
@@ -133,10 +165,10 @@ export function InputPanel() {
         setLevel(Math.min(1, Math.sqrt(sum / samples.length) * 8))
       }, 50)
       recorder.start(200)
-      setRecording(true)
+      markRecording(true)
     } catch (err) {
       release()
-      setRecording(false)
+      markRecording(false)
       setError(micMessage(err))
     }
   }
@@ -148,73 +180,129 @@ export function InputPanel() {
       return
     }
     release()
-    setRecording(false)
+    markRecording(false)
     setLevel(0)
   }
 
   async function sendTurn(audio?: AudioFeatures) {
     await postTurn({
-      text: text.trim() || undefined,
+      text: textRef.current.trim() || undefined,
       audio_features: audio,
     })
-    setWaiting(false)
-    setFeatures(audio ?? null)
+    markWaiting(false)
+    rememberFeatures(audio ?? null)
   }
 
-  async function submit() {
-    if (recording || waiting) return
-    if (!text.trim() && !held) {
+  async function submit(): Promise<"sent" | "confirm" | "blocked"> {
+    if (recordingRef.current || waitingRef.current) return "blocked"
+    const currentText = textRef.current
+    const currentHeld = heldRef.current
+    if (!currentText.trim() && !currentHeld) {
       setHint("Write a line, or add a sound, before sending.")
-      return
+      return "blocked"
     }
     setHint(null)
     setError(null)
     setBusy(true)
-    setStatus("working")
+    useStudio.getState().setStatus("working")
     try {
-      let audio = features ?? undefined
-      if (held) {
-        audio = await upload({ session_id: sessionId, input_type: held.inputType, file: held.file })
-        setFeatures(audio)
+      let audio = featuresRef.current ?? undefined
+      if (currentHeld) {
+        audio = await upload({
+          session_id: useStudio.getState().sessionId,
+          input_type: currentHeld.inputType,
+          file: currentHeld.file,
+        })
+        rememberFeatures(audio)
         if (audio.confidence < 0.6) {
-          setWaiting(true)
-          setFixing(false)
-          setKeyText(keyPhrase(audio))
-          setTempoText(typeof audio.bpm === "number" ? String(Math.round(audio.bpm)) : "")
-          setStatus("idle")
-          return
+          markWaiting(true)
+          markFixing(false)
+          keyTextRef.current = keyPhrase(audio)
+          tempoTextRef.current = typeof audio.bpm === "number" ? String(Math.round(audio.bpm)) : ""
+          setKeyText(keyTextRef.current)
+          setTempoText(tempoTextRef.current)
+          useStudio.getState().setStatus("idle")
+          return "confirm"
         }
       }
       await sendTurn(audio)
+      return "sent"
     } catch (err) {
-      setStatus("error")
+      useStudio.getState().setStatus("error")
       setError(err instanceof ApiError ? plainFailure(err.message) : "That did not go through. Try sending it again.")
+      return "blocked"
     } finally {
       setBusy(false)
     }
   }
 
   async function confirm() {
-    if (!features) return
+    const audio = featuresRef.current
+    if (!audio) return
     setBusy(true)
-    setStatus("working")
+    useStudio.getState().setStatus("working")
     setError(null)
     try {
-      const next = fixing ? applyCorrection(features, keyText, tempoText) : features
-      setFeatures(next)
+      const next = fixingRef.current ? applyCorrection(audio, keyTextRef.current, tempoTextRef.current) : audio
+      rememberFeatures(next)
       await sendTurn(next)
-      setFixing(false)
+      markFixing(false)
     } catch (err) {
-      setStatus("error")
+      useStudio.getState().setStatus("error")
       setError(err instanceof ApiError ? plainFailure(err.message) : "That did not go through. Try sending it again.")
     } finally {
       setBusy(false)
     }
   }
 
+  function apply(nextText: string, file: File | null) {
+    release()
+    markRecording(false)
+    setLevel(0)
+    setElapsed(0)
+    textRef.current = nextText
+    setText(nextText)
+    setHint(null)
+    setError(null)
+    setFileNote(null)
+    rememberFeatures(null)
+    markWaiting(false)
+    markFixing(false)
+    keyTextRef.current = ""
+    tempoTextRef.current = ""
+    setKeyText("")
+    setTempoText("")
+    if (file) {
+      const next = { file, inputType: inputTypeFor("audio", "drop") }
+      heldRef.current = next
+      setHeld(next)
+    } else {
+      heldRef.current = null
+      setHeld(null)
+    }
+    if (fileInput.current) fileInput.current.value = ""
+  }
+
+  useEffect(() => {
+    submitRef.current = submit
+    confirmRef.current = confirm
+  })
+
+  useEffect(() => {
+    registerInput({
+      apply,
+      submit: () => submitRef.current(),
+      confirm: () => confirmRef.current(),
+    })
+    return () => registerInput(null)
+  }, [])
+
+  const invite = !hint && !text.trim() && !held && !features && !recording
+
   return (
     <div className="flex flex-col gap-3">
       <h2 className="font-serif text-xl">Input</h2>
+      {invite ? <p className="text-sm text-dust">Write a line, drop a loop, or press Record.</p> : null}
       <label className="sr-only" htmlFor="idea">
         The idea
       </label>
@@ -226,6 +314,7 @@ export function InputPanel() {
         aria-invalid={hint ? true : undefined}
         aria-describedby={hint ? "idea-hint" : undefined}
         onChange={(event) => {
+          textRef.current = event.target.value
           setText(event.target.value)
           if (hint) setHint(null)
         }}
@@ -271,7 +360,12 @@ export function InputPanel() {
         {held ? (
           <p className="mt-2 text-sm text-dust">
             {held.file.name}{" "}
-            <button type="button" className="text-tape-cream underline-offset-4 hover:underline" onClick={clearHeld}>
+            <button
+              type="button"
+              aria-label="Remove the file"
+              className="text-tape-cream underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
+              onClick={clearHeld}
+            >
               Remove
             </button>
           </p>
@@ -285,7 +379,7 @@ export function InputPanel() {
       {recording ? (
         <div className="flex items-center gap-3">
           <VuMeter value={level} label="Input level" />
-          <p className="font-mono text-sm text-tape-cream" aria-live="polite">
+          <p className="text-sm text-tape-cream tabular-nums" aria-live="polite">
             {formatElapsed(elapsed)}
           </p>
           <Button tone="secondary" onClick={stopRecording}>
@@ -308,16 +402,22 @@ export function InputPanel() {
           fixing={fixing}
           keyText={keyText}
           tempoText={tempoText}
-          onKeyText={setKeyText}
-          onTempoText={setTempoText}
-          onFix={() => setFixing(true)}
+          onKeyText={(value) => {
+            keyTextRef.current = value
+            setKeyText(value)
+          }}
+          onTempoText={(value) => {
+            tempoTextRef.current = value
+            setTempoText(value)
+          }}
+          onFix={() => markFixing(true)}
           onConfirm={() => void confirm()}
           busy={busy}
           ask={waiting}
         />
       ) : null}
       <Button onClick={() => void submit()} disabled={busy || recording || waiting}>
-        Send
+        Send the idea
       </Button>
     </div>
   )

@@ -5,6 +5,10 @@ import type { RenderAction } from "../state/studio.ts"
 
 let busy = false
 
+export function renderBusy(): boolean {
+  return busy
+}
+
 export async function renderCurrent(layer?: string): Promise<void> {
   if (busy) return
   const prompts = currentPrompts(layer)

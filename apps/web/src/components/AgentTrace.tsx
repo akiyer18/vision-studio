@@ -19,8 +19,7 @@ export function AgentTrace({ steps }: { steps: TraceStep[] }) {
         className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-dust focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
         onClick={() => setOpen((value) => !value)}
       >
-        <span>Trace</span>
-        <span>{open ? "Hide" : "Show"}</span>
+        <span>{open ? "Hide the trace" : "Show the trace"}</span>
       </button>
       {open ? (
         <div className="max-h-52 overflow-y-auto px-3 pb-3">

@@ -9,9 +9,11 @@ import type { OutputChoice } from "../types/output_choice.ts"
 import { Button } from "./Button.tsx"
 import { OutputPicker } from "./OutputPicker.tsx"
 import { PromptCard } from "./PromptCard.tsx"
+import { Skeleton } from "./Skeleton.tsx"
 
 export function PromptStudio() {
   const turn = useStudio((state) => state.turn)
+  const status = useStudio((state) => state.status)
   const edits = useStudio((state) => state.promptEdits)
   const editPrompt = useStudio((state) => state.editPrompt)
   const resetPrompt = useStudio((state) => state.resetPrompt)
@@ -21,6 +23,7 @@ export function PromptStudio() {
   const [error, setError] = useState<string | null>(null)
   const ready = turn?.status === "ready"
   const prompts = ready ? (turn.prompts ?? []) : []
+  const loading = status === "working" && prompts.length === 0
 
   useEffect(() => {
     if (!ready || moved.current === turn) return
@@ -51,7 +54,7 @@ export function PromptStudio() {
   }
 
   return (
-    <section className="flex flex-col gap-3">
+    <section className="flex flex-col gap-3" aria-busy={loading || undefined}>
       <h2
         id="prompt-studio"
         ref={heading}
@@ -60,8 +63,15 @@ export function PromptStudio() {
       >
         Prompt studio
       </h2>
-      {prompts.length === 0 ? (
-        <p className="text-sm text-dust">Prompts land here when the brief is ready.</p>
+      {loading ? (
+        <div className="flex flex-col gap-3">
+          <p className="sr-only">The prompts are loading.</p>
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+      ) : prompts.length === 0 ? (
+        <p className="text-sm text-dust">Answer the questions, or press Generate, and the prompts land here.</p>
       ) : (
         <>
           <OutputPicker value={turn?.brief.output ?? []} onChange={choose} />

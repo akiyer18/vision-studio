@@ -58,11 +58,11 @@ export function RecognitionCard({
           ) : null}
           <div className="flex flex-wrap gap-2">
             <Button onClick={onConfirm} disabled={busy}>
-              Confirm
+              Confirm this reading
             </Button>
             {fixing ? null : (
               <Button tone="secondary" onClick={onFix} disabled={busy}>
-                Fix
+                Fix the key or tempo
               </Button>
             )}
           </div>
