@@ -715,6 +715,73 @@ function makeCtx(emit) {
       const text = r.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
       return { genre, text, source: process.env.SOUNDCHARTS_API_KEY ? 'claude (Soundcharts lookup not implemented yet)' : 'claude model knowledge' };
     },
+    // Stability composes the rhythm: a genre loop -> hits -> MIDI pattern with the loop's own groove
+    async loopToPattern(loopPath, { bpm = lastBuild.bpm || 120, bars = 2 } = {}) {
+      if (!audioPathOk(loopPath)) throw new Error('loopToPattern: path outside project audio');
+      const { decodeMono16k } = await import('./lib/melody.js');
+      const { detectOnsets, onsetFeatures, classifyOnset } = await import('./lib/rhythm.js');
+      const x = await decodeMono16k(loopPath);
+      const onsets = detectOnsets(x);
+      if (!onsets.length) throw new Error('no hits detected in the loop');
+      const stepSec = 60 / bpm / 4, total = clamp(Number(bars), 1, 8) * 16;
+      const lanes = {}; const micro = Array.from({ length: 16 }, () => []); const velProf = Array.from({ length: 16 }, () => []);
+      const maxFlux = Math.max(...onsets.map((o) => o.flux || 1));
+      for (const o of onsets) {
+        const f = onsetFeatures(x, o.sample);
+        let inst = classifyOnset(f);
+        if (inst === 'hat_closed' && f.rms > 0.12 && (f.centroid || 0) > 5000) inst = 'hat_open';
+        const stepF = o.time / stepSec; const step = Math.round(stepF);
+        if (step >= total) continue;
+        const vel = clamp(Math.round(60 + 67 * ((o.flux || 1) / maxFlux)), 40, 127);
+        (lanes[inst] ||= new Map()).set(step, Math.max(vel, lanes[inst].get(step) || 0));
+        micro[step % 16].push((stepF - step) * stepSec * 1000); velProf[step % 16].push(vel / 127);
+      }
+      const mean = (a) => (a.length ? a.reduce((p, c) => p + c, 0) / a.length : 0);
+      const microtiming = micro.map((a) => Number(mean(a).toFixed(1)));
+      const velocityProfile = velProf.map((a) => Number(mean(a).toFixed(2)));
+      const offbeats = [1, 3, 5, 7, 9, 11, 13, 15].map((i) => microtiming[i]).filter(Number.isFinite);
+      const swing = clamp(mean(offbeats) / (stepSec * 1000) * 2, 0, 1);
+      const pattern = { name: `loop rhythm ${Math.round(bpm)}`, bpm: Math.round(bpm), bars: clamp(Number(bars), 1, 8), stepsPerBar: 16, swing: Number(swing.toFixed(2)), lanes: Object.entries(lanes).map(([instrument, m]) => ({ instrument, steps: [...m.entries()].sort((a, b) => a[0] - b[0]).map(([step, velocity]) => ({ step, velocity })) })) };
+      const groove = { swing: pattern.swing, microtiming, velocityProfile, source: path.basename(loopPath) };
+      return { pattern, groove, onsetCount: onsets.length };
+    },
+    async generateRhythm({ prompt, genre, bpm = lastBuild.bpm || 120, bars = 2 }) {
+      let body = prompt;
+      if (!body && genre) { try { const bp = await this.genreBlueprint(genre); const k = await import('./lib/knowledge.js'); const lp = k.getLoopPrompts ? k.getLoopPrompts(bp.slug) : null; body = lp?.loops?.[0]?.replace('{bpm}', String(Math.round(bpm))) || `Genre: ${bp.title}, genre-true drum loop`; } catch { body = `${genre} drum loop`; } }
+      const loop = await this.generateLoop({ prompt: body || 'drum loop', bpm, bars, kind: 'drums' });
+      const r = await this.loopToPattern(loop.loop.path, { bpm, bars });
+      this.setGroove(r.groove);
+      return { ...loop, pattern: r.pattern, groove: r.groove, onsetCount: r.onsetCount, prompt: body };
+    },
+    async designKit({ genre, bpm = lastBuild.bpm || 120, bars = 2, candidates = 2 }) {
+      const ears = await import('./lib/ears.js');
+      let bp = null, prompts = [];
+      try { bp = await this.genreBlueprint(genre || lastBuild.genreTarget || ''); const k = await import('./lib/knowledge.js'); const lp = k.getLoopPrompts ? k.getLoopPrompts(bp.slug) : null; prompts = (lp?.loops || []).map((p) => p.replace('{bpm}', String(Math.round(bpm)))); } catch {}
+      if (!prompts.length) prompts = [`Genre: ${genre || 'hip hop'}, genre-true drum loop`, `Genre: ${genre || 'hip hop'}, classic era drum loop, authentic drum machine and sample character`];
+      const n = clamp(Number(candidates) || 2, 1, 3);
+      const target = bp ? `${bp.title}: ${bp.summary}` : (genre || '');
+      const cands = [];
+      for (let i = 0; i < n; i++) {
+        const body = prompts[i % prompts.length];
+        try {
+          const loop = await this.generateLoop({ prompt: body, bpm, bars, kind: 'drums' });
+          let judged = { verdict: null, score: null, why: 'ears unavailable' };
+          try {
+            const c = await ears.critiqueMix(loop.loop.path, undefined, { genreTarget: target });
+            const score = c.styleAccuracy?.verdict === 'on target' ? 9 : c.styleAccuracy?.verdict === 'close' ? 6 : c.styleAccuracy?.verdict === 'off' ? 3 : null;
+            judged = { verdict: c.styleAccuracy?.verdict || null, score, why: c.styleAccuracy?.why || c.styleRead || '', drums: c.drums };
+          } catch (e) { judged.why = `ears: ${e.message.slice(0, 120)}`; }
+          cands.push({ path: loop.loop.path, url: loop.loop.url, prompt: body, kit: loop.kit, ...judged });
+          if (judged.score >= 9) break;
+        } catch (e) { cands.push({ prompt: body, error: e.message }); }
+      }
+      const ok = cands.filter((c) => c.path);
+      if (!ok.length) throw new Error(`design_kit: no loop generated (${cands.map((c) => c.error).join('; ')})`);
+      const best = ok.sort((a, b) => (b.score ?? -1) - (a.score ?? -1))[0];
+      const r = await this.loopToPattern(best.path, { bpm, bars });
+      this.setGroove(r.groove);
+      return { genre: bp?.title || genre, best: { path: best.path, url: best.url, prompt: best.prompt, verdict: best.verdict, score: best.score, why: best.why }, candidates: cands.map((c) => ({ url: c.url, verdict: c.verdict, score: c.score, why: c.why, error: c.error })), kit: best.kit, pattern: r.pattern, groove: r.groove };
+    },
     async restyleMix({ prompt, strength = 0.45, bars }) {
       const r = await this.render({ bars });
       const input = path.join(TMP, `restyle-in-${Date.now()}.wav`);
@@ -804,7 +871,9 @@ function makeCtx(emit) {
       const audio = await import('./lib/audio.js');
       return { path: f.path, url: f.url, name: f.name, durationSeconds: await audio.durationSeconds(f.path) };
     },
-    async tuneSample({ path: src, semitones, targetMidi, targetNote, name = 'tuned' }) {
+    async tuneSample({ path: src, semitones, targetMidi, targetNote, name = 'tuned', preserveFormants, allowLarge = false, role = '' }) {
+      const vocal = /vox|vocal|chop|voice|adlib|ad-lib|hook/i.test(`${role} ${name} ${path.basename(String(src || ''))}`);
+      if (preserveFormants == null) preserveFormants = vocal;
       if (!audioPathOk(src)) throw new Error('tune: path outside project audio');
       const { analyzeAudio } = await import('./lib/analyze.js');
       let detected = null, applied = Number(semitones);
@@ -818,13 +887,15 @@ function makeCtx(emit) {
         while (applied > 6) applied -= 12; while (applied < -6) applied += 12;   // nearest octave
       }
       applied = clamp(applied, -24, 24);
+      let note;
+      if (vocal && !allowLarge && Math.abs(applied) > 3) { note = `vocal shift limited to ±3 st (asked ${applied.toFixed(1)}); pass allowLarge to override`; applied = clamp(applied, -3, 3); }
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const out = path.join(TMP, `${id}-tune.wav`);
       const ratio = Math.pow(2, applied / 12);
-      try { await ffmpeg(['-i', src, '-af', `rubberband=pitch=${ratio.toFixed(5)}`, '-ac', '2', '-ar', '44100', out]); }
+      try { await ffmpeg(['-i', src, '-af', `rubberband=pitch=${ratio.toFixed(5)}${preserveFormants ? ':formant=preserved' : ''}`, '-ac', '2', '-ar', '44100', out]); }
       catch { await ffmpeg(['-i', src, '-af', `asetrate=44100*${ratio.toFixed(5)},aresample=44100`, '-ac', '2', '-ar', '44100', out]); }
       const f = await publish(await fs.readFile(out), name, '.wav', 'oneshot');
-      return { path: f.path, url: f.url, name: f.name, detectedMidi: detected, appliedSemitones: Number(applied.toFixed(2)) };
+      return { path: f.path, url: f.url, name: f.name, detectedMidi: detected, appliedSemitones: Number(applied.toFixed(2)), preserveFormants, ...(note ? { note } : {}) };
     },
     async layerSamples({ layers = [], name = 'layered' }) {
       if (layers.length < 2 || layers.length > 4) throw new Error('layer: give 2-4 layers');
@@ -1026,6 +1097,36 @@ function makeCtx(emit) {
         lastBuild.tracks[name.toLowerCase()] = { index: t.index, name: t.name };
         rememberClip(t.name, { notes: [{ pitch: 60, startBeats: 0, durationBeats: bars * 4, velocity: 100 }], bars });
         return { track: t, loaded: Boolean(load?.ok), simpler: simp?.ok ? simp.done : simp?.error, clip: clip.mode, bars };
+      },
+      async loadToPad({ track, note, samplePath, label }) {
+        const send = await liveClient(); const t = await ensureTrack(send, track);
+        const slotPath = await toSlot(samplePath, label || 'perc', 'Perc');
+        const r = await send({ cmd: 'load_to_pad', track: t.name, note: Number(note), path: slotPath, ...(label ? { name: label } : {}) });
+        if (!r?.ok) throw new Error(r?.error || 'load_to_pad failed (needs ADEHack 5.6)');
+        rememberSound(`${t.name}#${note}`, samplePath, slotPath, label || 'pad');
+        return r;
+      },
+      // one Drum Rack track for the whole kit (fewer tracks); falls back to per-lane tracks on older scripts
+      async buildKit({ name = 'Drums', kit = [], pattern, bars, slot = 0 }) {
+        const send = await liveClient();
+        const GM = { kick: 36, snare: 38, clap: 39, rim: 37, hat_closed: 42, hat_open: 46, tom_low: 45, tom_high: 50, ride: 51, crash: 49, perc: 54 };
+        const b = bars || pattern?.bars || 2;
+        const probe = await send({ cmd: 'pad_info', track: 'nonexistent-probe' });
+        const hasPads = probe && !/unknown cmd/i.test(probe.error || '');
+        if (hasPads) {
+          const t = await ensureTrack(send, name);
+          const pads = [];
+          for (const k of kit) { try { await this.loadToPad({ track: t.name, note: k.note ?? GM[k.kind] ?? 54, samplePath: k.samplePath, label: k.label || k.kind }); pads.push({ note: k.note ?? GM[k.kind], label: k.label || k.kind }); } catch (e) { pads.push({ note: k.note, label: k.label || k.kind, error: e.message }); } }
+          const notes = [];
+          for (const lane of pattern?.lanes || []) { const padNote = kit.find((k) => (k.label || k.kind) === lane.instrument || k.kind === lane.instrument)?.note ?? GM[lane.instrument] ?? 54; for (const st of lane.steps) notes.push({ pitch: padNote, start: st.step * 0.25 + (st.step % 2 ? (pattern.swing || 0) * 0.125 : 0), duration: 0.125, velocity: st.velocity }); }
+          const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.name, slot: Number(slot) || 0, length: b * 4, notes, fire: true, name, show: false }), 'create_clip');
+          lastBuild.tracks.drums = { index: t.index, name: t.name };
+          if (!Number(slot)) rememberClip(t.name, { notes: notes.map((n) => ({ pitch: n.pitch, startBeats: n.start, durationBeats: n.duration, velocity: n.velocity })), bars: b });
+          return { track: t, mode: 'drum_rack', pads, notes: notes.length, clip: clip.mode };
+        }
+        const built = [];
+        for (const lane of pattern?.lanes || []) { const k = kit.find((x) => (x.label || x.kind) === lane.instrument || x.kind === lane.instrument); const label = LANE_LABEL[lane.instrument] || lane.instrument; built.push(await this.buildLane({ name: label, instrument: lane.instrument, samplePath: k?.samplePath, steps: lane.steps, bars: b, swing: pattern.swing || 0, slot, useGroove: true })); }
+        return { mode: 'per_lane_fallback', note: 'Drum Rack pad loading needs ADEHack 5.6; built one track per lane instead', tracks: built.map((x) => x.track?.name) };
       },
       describeSet: async () => okOrThrow(await (await liveClient())({ cmd: 'describe_set' }), 'describe_set'),
       async getClipNotes({ track, slot = 0 }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'get_clip_notes', track: t.name, slot: Number(slot) || 0 }), 'get_clip_notes'); },
