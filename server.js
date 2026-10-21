@@ -752,7 +752,11 @@ function makeCtx(emit) {
       // and kicks on the downbeat (step 0); ties go to the smaller rotation.
       const scoreFor = (off) => {
         let sc = 0;
-        for (const [inst, m] of Object.entries(lanes)) for (const [st, v] of m) { const r = ((st - off) % 16 + 16) % 16; if ((inst === 'snare' || inst === 'clap') && (r === 4 || r === 12)) sc += 3 * v / 127; if (inst === 'kick' && r === 0) sc += 2 * v / 127; if (inst === 'kick' && (r === 4 || r === 12)) sc -= 1; }
+        for (const [inst, m] of Object.entries(lanes)) for (const [st, v] of m) {
+          const r = ((st - off) % 16 + 16) % 16, w = v / 127;
+          if (inst === 'snare' || inst === 'clap') { if (r === 4 || r === 12) sc += 3 * w; else if (r === 0 || r === 8) sc -= 2 * w; }
+          if (inst === 'kick') { if (r === 0) sc += 2 * w; else if (r % 4 === 0) sc += 1 * w; else if (r % 2 === 1) sc -= 0.5 * w; }   // kicks belong on beats; off-16ths cost
+        }
         return sc;
       };
       let offset = 0, bestScore = -Infinity;
