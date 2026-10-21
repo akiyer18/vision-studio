@@ -14,6 +14,7 @@ const ctx = {
   synth: async (o) => { calls.push(["synth", o]); if (o.variations > 1) return { variants: Array.from({ length: o.variations }, (_, i) => ({ path: `/out/x-${"abc"[i]}.wav`, url: `/out/x-${"abc"[i]}.wav`, seed: 100 + i, label: "ABC"[i] })) }; return { path: "/out/x.wav", name: "x.wav", url: "/out/x.wav", durationSeconds: 1, peakDb: -1 }; },
   restyleAudio: async (o) => { calls.push(["restyleAudio", o]); return { path: "/out/restyled.wav", url: "/out/restyled.wav", durationSeconds: 12.3 }; },
   explain: async (o) => { calls.push(["explain", o]); return { id: "ex1" }; },
+  genreBlueprint: async (g) => { calls.push(["genreBlueprint", g]); if (!/hip hop|boom bap/i.test(g)) throw new Error(`unknown genre '${g}'; closest: 2000s hip hop, 90s boom bap, trap`); return { slug: "2000s-hip-hop", title: "2000s Hip Hop", summary: "92-100 BPM; kick: round sampled, snare + snap layered on 2 and 4...", markdown: "# 2000s Hip Hop\n## Bass\nTYPE: Moog-style synth bass..." }; },
   genreGuide: async (o) => { calls.push(["genreGuide", o]); return { text: "UK Garage: ... (from model knowledge, verify names)", source: "model" }; },
   writePattern: async (o) => { calls.push(["writePattern", o]); return { pattern: { name: "p", bpm: o.bpm, bars: o.bars, stepsPerBar: 16, swing: 0, lanes: [{ instrument: "kick", steps: [{ step: 0, velocity: 120 }] }] }, source: "rules" }; },
   writeMelody: async (o) => { calls.push(["writeMelody", o]); return { key: o.key, bars: o.bars, notes: [{ pitch: 60, startBeats: 0, durationBeats: 1, velocity: 100 }], source: "rules" }; },
@@ -79,7 +80,7 @@ const ctx = {
 };
 
 const tools = makeTools(ctx, { beat: "/tmp/fake.wav", refs: [{ name: "loop.wav", path: "/tmp/ref1.wav" }, { name: "kick.wav", path: "/tmp/ref2.wav" }] });
-const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "transcribe_audio", "judge_sound", "slice_sample", "chop_sample", "load_device", "add_effect", "set_param", "list_devices", "set_mixer", "create_scene", "fire_scene", "record_arrangement", "analyze_audio", "compare_audio", "render_preview", "set_track_color", "capture_midi", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "separate_stems", "analyze_music", "process_audio", "master_preview", "generate_loop", "restyle_mix", "production_dna", "critique_mix", "label_pieces", "refine_sound", "undo_sound", "listen_live", "critique_capture", "describe_set", "read_clip", "import_sample", "restyle_audio", "explain_result", "genre_guide", "show_live", "play", "stop"];
+const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "transcribe_audio", "judge_sound", "slice_sample", "chop_sample", "load_device", "add_effect", "set_param", "list_devices", "set_mixer", "create_scene", "fire_scene", "record_arrangement", "analyze_audio", "compare_audio", "render_preview", "set_track_color", "capture_midi", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "separate_stems", "analyze_music", "process_audio", "master_preview", "generate_loop", "restyle_mix", "production_dna", "critique_mix", "label_pieces", "refine_sound", "undo_sound", "listen_live", "critique_capture", "describe_set", "read_clip", "import_sample", "restyle_audio", "explain_result", "genre_guide", "genre_blueprint", "show_live", "play", "stop"];
 assert.deepEqual(tools.map((t) => t.name), expected, "tool names");
 for (const t of tools) {
   assert.ok(t.description && t.description.length > 20, `${t.name} description`);
@@ -143,6 +144,7 @@ const sample = {
   restyle_audio: { which: "ref#1", prompt: "Genre: Lo-fi Hip Hop, warm tape saturation, dusty", strength: 0.5 },
   explain_result: { path: "/out/x.wav", brief: "a punchy techno kick", choices: [{ what: "sub + click layered", why: "weight and transient separately" }], steps_ableton: ["Simpler with the sub", "Saturator Drive 8 dB", "EQ Eight highpass 30 Hz"], steps_logic: ["Quick Sampler", "Phat FX drive", "Channel EQ highpass 30 Hz"] },
   genre_guide: { genre: "UK Garage" },
+  genre_blueprint: { genre: "2000s hip hop" },
   show_live: {}, play: {}, stop: {},
 };
 for (const t of tools) {
@@ -295,7 +297,7 @@ assert.equal(JSON.parse(await T("set_track_color").run(sample.set_track_color)).
 const cap = JSON.parse(await T("capture_midi").run({})); assert.equal(cap.captured, true); assert.equal(cap.track, "Keys");
 ctx.live.captureMidi = async () => { throw new Error("no MIDI played recently"); };
 assert.equal(JSON.parse(await T("capture_midi").run({})).ok, false);
-for (const k of ["DENSITY", "[density: minimal]", "[density: rich]", "FEEDBACK", "never with judgments", "render_preview", "compare_audio", "ARRANGEMENT", "loop length x 2", "COLOR", "set_track_color"]) assert.ok(PRODUCER_SYSTEM.includes(k), `system prompt has ${k}`);
+for (const k of ["DENSITY", "[density: minimal]", "[density: rich]", "FEEDBACK", "never good/bad/nice", "render_preview", "compare_audio", "ARRANGEMENT", "loop length x 2", "COLOR", "set_track_color"]) assert.ok(PRODUCER_SYSTEM.includes(k), `system prompt has ${k}`);
 
 // v6: sound design, sends, browsing, balance, review
 const ls = JSON.parse(await T("layer_samples").run(sample.layer_samples));
@@ -362,7 +364,7 @@ const savedLocal2 = ctx.transcribeLocal; ctx.transcribeLocal = undefined;
 const tr2 = JSON.parse(await T("transcribe_audio").run({ which: "ref#1" }));
 ctx.transcribeLocal = savedLocal2;
 assert.equal(tr2.noteCount, 10); assert.equal(tr2.notes.split(" ").length, 10); assert.ok(!("truncated" in tr2));
-for (const k of ["PRODUCTION PLAYBOOK", "never copy bar 1", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "humanize", "QUALITY GATE", "reused:true", "Review:", "[density: minimal]", "i-VI-III-VII"]) assert.ok(PRODUCER_SYSTEM.includes(k), `system prompt has ${k}`);
+for (const k of ["PRODUCTION PLAYBOOK", "never copy bar 1", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "humanize", "QUALITY GATE", "reused:true", "[density: minimal]", "i-VI-III-VII"]) assert.ok(PRODUCER_SYSTEM.includes(k), `system prompt has ${k}`);
 assert.ok(!PRODUCER_SYSTEM.includes("EFFECTS AND MIX (add_effect") && !PRODUCER_SYSTEM.includes("VOCAL CHOPS AND SAMPLE PIECES"), "old sections replaced");
 
 // load_device: match/requested/actual name surfaced; failure passthrough
@@ -550,7 +552,24 @@ const gg = JSON.parse(await T("genre_guide").run(sample.genre_guide)); assert.ma
 assert.throws(() => T("genre_guide").parse({ genre: "x" }), "1-char genre rejected");
 ctx.genreGuide = async () => { throw new Error("ANTHROPIC_API_KEY not set"); };
 assert.equal(JSON.parse(await T("genre_guide").run(sample.genre_guide)).ok, false);
-for (const k of ["ROOMS", "[room: create]", "[room: analyse]", "[room: tweak]", "LEVEL", "at most one clarifying question", "VARIATIONS", "say 'use B'", "EXPLAIN RULE", "explain_result", "Make it in Logic", "Drum Machine Designer", "Explained: see 'How this was made'", "restyle_audio", "genre_guide"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
+for (const k of ["ROOMS", "[room: create]", "[room: analyse]", "[room: tweak]", "LEVEL", "at most one clarifying question", "VARIATIONS", "say 'use B'", "EXPLAIN RULE", "explain_result", "Make it in Logic", "Drum Machine Designer", "restyle_audio", "genre_guide"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
+
+// v11: genre blueprint, genreTarget, production-first reply
+const gb = JSON.parse(await T("genre_blueprint").run(sample.genre_blueprint));
+assert.equal(gb.slug, "2000s-hip-hop"); assert.match(gb.summary, /92-100 BPM/); assert.match(gb.blueprint, /TYPE: Moog-style/);
+const gbu = JSON.parse(await T("genre_blueprint").run({ genre: "polka" })); assert.equal(gbu.ok, false); assert.match(gbu.error, /unknown genre 'polka'; closest: 2000s hip hop/);
+assert.throws(() => T("genre_blueprint").parse({ genre: "x" }), "1-char genre rejected");
+ctx.critiqueMix = async (ref, opts) => { calls.push(["critiqueMix", ref, opts]); return { styleRead: "sounds like generic trap", styleAccuracy: { target: "2000s hip hop", verdict: "off", why: "808 hats, no swing" }, bass: { present: false, type: null, suggestion: "Moog-style synth bass, octave 1-2, sliding off the kick on the and of 2" }, moves: ["swap hats for 8th 909 hats 95/60", "add a Moog bass", "snap layer on the snare"] }; };
+const cmg = JSON.parse(await T("critique_mix").run({ genreTarget: "2000s hip hop: ..." }));
+assert.deepEqual(calls.filter((c) => c[0] === "critiqueMix").at(-1).slice(1), [undefined, { genreTarget: "2000s hip hop: ..." }]); assert.equal(cmg.critique.styleAccuracy.verdict, "off"); assert.match(cmg.critique.bass.suggestion, /Moog/);
+await T("critique_mix").run({}); assert.deepEqual(calls.filter((c) => c[0] === "critiqueMix").at(-1).slice(1), [undefined, undefined], "no genreTarget -> undefined opts");
+ctx.critiqueCapture = async (p, ref, opts) => { calls.push(["critiqueCapture", p, ref, opts]); return { styleRead: "x" }; };
+await T("critique_capture").run({ path: "/out/capture.wav", reference: "ref#1", genreTarget: "boom bap" });
+assert.deepEqual(calls.filter((c) => c[0] === "critiqueCapture").at(-1).slice(1), ["/out/capture.wav", "/tmp/ref1.wav", { genreTarget: "boom bap" }]);
+assert.throws(() => T("critique_mix").parse({ genreTarget: "x".repeat(1501) }), "genreTarget too long rejected");
+for (const k of ["production-first", "bass TYPE", "snaps", "ALWAYS include a bass", "NO LUFS", "genre_blueprint", "[genre blueprint:", "styleAccuracy", "SOUND & PATTERN", "how it moves against the kick", "6 layers", "up to 8"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
+assert.ok(!PRODUCER_SYSTEM.includes('starting with "Review:"') && !PRODUCER_SYSTEM.includes("Explained: see"), "numeric Review/Explained lines removed");
+assert.ok(!PRODUCER_SYSTEM.includes("hats were 4 dB above snare"), "technical review example removed");
 
 // persistent attachments: note lists all, marks new vs earlier
 const fc = { beta: { messages: { toolRunner(params) { return { params, pushMessages() {}, async *[Symbol.asyncIterator]() { yield { role: "assistant", stop_reason: "end_turn", content: [] }; } }; } } } };
