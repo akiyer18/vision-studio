@@ -1,6 +1,6 @@
 # Industrial (EBM, industrial rock, industrial techno)
 slug: industrial
-aliases: industrial, industrial electronic, industrial techno, ebm, electronic body music, industrial rock, industrial metal, industrial hip hop, aggrotech, dark electro, power noise, rhythmic noise, nine inch nails, gesaffelstein, factory, metallic, distorted kick techno, front 242, nitzer ebb, ministry, kmfdm, skinny puppy, throbbing gristle, cabaret voltaire, perc, ancient methods, boy harsher, 3teeth
+aliases: industrial, industrial electronic, industrial techno, ebm, electronic body music, industrial rock, industrial metal, industrial hip hop, aggrotech, dark electro, power noise, rhythmic noise, nine inch nails, gesaffelstein, distorted kick techno, front 242, nitzer ebb, ministry, kmfdm, skinny puppy, throbbing gristle, cabaret voltaire, perc, ancient methods, boy harsher, 3teeth
 tempo: 90-100 (industrial rock / industrial hip hop, half-time), 120-135 (EBM), 130-145 (industrial techno)
 
 ## Summary
