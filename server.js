@@ -588,7 +588,7 @@ function makeCtx(emit) {
           const best = list.sort((a, b) => b.rms - a.rms)[0];
           const len = k === 'kick' ? 0.6 : k === 'snare' ? 0.4 : 0.15;
           const piece = await this.slice(loop.path, { startSeconds: Math.max(0, best.time - 0.005), lengthSeconds: len, name: `${kind}loop-${k}` });
-          out.kit.push({ kind: k, path: piece.path, url: piece.url, time: Number(best.time.toFixed(3)) });
+          out.kit.push({ kind: k, samplePath: piece.path, path: piece.path, url: piece.url, time: Number(best.time.toFixed(3)) });
         }
         out.note = 'kit sliced from one loop: shared room/compression/character';
       }

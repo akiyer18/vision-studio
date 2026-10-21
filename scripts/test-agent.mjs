@@ -377,9 +377,10 @@ assert.equal(an3.ok, true); assert.equal(calls.filter((c) => c[0] === "analyze")
 assert.equal(JSON.parse(await T("separate_stems").run({ which: "ref#99" })).ok, false);
 ctx.stems = async () => { throw new Error("demucs not installed / run tools/py/setup.sh"); };
 const stf = JSON.parse(await T("separate_stems").run({ which: "ref#1" })); assert.equal(stf.ok, false); assert.match(stf.error, /run tools\/py\/setup.sh/, "install message passes through");
+const grooveBefore = calls.filter((c) => c[0] === "setGroove").length;
 const am = JSON.parse(await T("analyze_music").run(sample.analyze_music));
 assert.equal(am.tempo, 93.2); assert.equal(am.beats, 60); assert.equal(am.downbeats, 15); assert.equal(am.onsets, 120); assert.equal(am.key, "F minor (conf 0.8)"); assert.equal(am.groove.swing, 0.2); assert.equal(am.groove.microtimingMs.length, 16); assert.equal(am.groove.velocityProfile[0], 1); assert.deepEqual(am.sections, ["0-15.5s", "15.5-31s"]); assert.equal(am.grooveStored, true);
-assert.equal(calls.filter((c) => c[0] === "setGroove").length, 1);
+assert.equal(calls.filter((c) => c[0] === "setGroove").length - grooveBefore, 1, "groove stored once per analysis");
 ctx.analyzeMusic = async () => { throw new Error("librosa not installed / run tools/py/setup.sh"); };
 assert.equal(JSON.parse(await T("analyze_music").run(sample.analyze_music)).ok, false);
 const pa = JSON.parse(await T("process_audio").run(sample.process_audio));
