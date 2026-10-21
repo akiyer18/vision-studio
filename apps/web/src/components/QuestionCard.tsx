@@ -58,6 +58,7 @@ export function QuestionCard({ question, onAnswer }: Props) {
         return
       }
       if (event.key === "s" || event.key === "S") {
+        if (target instanceof Element && target.closest("[data-lane]")) return
         event.preventDefault()
         onAnswer("skip")
       }
@@ -107,7 +108,7 @@ export function QuestionCard({ question, onAnswer }: Props) {
           placeholder="Or write your own"
         />
       </form>
-      <p className="mt-2 text-xs text-dust">Enter sends the written answer. S skips this. Shift S skips all and builds.</p>
+      <p className="mt-2 text-dust">Enter sends the written answer. Shift S skips all and builds.</p>
       <div className="mt-3 flex flex-wrap gap-2">
         <Button tone="secondary" onClick={() => onAnswer("you_decide")}>
           You decide

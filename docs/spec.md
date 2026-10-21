@@ -155,34 +155,46 @@ bass as roots around C2, velocity 80 to 100. Detected audio keys replace the pre
 
 ## 7. Design
 
-Brief: a studio at night. The interface should feel like sitting at a mixing console after midnight, not like a finance dashboard.
+The studio is an arrangement: a transport, the conversation, and lanes. Colour marks a layer. Chrome stays quiet.
 
 | token | hex | use |
 | --- | --- | --- |
-| studio night | #16131A | page background |
-| walnut glass | rgba(242, 233, 220, 0.06) with 1px border rgba(242, 233, 220, 0.10) | panels, backdrop blur 24px |
-| tape cream | #F2E9DC | primary text |
-| dust | #A89F95 | secondary text |
-| VU amber | #F2A541 | user actions, meters, focus |
-| signal violet | #9B8CFF | everything the agent says or does |
-| clip red | #F0624D | errors only |
+| Desk | #3F3832 | ground, transport, conversation, trace |
+| Lamp | #F6F1E8 | primary text on Desk, the Build button, the playhead, the focus ring |
+| Dust | #C4B8A8 | secondary text on Desk |
+| Rule | #6E655C | lane outlines, dividers, unset ticks. Never text |
+| Fault | #F3C1B6 | errors on Desk |
 
-Background: two or three very soft, slowly drifting warm blurs (amber and violet at low opacity) behind the panels. No photos.
+Lane hues are for the lane rule, the clip fill, that layer's chip, and the trace mark. Labels on Desk stay Lamp.
 
-Type:
-- Instrument Sans for the interface.
-- Instrument Serif for large values and headings (the big "76 BPM" and "D minor" in the brief).
-- JetBrains Mono only inside the agent trace, because that is the machine speaking.
+| lane | hex | note |
+| --- | --- | --- |
+| Drums | #B84532 | |
+| Chords | #D7A441 | light fill: waveform and the clip label use Desk |
+| Bass | #1F6E5C | |
+| Melody | #3D62C4 | |
+| Texture | #7A4EA8 | |
+| Full mix | none | Lamp on Desk, with a double rule |
 
-Signature element, the one bold thing: the song brief is drawn as a row of console channel strips.
-Each slot is a strip with its value in large serif, a source badge (you, detected, guessed) and a vertical
-VU style meter showing confidence, filling up as the agent learns. Everything else stays quiet.
+Build is a Lamp button with Desk text. It is not a coloured accent.
 
-Rules: sentence case, no all caps labels, no text on busy backgrounds, contrast of at least 4.5:1,
-visible keyboard focus, prefers reduced motion respected, one orchestrated motion moment
-(the brief strips filling up), otherwise motion only in response to actions.
+Type: Instrument Sans for the interface, including the trace. Tabular numerals on tempo, bars, and seeds. Instrument Serif only for the tempo and the key. Body is `clamp(15px, 0.42vw + 10px, 22px)`. Lane names are `clamp(17px, 0.7vw + 8px, 32px)`. Tempo and key are `clamp(48px, 3.2vw, 112px)`. Sentence case. No all caps. No condensed face.
 
-Copy: plain verbs. Buttons say what happens: "Send to Stable Audio", "Another take", "Export to Logic".
+Focus is a 2px Lamp outline, offset 2px. One motion: when a build finishes, a Lamp playhead sweeps left to right and the lanes fill behind it. Reduced motion fills the lanes in place. Any other motion answers a user action.
+
+Layout. The transport holds the session id, the agent status, the output choice, the large tempo and key, and Build. The left column is about 400px and stays fixed on a wide screen: the idea, then the conversation. The main column is the ruler and the lanes. Below 1024px the conversation stacks above the arrangement. 1280×800 and 2560×1440 both have to work, and the type scales with the clamps above.
+
+The ruler shows mood, energy, world, style, palette, and must keep. Each value shows its source: you, detected, or default when the slot was guessed. Reference stays reference. The reason is available on hover and on focus. Existing click-to-edit stays. Do not add a new editing surface. Tempo, key, and output stay editable where they already live. If structure is set, the ruler shows one verse of that many bars. The section name is verse. Do not invent a chorus or a bridge. An unset ruler value is a faint tick, not the words "Not set".
+
+Five lanes, plus a full-mix master. A lane header shows the name, solo, mute, and status. Clicking the lane body opens the inline editor: prompt, negative, and seed. Polish status appears only when a trace step names that layer, as "Claude polished" or "Template kept" with the reason. A rendered take is a clip with a waveform. Every clip has a 1px Lamp edge, and the lane label stays visible on the clip. Before anything is built, the five lanes are Rule outlines and one line reads "Describe an idea and the lanes will fill."
+
+Solo and mute are local. Mute drops that layer from playback and from the prompts sent on the next build. Solo keeps only that layer. The buttons use `aria-pressed`. Full mix follows the same rules.
+
+Keyboard. S solos when a lane is focused. When a question is open and focus is not on a lane, S still skips that question. Shift+S still skips all and builds. M mutes the focused lane. Space plays or stops, and does nothing while typing. Enter and ? stay as they are. The current meaning of S is shown next to the question card.
+
+The trace is a collapsible drawer along the bottom. Each step is an event in Instrument Sans, shown as "{step}: {detail}". The drawer stays expanded while a question is open, and collapses after Build. Clicking a step highlights the lane or the brief value it touched.
+
+Copy stays plain. The main render action is "Build". Also "Send the idea", "Confirm this reading", "Skip this", "Skip all and build", "You decide", "Another take", "Export to Logic", and "Generate". Generate is never disabled.
 
 ## 8. Definition of done per phase
 

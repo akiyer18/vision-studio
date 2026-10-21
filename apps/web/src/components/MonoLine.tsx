@@ -1,3 +1,3 @@
 export function MonoLine({ children }: { children: string }) {
-  return <p className="font-mono text-sm leading-relaxed break-words text-signal-violet">{children}</p>
+  return <p className="leading-relaxed break-words text-lamp">{children}</p>
 }

@@ -19,8 +19,8 @@ export function Styleguide() {
     <div className="mx-auto flex min-h-svh w-full max-w-5xl flex-col gap-6 p-4">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="font-serif text-4xl">Styleguide</h1>
-          <p className="mt-2 text-sm text-dust">Every component, on the night background.</p>
+          <h1 className="text-4xl">Styleguide</h1>
+          <p className="mt-2 text-dust">Every component, on the desk.</p>
         </div>
         <a
           href="/"
@@ -31,24 +31,22 @@ export function Styleguide() {
       </header>
 
       <GlassPanel>
-        <h2 className="font-serif text-2xl">Glass panel</h2>
-        <p className="mt-2 max-w-prose text-sm text-dust">
-          Walnut glass, a hairline border, and a 16px radius. Text sits on the panel, not on the glow.
-        </p>
+        <h2 className="text-2xl">Panel</h2>
+        <p className="mt-2 max-w-prose text-dust">A quiet panel on Desk. Text sits on the panel.</p>
       </GlassPanel>
 
       <section className="flex flex-col gap-3">
-        <h2 className="font-serif text-2xl">Buttons</h2>
+        <h2 className="text-2xl">Buttons</h2>
         <div className="flex flex-wrap gap-3">
-          <Button>Send to Stable Audio</Button>
+          <Button>Build</Button>
           <Button tone="secondary">Another take</Button>
           <Button tone="ghost">Export to Logic</Button>
-          <Button disabled>Send to Stable Audio</Button>
+          <Button disabled>Build</Button>
         </div>
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="font-serif text-2xl">Source badges</h2>
+        <h2 className="text-2xl">Source badges</h2>
         <div className="flex flex-wrap gap-2">
           {sources.map((source) => (
             <SourceBadge key={source} source={source} />
@@ -57,7 +55,7 @@ export function Styleguide() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="font-serif text-2xl">Chips</h2>
+        <h2 className="text-2xl">Chips</h2>
         <div className="flex flex-wrap gap-2">
           <Chip>Drums</Chip>
           <Chip selected>Chords</Chip>
@@ -66,7 +64,7 @@ export function Styleguide() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="font-serif text-2xl">VU meters</h2>
+        <h2 className="text-2xl">VU meters</h2>
         <div className="flex items-end gap-6">
           <VuMeter value={0} label="Empty confidence" />
           <VuMeter value={0.4} label="Partial confidence" />
@@ -75,7 +73,7 @@ export function Styleguide() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="font-serif text-2xl">Channel strips</h2>
+        <h2 className="text-2xl">Channel strips</h2>
         <p className="text-sm text-dust">Hover a strip to read its reason. Click the value to edit it.</p>
         <div className="flex flex-wrap gap-4 pb-16">
           <ChannelStrip
@@ -97,14 +95,14 @@ export function Styleguide() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="font-serif text-2xl">Trace</h2>
+        <h2 className="text-2xl">Trace</h2>
         <GlassPanel>
           <MonoLine>theory: i VI III VII in D minor is Dm, Bb, F, C</MonoLine>
         </GlassPanel>
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="font-serif text-2xl">Toasts</h2>
+        <h2 className="text-2xl">Toasts</h2>
         <div className="flex flex-col gap-3">
           <Toast>The take is ready.</Toast>
           <Toast tone="error">The render did not finish.</Toast>
@@ -112,7 +110,7 @@ export function Styleguide() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="font-serif text-2xl">Skeletons</h2>
+        <h2 className="text-2xl">Skeletons</h2>
         <div className="flex max-w-sm flex-col gap-2">
           <Skeleton className="h-4 w-2/3" />
           <Skeleton className="h-8 w-full" />
@@ -121,7 +119,7 @@ export function Styleguide() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="font-serif text-2xl">Session indicator</h2>
+        <h2 className="text-2xl">Session indicator</h2>
         <div className="flex flex-wrap gap-6">
           {statuses.map((status) => (
             <SessionMark key={status} sessionId="phase3demo" status={status} />

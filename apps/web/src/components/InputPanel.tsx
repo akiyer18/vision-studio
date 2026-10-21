@@ -301,7 +301,7 @@ export function InputPanel() {
 
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="font-serif text-xl">Input</h2>
+      <h2>Input</h2>
       {invite ? <p className="text-sm text-dust">Write a line, drop a loop, or press Record.</p> : null}
       <label className="sr-only" htmlFor="idea">
         The idea

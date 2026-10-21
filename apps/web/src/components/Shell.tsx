@@ -1,60 +1,54 @@
+import { useState } from "react"
+
+import { renderCurrent } from "../studio/renderSession.ts"
 import { useStudio } from "../state/studio.ts"
-import { BriefPanel } from "./BriefPanel.tsx"
+import { AgentTrace } from "./AgentTrace.tsx"
+import { Arrangement } from "./Arrangement.tsx"
 import { Conversation } from "./Conversation.tsx"
 import { DemoMenu } from "./DemoMenu.tsx"
-import { GlassPanel } from "./GlassPanel.tsx"
 import { InputPanel } from "./InputPanel.tsx"
-import { PromptStudio } from "./PromptStudio.tsx"
-import { ResultsPanel } from "./ResultsPanel.tsx"
-import { SessionMark } from "./SessionMark.tsx"
-import { ShortcutHelp } from "./ShortcutHelp.tsx"
+import { TransportBar } from "./TransportBar.tsx"
 
 const demo = new URLSearchParams(window.location.search).get("demo") === "1"
 
 export function Shell() {
-  const sessionId = useStudio((state) => state.sessionId)
-  const status = useStudio((state) => state.status)
+  const turn = useStudio((state) => state.turn)
+  const questioning = turn?.status === "question"
+  const [collapsed, setCollapsed] = useState(true)
+  const [wasQuestion, setWasQuestion] = useState(false)
+  const [mark, setMark] = useState<string | null>(null)
+  if (questioning && !wasQuestion) {
+    setWasQuestion(true)
+    setCollapsed(false)
+  } else if (!questioning && wasQuestion) {
+    setWasQuestion(false)
+  }
+  const traceOpen = questioning || !collapsed
+
+  function toggleTrace() {
+    if (questioning) return
+    setCollapsed((value) => !value)
+  }
+
+  function build() {
+    const prompts = useStudio.getState().turn?.status === "ready" ? (useStudio.getState().turn?.prompts ?? []) : []
+    if (prompts.length === 0) return
+    setCollapsed(true)
+    void renderCurrent()
+  }
 
   return (
     <div className="flex min-h-svh flex-col">
-      <header className="sticky top-0 z-20 border-b border-walnut-line bg-studio-night/90 px-4 py-3 backdrop-blur-[24px]">
-        <div className="flex items-start justify-between gap-3">
-          <a
-            href="/"
-            className="font-serif text-2xl text-tape-cream focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
-          >
-            Vision Studio
-          </a>
-          <div className="flex min-w-0 flex-col items-end gap-1">
-            <SessionMark sessionId={sessionId} status={status} />
-            <div className="flex max-w-full flex-wrap items-center justify-end gap-x-3 gap-y-1">
-              <ShortcutHelp />
-              <a
-                href="/styleguide"
-                className="text-sm text-dust underline-offset-4 hover:text-tape-cream hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
-              >
-                Styleguide
-              </a>
-            </div>
-          </div>
-        </div>
-      </header>
+      <TransportBar mark={mark} onBuild={build} />
       {demo ? <DemoMenu /> : null}
-      <main className="grid flex-1 gap-4 p-4 desk:grid-cols-[22rem_minmax(0,1fr)_minmax(20rem,28rem)]">
-        <GlassPanel className="min-w-0">
+      <div className="grid flex-1 grid-cols-1 desk:grid-cols-[400px_minmax(0,1fr)]">
+        <aside className="flex min-w-0 flex-col gap-6 border-b border-rule p-4 desk:border-r desk:border-b-0">
           <InputPanel />
-        </GlassPanel>
-        <GlassPanel className="min-w-0">
           <Conversation />
-        </GlassPanel>
-        <GlassPanel className="min-w-0">
-          <PromptStudio />
-        </GlassPanel>
-        <ResultsPanel />
-        <GlassPanel className="min-w-0 desk:col-span-3">
-          <BriefPanel />
-        </GlassPanel>
-      </main>
+        </aside>
+        <Arrangement mark={mark} />
+      </div>
+      <AgentTrace steps={turn?.trace ?? []} open={traceOpen} onToggle={toggleTrace} mark={mark} onMark={setMark} />
     </div>
   )
 }

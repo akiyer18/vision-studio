@@ -5,7 +5,6 @@ import { postTurn } from "../conversation/postTurn.ts"
 import { useStudio } from "../state/studio.ts"
 import type { AnswerAction } from "../types/answer_action.ts"
 import type { SlotName } from "../types/slot_name.ts"
-import { AgentTrace } from "./AgentTrace.tsx"
 import { Button } from "./Button.tsx"
 import { QuestionCard } from "./QuestionCard.tsx"
 
@@ -14,6 +13,8 @@ export function Conversation() {
   const [error, setError] = useState<string | null>(null)
   const busy = useRef(false)
   const question = turn?.status === "question" ? (turn.question ?? null) : null
+  const focusedLane = useStudio((state) => state.focusedLane)
+  const sKey = focusedLane ? "S solos the focused lane" : "S skips this"
 
   const send = useCallback(async (action: AnswerAction, value?: string) => {
     if (busy.current) return
@@ -46,15 +47,19 @@ export function Conversation() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h2 className="font-serif text-xl">Conversation</h2>
-      <QuestionCard question={question} onAnswer={(action, value) => void send(action, value)} />
+      <h2>Conversation</h2>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <QuestionCard question={question} onAnswer={(action, value) => void send(action, value)} />
+        </div>
+        {question ? <p className="text-dust">{sKey}</p> : null}
+      </div>
       {error ? (
-        <p role="alert" className="text-sm text-clip-red">
+        <p role="alert" className="text-fault">
           {error}
         </p>
       ) : null}
       <Button onClick={generate}>Generate</Button>
-      <AgentTrace steps={turn?.trace ?? []} />
     </div>
   )
 }

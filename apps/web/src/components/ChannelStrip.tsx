@@ -11,12 +11,27 @@ type Props = {
   confidence: number
   reason: string
   onChange?: (value: string) => void
+  appearance?: "cell" | "mark"
+  meter?: boolean
+  marked?: boolean
 }
 
-export function ChannelStrip({ label, value, source, confidence, reason, onChange }: Props) {
+export function ChannelStrip({
+  label,
+  value,
+  source,
+  confidence,
+  reason,
+  onChange,
+  appearance = "cell",
+  meter = false,
+  marked = false,
+}: Props) {
   const reasonId = useId()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(value)
+  const large = appearance === "mark"
+  const ring = marked ? "outline outline-2 outline-offset-2 outline-lamp" : ""
 
   function commit() {
     setEditing(false)
@@ -29,13 +44,13 @@ export function ChannelStrip({ label, value, source, confidence, reason, onChang
   }
 
   return (
-    <div className="group relative flex w-36 max-w-full shrink-0 flex-col gap-3 rounded-panel border border-walnut-line bg-walnut-glass p-3 backdrop-blur-[24px]">
-      <div className="flex items-start justify-between gap-2">
+    <div className={`group relative min-w-0 ${ring}`}>
+      <div className={large ? "flex items-end gap-3" : "flex items-start justify-between gap-2"}>
         <div className="min-w-0">
-          <p className="text-xs text-dust">{label}</p>
+          <p className="text-dust">{label}</p>
           {editing ? (
             <input
-              className="mt-1 w-full bg-transparent font-serif text-2xl leading-tight text-tape-cream outline-none"
+              className={`mt-1 w-full bg-transparent text-lamp outline-none ${large ? "tempo-mark" : ""}`}
               value={draft}
               aria-label={`Edit ${label}`}
               aria-describedby={reasonId}
@@ -51,25 +66,32 @@ export function ChannelStrip({ label, value, source, confidence, reason, onChang
             <button
               type="button"
               aria-describedby={reasonId}
-              className="mt-1 text-left font-serif text-2xl leading-tight break-words text-tape-cream focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
+              className={`mt-1 text-left text-lamp focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lamp ${large ? "tempo-mark" : "break-words"}`}
               onClick={() => {
                 setDraft(value)
                 setEditing(true)
               }}
             >
-              {value || "Not set"}
+              {value ? (
+                value
+              ) : (
+                <>
+                  <span className="mt-2 block h-px w-8 bg-rule" />
+                  <span className="sr-only">Not set</span>
+                </>
+              )}
             </button>
           )}
         </div>
-        <VuMeter value={confidence} label={`${label} confidence`} />
+        {meter ? <VuMeter value={confidence} label={`${label} confidence`} /> : null}
       </div>
-      {source ? <SourceBadge source={source} /> : <span className="h-5" />}
+      {source ? <SourceBadge source={source} /> : null}
       <p id={reasonId} className="sr-only">
         {reason}
       </p>
       <p
         aria-hidden
-        className="pointer-events-none absolute top-full left-0 z-20 mt-2 hidden w-56 max-w-[calc(100vw-2rem)] rounded-button border border-walnut-line bg-studio-night p-3 text-sm text-dust group-focus-within:block group-hover:block"
+        className="pointer-events-none absolute top-full left-0 z-20 mt-2 hidden w-56 max-w-[calc(100vw-2rem)] border border-rule bg-desk p-3 text-dust group-focus-within:block group-hover:block"
       >
         {reason}
       </p>

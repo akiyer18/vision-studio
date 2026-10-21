@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react"
 
 const shortcuts = [
   ["Enter", "Send the written answer"],
-  ["S", "Skip this question"],
+  ["S", "Skip this question, or solo the focused lane"],
   ["Shift S", "Skip all and build"],
+  ["M", "Mute the focused lane"],
+  ["Space", "Play or stop"],
   ["?", "Open or close these shortcuts"],
 ]
 

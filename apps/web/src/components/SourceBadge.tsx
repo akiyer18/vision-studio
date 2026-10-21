@@ -1,16 +1,16 @@
 import type { SlotSource } from "../types/slot_source.ts"
 
 const styles: Record<SlotSource, string> = {
-  you: "bg-vu-amber/15 text-vu-amber",
-  detected: "bg-tape-cream/10 text-tape-cream",
-  guessed: "bg-signal-violet/15 text-signal-violet",
-  reference: "bg-dust/15 text-dust",
+  you: "text-lamp",
+  detected: "text-dust",
+  guessed: "text-dust",
+  reference: "text-dust",
 }
 
 const labels: Record<SlotSource, string> = {
   you: "You",
   detected: "Detected",
-  guessed: "Guessed",
+  guessed: "Default",
   reference: "Reference",
 }
 

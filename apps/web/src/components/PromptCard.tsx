@@ -8,16 +8,18 @@ type Props = {
   onPrompt: (value: string) => void
   onNegative: (value: string) => void
   onReset: () => void
+  polish?: string | null
+  embedded?: boolean
 }
 
-export function PromptCard({ original, prompt, negative, onPrompt, onNegative, onReset }: Props) {
+export function PromptCard({ original, prompt, negative, onPrompt, onNegative, onReset, polish = null, embedded = false }: Props) {
   const edited = prompt !== original.prompt || negative !== original.negative
   const promptId = `${original.layer}-prompt`
   const negativeId = `${original.layer}-negative`
   return (
-    <article className="flex flex-col gap-2 rounded-panel border border-walnut-line p-3">
+    <article className="flex flex-col gap-2 border border-rule p-3">
       <div className="flex items-start justify-between gap-2">
-        <h3 className="font-serif text-xl">{layerTitle(original.layer)}</h3>
+        {embedded ? null : <h3 className="lane-name">{layerTitle(original.layer)}</h3>}
         {edited ? (
           <button
             type="button"
@@ -36,7 +38,7 @@ export function PromptCard({ original, prompt, negative, onPrompt, onNegative, o
         rows={4}
         value={prompt}
         onChange={(event) => onPrompt(event.target.value)}
-        className="w-full resize-y rounded-button border border-walnut-line bg-studio-night/40 px-3 py-2 font-mono text-sm text-tape-cream outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
+        className="w-full resize-y rounded-button border border-rule bg-transparent px-3 py-2 text-lamp outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lamp"
       />
       <label className="text-xs text-dust" htmlFor={negativeId}>
         Negative
@@ -46,8 +48,10 @@ export function PromptCard({ original, prompt, negative, onPrompt, onNegative, o
         rows={2}
         value={negative}
         onChange={(event) => onNegative(event.target.value)}
-        className="w-full resize-y rounded-button border border-walnut-line bg-studio-night/40 px-3 py-2 font-mono text-sm text-tape-cream outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-vu-amber"
+        className="w-full resize-y rounded-button border border-rule bg-transparent px-3 py-2 text-lamp outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lamp"
       />
+      {polish ? <p className="text-dust">{polish}</p> : null}
+      <p className="tabular text-dust">Seeds {original.seeds.join(" · ")}</p>
       {original.kb_sources.length > 0 ? (
         <ul className="flex flex-wrap gap-2">
           {original.kb_sources.map((source) => (

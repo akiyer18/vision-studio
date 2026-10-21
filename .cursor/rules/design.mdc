@@ -1,16 +1,17 @@
 ---
-description: Vision Studio dark-glass visual system for the web app
+description: Vision Studio arrangement visual system for the web app
 globs: apps/web/**/*
 alwaysApply: false
 ---
 
 # Design
 
-Dark glass: near-black background with a slow blurred warm gradient, frosted panels, 16px radius, high-contrast text.
+The studio is an arrangement on Desk `#3F3832`. Lamp `#F6F1E8` is primary text, the Build button, the playhead, and the focus ring. Dust `#C4B8A8` is secondary text. Rule `#6E655C` is for outlines, dividers, and unset ticks, never for text. Fault `#F3C1B6` is for errors.
 
-- Accent amber for user actions.
-- Violet for agent elements.
-- Monospace for the agent trace.
-- No text on busy images.
-- Accessible contrast.
-- Smooth but subtle motion.
+Lane hues are Drums `#B84532`, Chords `#D7A441`, Bass `#1F6E5C`, Melody `#3D62C4`, and Texture `#7A4EA8`. They colour the lane rule, the clip, that layer's chip, and the trace mark. Labels on Desk stay Lamp. Chords are a light fill, so the waveform and the clip label use Desk. Full mix has no sixth hue: Lamp on Desk, with a double rule. Every clip has a 1px Lamp edge and keeps its lane label visible.
+
+Instrument Sans for the interface, including the trace, with tabular numerals on tempo, bars, and seeds. Instrument Serif only for the tempo and the key. Body `clamp(15px, 0.42vw + 10px, 22px)`. Lane names `clamp(17px, 0.7vw + 8px, 32px)`. Tempo and key `clamp(48px, 3.2vw, 112px)`. Sentence case. No all caps.
+
+Focus is a 2px Lamp outline, offset 2px. The one orchestrated motion is the Lamp playhead sweeping as a finished build fills the lanes. Reduced motion fills in place. Other motion only answers an action.
+
+Transport, then a fixed conversation column and the lanes. Below 1024px the conversation stacks above the arrangement. The trace stays expanded while a question is open and collapses after Build. The current meaning of S sits next to the question card. The main render button says Build.

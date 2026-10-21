@@ -98,7 +98,7 @@ export function PromptStudio() {
             </p>
           ) : null}
           <Button className="w-full text-base" onClick={() => void send()}>
-            Send to Stable Audio
+            Build
           </Button>
         </>
       )}

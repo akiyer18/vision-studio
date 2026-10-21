@@ -2,6 +2,7 @@ import { ApiError, exportSession, folderPath, regenerateEvents, renderEvents } f
 import type { RenderEvent } from "../api/client.ts"
 import { useStudio } from "../state/studio.ts"
 import type { RenderAction } from "../state/studio.ts"
+import { audibleLayers } from "./mix.ts"
 
 let busy = false
 
@@ -75,7 +76,9 @@ function currentPrompts(layer?: string) {
     prompt: promptEdits[item.layer]?.prompt ?? item.prompt,
     negative: promptEdits[item.layer]?.negative ?? item.negative,
   }))
-  return layer ? mapped.filter((item) => item.layer === layer) : mapped
+  if (layer) return mapped.filter((item) => item.layer === layer)
+  const heard = new Set(audibleLayers(mapped.map((item) => item.layer)))
+  return mapped.filter((item) => heard.has(item.layer))
 }
 
 function apply(event: RenderEvent, action: RenderAction) {

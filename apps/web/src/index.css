@@ -2,17 +2,25 @@
 @import "@fontsource/instrument-sans/latin-400.css";
 @import "@fontsource/instrument-sans/latin-500.css";
 @import "@fontsource/instrument-serif/latin-400.css";
-@import "@fontsource/jetbrains-mono/latin-400.css";
 
 :root {
-  --studio-night: #16131a;
-  --walnut-glass: rgba(242, 233, 220, 0.06);
-  --walnut-line: rgba(242, 233, 220, 0.1);
-  --tape-cream: #f2e9dc;
-  --dust: #a89f95;
-  --vu-amber: #f2a541;
-  --signal-violet: #9b8cff;
-  --clip-red: #f0624d;
+  --desk: #3f3832;
+  --lamp: #f6f1e8;
+  --dust: #c4b8a8;
+  --rule: #6e655c;
+  --fault: #f3c1b6;
+  --lane-drums: #b84532;
+  --lane-chords: #d7a441;
+  --lane-bass: #1f6e5c;
+  --lane-melody: #3d62c4;
+  --lane-texture: #7a4ea8;
+  --studio-night: var(--desk);
+  --walnut-glass: transparent;
+  --walnut-line: var(--rule);
+  --tape-cream: var(--lamp);
+  --vu-amber: var(--lamp);
+  --signal-violet: var(--lamp);
+  --clip-red: var(--fault);
   --chip-radius: 6px;
   --button-radius: 10px;
   --panel-radius: 16px;
@@ -22,8 +30,10 @@
 @theme {
   --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
   --font-serif: "Instrument Serif", ui-serif, Georgia, serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
-  --breakpoint-desk: 900px;
+  --font-mono: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --breakpoint-desk: 1024px;
+  --text-xs: 1rem;
+  --text-sm: 1rem;
 }
 
 @theme inline {
@@ -35,35 +45,47 @@
   --color-vu-amber: var(--vu-amber);
   --color-signal-violet: var(--signal-violet);
   --color-clip-red: var(--clip-red);
+  --color-desk: var(--desk);
+  --color-lamp: var(--lamp);
+  --color-rule: var(--rule);
+  --color-fault: var(--fault);
   --radius-chip: var(--chip-radius);
   --radius-button: var(--button-radius);
   --radius-panel: var(--panel-radius);
 }
 
+html {
+  font-size: clamp(15px, 0.42vw + 10px, 22px);
+}
+
 body {
   margin: 0;
   min-height: 100svh;
-  background: var(--studio-night);
-  color: var(--tape-cream);
+  background: var(--desk);
+  color: var(--lamp);
   font-family: var(--font-sans);
 }
 
 :focus-visible {
-  outline: 2px solid var(--vu-amber);
+  outline: 2px solid var(--lamp);
   outline-offset: 2px;
 }
 
-@keyframes drift {
-  from {
-    transform: translate3d(0, 0, 0);
-  }
-  to {
-    transform: translate3d(1.5rem, -2rem, 0);
-  }
+.lane-name {
+  font-size: clamp(17px, 0.7vw + 8px, 32px);
+  font-weight: 500;
+  line-height: 1.1;
 }
 
-.drift {
-  animation: drift 36s ease-in-out infinite alternate;
+.tempo-mark {
+  font-family: var(--font-serif);
+  font-size: clamp(48px, 3.2vw, 112px);
+  font-variant-numeric: tabular-nums;
+  line-height: 0.9;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
 }
 
 .vu-fill {
@@ -100,12 +122,51 @@ body {
   animation: question-out 160ms ease forwards;
 }
 
+.playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 5;
+  width: 2px;
+  background: var(--lamp);
+  pointer-events: none;
+  animation: sweep 1.6s linear forwards;
+}
+
+.lane-reveal {
+  animation: reveal 1.6s linear forwards;
+}
+
+@keyframes sweep {
+  from {
+    left: 0;
+  }
+  to {
+    left: calc(100% - 2px);
+  }
+}
+
+@keyframes reveal {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .drift,
   .vu-fill,
   .question-in,
-  .question-out {
+  .question-out,
+  .playhead,
+  .lane-reveal {
     animation: none;
     transition: none;
+  }
+
+  .lane-reveal {
+    clip-path: none;
   }
 }

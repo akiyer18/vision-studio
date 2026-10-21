@@ -40,7 +40,7 @@ async function rainy() {
   await expectQuestion(STYLE_QUESTION)
   click("Skip all and build")
   await promptsReady(5)
-  click("Send to Stable Audio")
+  click("Build")
   await renderFinished(5)
 }
 
@@ -61,7 +61,7 @@ async function detectedLoop() {
   if (!pageHas("bpm:")) throw new Error("The trace should show the detected tempo.")
   click("Skip all and build")
   await promptsReady(5)
-  click("Send to Stable Audio")
+  click("Build")
   await renderFinished(5)
 }
 
@@ -75,7 +75,7 @@ async function summer() {
   }
   click("Skip all and build")
   await promptsReady(5)
-  click("Send to Stable Audio")
+  click("Build")
   await renderFinished(5)
 }
 
@@ -92,7 +92,7 @@ async function promptsReady(count: number) {
     const prompts = turn?.prompts ?? []
     return turn?.status === "ready" && prompts.length >= count && prompts.every((item) => item.prompt.trim().length > 0)
   }, "The prompts did not fill in.")
-  await until(() => findButton("Send to Stable Audio") !== null, "Send to Stable Audio did not appear.")
+  await until(() => findButton("Build") !== null, "Build did not appear.")
 }
 
 async function renderFinished(layers: number) {
