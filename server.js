@@ -843,6 +843,22 @@ function makeCtx(emit) {
       },
       async deleteDevice({ track, device }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'delete_device', track: t.name, device }), 'delete_device'); },
       async setMixer({ track, volume, pan, mute, solo, arm }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); const cmd = { cmd: 'set_mixer', track: t.name }; if (volume != null) cmd.volume = clamp(Number(volume), 0, 1); if (pan != null) cmd.pan = clamp(Number(pan), -1, 1); if (mute != null) cmd.mute = Boolean(mute); if (solo != null) cmd.solo = Boolean(solo); if (arm != null) cmd.arm = Boolean(arm); return okOrThrow(await send(cmd), 'set_mixer'); },
+      async setSimpler({ track, ...opts }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'set_simpler', track: t.name, ...opts }), 'set_simpler'); },
+      async sampleInfo({ track }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'sample_info', track: t.name }), 'sample_info'); },
+      // loop/texture as a layer: load the file into Simpler, warp it to tempo, trigger with one long C3 note
+      async buildLoopLayer({ name, samplePath, bars = 2, kind = 'loop', gainDb }) {
+        const send = await liveClient();
+        const t = await ensureTrack(send, name);
+        const slotPath = await toSlot(samplePath, kind === 'texture' ? 'pad' : 'perc', 'Perc');
+        const load = okOrThrow(await sendWithRetry(send, { cmd: 'load_sample', path: slotPath, track: t.name }), 'load_sample');
+        rememberSound(t.name, samplePath, slotPath, kind);
+        const simp = await send({ cmd: 'set_simpler', track: t.name, mode: 'classic', warp: true, warp_mode: kind === 'texture' ? 'complex' : 'beats', loop: true, voices: 1, retrigger: true, ...(gainDb != null ? { gain_db: Number(gainDb) } : {}) });
+        const notes = [{ pitch: 60, start: 0, duration: bars * 4, velocity: 100 }];
+        const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.name, slot: 0, length: bars * 4, notes, fire: true, name, show: false }), 'create_clip');
+        lastBuild.tracks[name.toLowerCase()] = { index: t.index, name: t.name };
+        rememberClip(t.name, { notes: [{ pitch: 60, startBeats: 0, durationBeats: bars * 4, velocity: 100 }], bars });
+        return { track: t, loaded: Boolean(load?.ok), simpler: simp?.ok ? simp.done : simp?.error, clip: clip.mode, bars };
+      },
       setTrackColor: async ({ track, colorIndex, color_index }) => { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'set_track_color', track: t.name, color_index: Number(colorIndex ?? color_index) }), 'set_track_color'); },
       captureMidi: async () => okOrThrow(await (await liveClient())({ cmd: 'capture_midi' }), 'capture_midi'),
       clipEdit: async ({ track, slot = 0, ...ops }) => { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'clip_edit', track: t.name, slot: Number(slot) || 0, ...ops }), 'clip_edit'); },

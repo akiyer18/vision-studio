@@ -896,7 +896,10 @@ class ADEHack(ControlSurface):
         for attr in ('playback_mode', 'voices', 'retrigger'):
             try:
                 v = getattr(dev, attr)
-                state[attr] = v if isinstance(v, bool) else int(v)
+                try:
+                    state[attr] = v if isinstance(v, bool) else int(v)
+                except Exception:
+                    state[attr] = u'%s' % (v,)
             except Exception:
                 pass
         try:
@@ -908,7 +911,13 @@ class ADEHack(ControlSurface):
                          'slicing_style', 'slicing_sensitivity'):
                 try:
                     v = getattr(sample, attr)
-                    state[attr] = v if isinstance(v, (bool, float)) else (u'%s' % (v,) if attr == 'file_path' else int(v))
+                    if isinstance(v, (bool, float)) or attr == 'file_path':
+                        state[attr] = v if isinstance(v, (bool, float)) else u'%s' % (v,)
+                    else:
+                        try:
+                            state[attr] = int(v)
+                        except Exception:
+                            state[attr] = u'%s' % (v,)
                 except Exception:
                     pass
             try:

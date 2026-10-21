@@ -1,0 +1,10 @@
+# CPU-only, permissive/open licenses. Installed into tools/py/.venv (Python 3.11) by setup.sh
+numpy
+soundfile
+librosa>=0.10
+torch
+torchaudio
+demucs>=4.0
+basic-pitch[onnx]>=0.4
+pedalboard>=0.9
+pyloudnorm
