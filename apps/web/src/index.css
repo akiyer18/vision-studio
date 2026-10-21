@@ -65,9 +65,41 @@ body {
   transition: height 700ms ease;
 }
 
+@keyframes question-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.4rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes question-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-0.4rem);
+  }
+}
+
+.question-in {
+  animation: question-in 180ms ease;
+}
+
+.question-out {
+  animation: question-out 160ms ease forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .drift,
-  .vu-fill {
+  .vu-fill,
+  .question-in,
+  .question-out {
     animation: none;
     transition: none;
   }

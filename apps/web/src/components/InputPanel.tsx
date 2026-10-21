@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 
-import { ApiError, turn, upload } from "../api/client.ts"
+import { ApiError, upload } from "../api/client.ts"
+import { postTurn } from "../conversation/postTurn.ts"
 import { applyCorrection, fileProblem, fileKind, inputTypeFor, keyPhrase } from "../input/describe.ts"
 import type { AudioFeatures } from "../types/audio_features.ts"
 import type { InputType } from "../types/input_type.ts"
@@ -16,7 +17,6 @@ type Held = {
 
 export function InputPanel() {
   const sessionId = useStudio((state) => state.sessionId)
-  const setTurn = useStudio((state) => state.setTurn)
   const setStatus = useStudio((state) => state.setStatus)
   const [text, setText] = useState("")
   const [held, setHeld] = useState<Held | null>(null)
@@ -153,13 +153,10 @@ export function InputPanel() {
   }
 
   async function sendTurn(audio?: AudioFeatures) {
-    const response = await turn({
-      session_id: sessionId,
+    await postTurn({
       text: text.trim() || undefined,
       audio_features: audio,
     })
-    setTurn(response)
-    setStatus(response.status === "ready" ? "ready" : "idle")
     setWaiting(false)
     setFeatures(audio ?? null)
   }

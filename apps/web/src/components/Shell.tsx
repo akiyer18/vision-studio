@@ -1,5 +1,8 @@
+import { BriefPanel } from "./BriefPanel.tsx"
+import { Conversation } from "./Conversation.tsx"
 import { GlassPanel } from "./GlassPanel.tsx"
 import { InputPanel } from "./InputPanel.tsx"
+import { PromptStudio } from "./PromptStudio.tsx"
 import { SessionMark } from "./SessionMark.tsx"
 import { useStudio } from "../state/studio.ts"
 
@@ -33,19 +36,14 @@ export function Shell() {
           <InputPanel />
         </GlassPanel>
         <GlassPanel className="min-w-0">
-          <h2 className="font-serif text-xl">Conversation</h2>
-          <p className="mt-2 text-sm text-dust">Questions land here, one at a time.</p>
+          <Conversation />
         </GlassPanel>
-        <div className="flex min-w-0 flex-col gap-4">
-          <GlassPanel>
-            <h2 className="font-serif text-xl">Brief</h2>
-            <p className="mt-2 text-sm text-dust">The brief fills in as the song takes shape.</p>
-          </GlassPanel>
-          <GlassPanel>
-            <h2 className="font-serif text-xl">Output</h2>
-            <p className="mt-2 text-sm text-dust">Layers show up here after a render.</p>
-          </GlassPanel>
-        </div>
+        <GlassPanel className="min-w-0">
+          <PromptStudio />
+        </GlassPanel>
+        <GlassPanel className="min-w-0 desk:col-span-3">
+          <BriefPanel />
+        </GlassPanel>
       </main>
     </div>
   )

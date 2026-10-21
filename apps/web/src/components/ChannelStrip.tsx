@@ -7,7 +7,7 @@ import { VuMeter } from "./VuMeter.tsx"
 type Props = {
   label: string
   value: string
-  source: SlotSource
+  source?: SlotSource
   confidence: number
   reason: string
   onChange?: (value: string) => void
@@ -63,7 +63,7 @@ export function ChannelStrip({ label, value, source, confidence, reason, onChang
         </div>
         <VuMeter value={confidence} label={`${label} confidence`} />
       </div>
-      <SourceBadge source={source} />
+      {source ? <SourceBadge source={source} /> : <span className="h-5" />}
       <p id={reasonId} className="sr-only">
         {reason}
       </p>
