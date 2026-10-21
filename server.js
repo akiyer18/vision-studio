@@ -55,8 +55,20 @@ function buildPrompt(prompt, mode, kind) {
   return `${p || 'drum hit'}, single one-shot drum sample, dry, punchy, clean transient, no melody, no music`;
 }
 
+async function liveVersion() {
+  let installed = null, running = null, reachable = false;
+  try { installed = (await fs.readFile(path.join(here, 'ableton', 'VERSION'), 'utf8')).trim(); } catch {}
+  try {
+    const { sendToLive } = await import('./ableton/client.js');
+    const r = await sendToLive({ cmd: 'version' }, { timeoutMs: 1500 });
+    reachable = true;
+    running = r?.ok ? String(r.version) : 'pre-5';   // older scripts answer "unknown cmd"
+  } catch { reachable = false; }
+  return { reachable, running, installed, restartNeeded: Boolean(reachable && installed && running !== installed) };
+}
 app.get('/api/health', async (_req, res) => {
   res.json({
+    live: await liveVersion(),
     stabilityKey: hasKey(process.env.STABILITY_API_KEY),
     anthropicKey: hasKey(process.env.ANTHROPIC_API_KEY),
     ears: Boolean(process.env.HF_TOKEN || process.env.HUGGING_FACE_HUB_TOKEN || process.env.GEMINI_API_KEY),
