@@ -673,8 +673,14 @@ function makeCtx(emit) {
       const r = mode === 'loop' ? await this.live.buildLoopLayer({ name: trackName, samplePath: cur, bars: 2 }) : await this.live.loadSample({ name: trackName, samplePath: cur, role: 'perc' }).catch(async () => { const t = await ensureTrack(await liveClient(), trackName); return this.live.loadSample({ name: t.name, samplePath: cur, role: 'perc' }); });
       return { path: cur, url: `/out/${encodeURIComponent(path.basename(cur))}`, track: trackName, chain, mode, live: r };
     },
-    async restyleAudio({ path: src, prompt, strength = 0.5 }) {
-      if (!audioPathOk(src)) throw new Error('restyle: path outside project audio');
+    async restyleAudio({ path: src, which, prompt, strength = 0.5 }) {
+      if (!src && which) {   // ref#N / beat / hum / absolute path
+        const m = String(which).match(/^ref#(\d+)$/i);
+        if (m) src = chat.recordings.refs[Number(m[1]) - 1]?.path;
+        else if (which === 'beat' || which === 'hum') src = chat.recordings[which];
+        else src = String(which);
+      }
+      if (!src || !audioPathOk(src)) throw new Error(`restyle: unknown or outside-project audio (${which || src})`);
       const audio = await import('./lib/audio.js');
       const dur = await audio.durationSeconds(src);
       const input = path.join(TMP, `restyle-ref-${Date.now()}.wav`);
