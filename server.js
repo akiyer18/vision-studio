@@ -736,9 +736,15 @@ function makeCtx(emit) {
         (lanes[inst] ||= new Map()).set(step, Math.max(vel, lanes[inst].get(step) || 0));
         micro[step % 16].push((stepF - step) * stepSec * 1000); velProf[step % 16].push(vel / 127);
       }
-      // align: Stability loops rarely start exactly on the downbeat; rotate so the first strong kick sits on step 0
-      const kickSteps = [...(lanes.kick || new Map()).entries()].sort((a, b) => a[0] - b[0]);
-      const offset = kickSteps.length ? kickSteps[0][0] % 16 : 0;
+      // align: Stability loops rarely start on the downbeat. Choose the rotation that puts snares/claps on the backbeat (steps 4, 12)
+      // and kicks on the downbeat (step 0); ties go to the smaller rotation.
+      const scoreFor = (off) => {
+        let sc = 0;
+        for (const [inst, m] of Object.entries(lanes)) for (const [st, v] of m) { const r = ((st - off) % 16 + 16) % 16; if ((inst === 'snare' || inst === 'clap') && (r === 4 || r === 12)) sc += 3 * v / 127; if (inst === 'kick' && r === 0) sc += 2 * v / 127; if (inst === 'kick' && (r === 4 || r === 12)) sc -= 1; }
+        return sc;
+      };
+      let offset = 0, bestScore = -Infinity;
+      for (let off = 0; off < 16; off++) { const sc = scoreFor(off); if (sc > bestScore + 1e-9) { bestScore = sc; offset = off; } }
       if (offset) for (const m of Object.values(lanes)) { const rot = new Map(); for (const [st, v] of m) rot.set((st - offset + total) % total, v); m.clear(); for (const [st, v] of rot) m.set(st, v); }
       const mean = (a) => (a.length ? a.reduce((p, c) => p + c, 0) / a.length : 0);
       const microtiming = micro.map((a) => Number(mean(a).toFixed(1)));
