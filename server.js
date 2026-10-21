@@ -878,12 +878,24 @@ function makeCtx(emit) {
           const stR = await py.stems(f.path, { outDir: path.join(TMP, `stems-${Date.now()}`) }); const stems = stR.stems || stR;
           out.stems = {}; for (const [k, p] of Object.entries(stems)) if (p) out.stems[k] = this.addRef(`${k} stem of the enhanced version`, p).name;
           if (stems.drums) {
-            stage('kit + groove from the drum stem');
-            const kitR = await this.sliceKitFromAudio(stems.drums, { name: 'enh' });
+            // the GROOVE comes from the enhanced drums; the SOUNDS come from the clean hit pipeline (a stem of a regenerated
+            // full mix is smeared, so its slices would be mushy) described by what Gemini heard in the enhanced version
+            stage('groove from the drum stem, clean sounds from the hit generator');
             const rhythm = await this.loopToPattern(stems.drums, { bpm, bars: Math.min(useBars, 4) });
             this.setGroove(rhythm.groove);
-            const kitMain = kitR.kit.filter((k) => !k.alt);
-            if (kitMain.length && rhythm.pattern?.lanes?.length) out.kit = await this.live.buildKit({ name: 'AI Kit', kit: kitMain, pattern: rhythm.pattern, bars: rhythm.pattern.bars, slot: 0, useGroove: true, humanize: 0.15 }).catch((e) => ({ error: e.message }));
+            let drumWords = ''; try { const d2 = await (await import('./lib/ears.js')).productionDna(f.path); drumWords = String(d2?.drums || '').slice(0, 160); out.heardEnhanced = { style: d2?.styleRead || d2?.style, drums: d2?.drums, bass: d2?.bass, harmony: d2?.harmonyMelody || d2?.harmony }; } catch {}
+            const lanes = (rhythm.pattern?.lanes || []).map((l) => l.instrument);
+            const roles = ['kick', lanes.some((l) => /clap/.test(l)) && !lanes.some((l) => /snare/.test(l)) ? 'clap' : 'snare', lanes.some((l) => /hat_open/.test(l)) ? 'hat_open' : null, 'hat_closed'].filter(Boolean);
+            const made = await Promise.all(roles.map(async (role) => { try { const r = await this.synth({ prompt: `${drumWords ? drumWords + ', ' : ''}${intent}`, role, variations: 1 }); return { kind: role, label: role, samplePath: r.path, path: r.path, url: r.url, subShare: r.subShare }; } catch (e) { return null; } }));
+            let kit = made.filter(Boolean);
+            const kickHit = kit.find((k) => k.kind === 'kick');
+            if (kickHit && kickHit.subShare != null && kickHit.subShare < 0.25) { try { const sub = await this.synthLocal({ kind: 'sub', name: 'enh-sub' }); const layered = await this.layerSamples({ parts: [{ path: kickHit.samplePath, gainDb: 0 }, { path: sub.path, gainDb: -3 }], name: 'enh-kick' }).catch(() => null); if (layered?.path) { kickHit.samplePath = layered.path; kickHit.path = layered.path; } } catch {} }
+            if (!kit.length) { const kitR = await this.sliceKitFromAudio(stems.drums, { name: 'enh' }); kit = kitR.kit.filter((k) => !k.alt); }
+            // pattern lanes must map onto the kit we have: snare lane -> clap pad when that is what we made, hats -> hat_closed
+            const have = new Set(kit.map((k) => k.kind));
+            const pattern = { ...rhythm.pattern, lanes: (rhythm.pattern?.lanes || []).map((l) => ({ ...l, instrument: have.has(l.instrument) ? l.instrument : /snare|clap|rim/.test(l.instrument) ? (have.has('snare') ? 'snare' : 'clap') : /hat|ride|crash|perc|shaker/.test(l.instrument) ? (have.has(l.instrument) ? l.instrument : 'hat_closed') : 'kick' })) };
+            if (kit.length && pattern.lanes.length) out.kit = await this.live.buildKit({ name: 'AI Kit', kit, pattern, bars: pattern.bars, slot: 0, useGroove: true, humanize: 0.15 }).catch((e) => ({ error: e.message }));
+            out.kitSounds = kit.map((k) => k.kind);
           }
           if (stems.bass) {
             stage('bass line from the bass stem');
