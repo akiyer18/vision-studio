@@ -7,6 +7,15 @@ SRC="$HERE/ADEHack"
 APP_DIR="/Applications/Ableton Live 10 Standard.app/Contents/App-Resources/MIDI Remote Scripts"
 USER_DIR="$HOME/Music/Ableton/User Library/Remote Scripts"
 
+# Refuse to install when the script's version string and ableton/VERSION disagree,
+# so every reinstall bumps both (the server compares them to show "restart needed").
+PY_VERSION="$(sed -n "s/^VERSION = '\(.*\)'$/\1/p" "$SRC/ADEHack.py")"
+FILE_VERSION="$(tr -d '[:space:]' < "$HERE/VERSION" 2>/dev/null || true)"
+if [ -z "$PY_VERSION" ] || [ "$PY_VERSION" != "$FILE_VERSION" ]; then
+  echo "ERROR: version mismatch: ADEHack.py says '${PY_VERSION:-?}' but ableton/VERSION says '${FILE_VERSION:-?}'. Bump both, then rerun." >&2
+  exit 1
+fi
+
 if [ -d "$APP_DIR" ]; then
   DEST="$APP_DIR/ADEHack"
 else
@@ -18,7 +27,7 @@ rm -rf "$DEST"
 mkdir -p "$DEST"
 cp "$SRC"/*.py "$DEST"/
 find "$DEST" -name '*.pyc' -delete
-echo "Installed to: $DEST"
+echo "Installed ADEHack v$PY_VERSION to: $DEST"
 ls -1 "$DEST"
 
 cat <<NEXT
