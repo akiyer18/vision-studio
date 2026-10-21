@@ -91,16 +91,18 @@ void GenerateAlternativesTab::updateStatus ()
     generateButton.setEnabled (! js.running);
 
     if (processor.hasAnalysedAudio())
-        sourceLabel.setText ("Source: " + processor.getAnalysisPath().isNotEmpty()
-                             ? File (processor.getAnalysisPath()).getFileName()
-                             : "captured audio", dontSendNotification);
+        sourceLabel.setText (
+            "Source: "
+            + (processor.getAnalysisPath().isNotEmpty()
+                ? File(processor.getAnalysisPath()).getFileName()
+                : String("captured audio")), dontSendNotification);
     else
         sourceLabel.setText ("No track analysed yet", dontSendNotification);
 
     if (! processor.getAnalysisText().isEmpty())
         analysisResult.setText (processor.getAnalysisText());
     else
-        analysisResult.setText ("Analyse a track first, then generate alternatives.", dontSendNotification);
+        analysisResult.setText ("Analyse a track first, then generate alternatives.");
 
     rebuildAltRows ();
 }
