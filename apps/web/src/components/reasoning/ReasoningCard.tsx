@@ -17,7 +17,7 @@ export function ReasoningCard({ mark, onMark, onDescribe }: Props) {
   const [open, setOpen] = useState(true)
 
   return (
-    <section className="panel-reasoning flex flex-col gap-2 p-3" aria-label="Agent reasoning">
+    <section className="card panel-reasoning flex flex-col gap-2 p-5" aria-label="Agent reasoning">
       <div className="flex items-center justify-between gap-2">
         <h2 className="section-title">Trace</h2>
         <button type="button" className="text-[13px] text-secondary" aria-expanded={open} onClick={() => setOpen((value) => !value)}>

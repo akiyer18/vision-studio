@@ -92,7 +92,7 @@ export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
   return (
     <div className="studio-thread">
       {showDemo ? <DemoMenu /> : null}
-      <h1 className="sr-only">Your song</h1>
+      <p className="sr-only">Your song</p>
       <div className="messages">
         {intro ? <Agent>{intro}</Agent> : null}
         {earlier.map((bubble) => (

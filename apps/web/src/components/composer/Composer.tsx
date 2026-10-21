@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react"
+import { ArrowUp, Mic, Paperclip } from "lucide-react"
 
 import { ApiError, upload } from "../../api/client.ts"
+import { setComposerRecording } from "../../composer/recording.ts"
 import { inFlight } from "../../conversation/flight.ts"
 import { postTurn } from "../../conversation/postTurn.ts"
 import { runScenario } from "../../demo/runScenario.ts"
@@ -79,6 +81,7 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
   function markRecording(value: boolean) {
     recordingRef.current = value
     setRecording(value)
+    setComposerRecording(value)
   }
 
   function markWaiting(value: boolean) {
@@ -112,15 +115,18 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
   }
 
   useEffect(() => {
-    return () => release()
+    return () => {
+      setComposerRecording(false)
+      release()
+    }
   }, [])
 
   useEffect(() => {
     const field = areaRef.current
     if (!field) return
     field.style.height = "auto"
-    const next = Math.min(field.scrollHeight, 15 * 1.5 * 6)
-    field.style.height = `${Math.max(next, 15 * 1.5 * 2)}px`
+    const next = Math.min(field.scrollHeight, 14 * 1.45 * 6)
+    field.style.height = `${Math.max(next, 14 * 1.45 * 2)}px`
   }, [text])
 
   function acceptFile(file: File, source: "drop" | "recording") {
@@ -431,17 +437,6 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
     })
   }, [features, unsure, fixing, keyText, tempoText, confirmLabel])
 
-  async function buildNow() {
-    if (inFlight() || useStudio.getState().status === "working") return
-    setError(null)
-    try {
-      await postTurn({ build_now: true })
-    } catch (err) {
-      const message = err instanceof ApiError ? err.message : "That did not go through. Try again."
-      setError(message.trim().length < 160 ? message : "That did not go through. Try again.")
-    }
-  }
-
   return (
     <div className={`canvas-column flex flex-col gap-4 ${started ? "pb-4" : ""}`}>
       <form
@@ -463,12 +458,7 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
           if (file) acceptFile(file, "drop")
         }}
       >
-        <div className="flex items-center justify-between gap-2">
-          <IdeaMode />
-          <Button tone="secondary" disabled={working || recording} onClick={() => void buildNow()}>
-            Build now
-          </Button>
-        </div>
+        <IdeaMode />
         <div className="flex items-end gap-2">
           <div className="flex shrink-0 items-center">
             <input
@@ -482,12 +472,14 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
                 if (file) acceptFile(file, "drop")
               }}
             />
-            <button type="button" aria-label="Attach a sound" className="square-btn" onClick={() => fileInput.current?.click()}>
-              Attach
+            <button type="button" aria-label="Attach a sound" title="Attach a sound" className="square-btn" onClick={() => fileInput.current?.click()}>
+              <Paperclip aria-hidden="true" size={16} />
+              <span className="sr-only">Attach</span>
             </button>
             {flags.record ? (
-              <button type="button" aria-label="Record" className="square-btn" onClick={() => void startRecording()} disabled={busy || recording}>
-                Record
+              <button type="button" aria-label="Record" title="Record" className="square-btn" onClick={() => void startRecording()} disabled={busy || recording}>
+                <Mic aria-hidden="true" size={16} />
+                <span className="sr-only">Record</span>
               </button>
             ) : null}
           </div>
@@ -524,7 +516,8 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
                 Try again
               </Button>
             ) : (
-              <button type="submit" aria-label="Send the idea" disabled={busy || recording || working} className="send-btn">
+              <button type="submit" aria-label="Send the idea" title="Send the idea" disabled={busy || recording || working} className="send-btn">
+                <ArrowUp aria-hidden="true" size={16} />
                 <span className="sr-only">Send the idea</span>
               </button>
             )}

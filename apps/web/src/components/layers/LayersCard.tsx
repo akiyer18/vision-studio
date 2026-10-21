@@ -59,14 +59,14 @@ export function LayersCard() {
   const rows = [options.slice(0, 4), options.slice(4)]
 
   return (
-    <section className="panel-layers flex flex-col gap-3 px-2 py-3" aria-label="Layers">
+    <div className="panel-layers flex flex-col gap-3 border-t border-[var(--line)] pt-4" aria-label="Layers">
       <h2 className="section-title">Layers</h2>
       {mode === "one_sound" ? (
         <p className="text-sm text-secondary">One sound, three variations.</p>
       ) : (
       <div className="flex flex-col gap-2" role="group" aria-label="Output">
         {rows.map((row) => (
-          <div key={row[0]?.choice ?? "rest"} className="flex flex-nowrap gap-2">
+          <div key={row[0]?.choice ?? "rest"} className="flex flex-wrap gap-2">
             {row.map((option) => (
               <LayerChip
                 key={option.choice}
@@ -140,7 +140,7 @@ export function LayersCard() {
           </Button>
         </div>
       ) : null}
-    </section>
+    </div>
   )
 }
 
@@ -160,11 +160,16 @@ function LayerChip({
       type="button"
       aria-pressed={selected}
       onClick={onClick}
-      className={`pad shrink-0 whitespace-nowrap ${selected ? "text-ink" : ""}`}
-      style={{
-        borderColor: hue ?? (selected ? "#EDEDED" : undefined),
-        boxShadow: selected ? `inset 0 0 0 1px ${hue ?? "#EDEDED"}` : undefined,
-      }}
+      className="pill pad shrink-0 whitespace-nowrap"
+      style={
+        selected
+          ? {
+              background: hue ? `${hue}33` : "rgba(255, 106, 43, 0.16)",
+              borderColor: hue ?? "#FF6A2B",
+              color: "#F2EDE8",
+            }
+          : undefined
+      }
     >
       <span>{label}</span>
     </button>

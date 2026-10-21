@@ -9,20 +9,21 @@ type LanePaint = {
   progress: string
 }
 
-const ink = "#EDEDED"
-const playhead = "#FF5A1F"
+const ink = "#F2EDE8"
+const playhead = "#FF6A2B"
+const ground = "#141210"
 
 export const LANE_PAINT: Record<LaneId, LanePaint> = {
-  drums: { fill: "#161617", ink, wave: "#E0533D", progress: playhead },
-  chords: { fill: "#161617", ink, wave: "#E3B341", progress: playhead },
-  bass: { fill: "#161617", ink, wave: "#2FA37C", progress: playhead },
-  melody: { fill: "#161617", ink, wave: "#4C7DFF", progress: playhead },
-  texture: { fill: "#161617", ink, wave: "#9B6BFF", progress: playhead },
-  full_mix: { fill: "#161617", ink, wave: "#EDEDED", progress: playhead },
+  drums: { fill: ground, ink, wave: "#C45A4A", progress: playhead },
+  chords: { fill: ground, ink, wave: "#C9A15A", progress: playhead },
+  bass: { fill: ground, ink, wave: "#3D8F78", progress: playhead },
+  melody: { fill: ground, ink, wave: "#5D7EC4", progress: playhead },
+  texture: { fill: ground, ink, wave: "#8A6BB8", progress: playhead },
+  full_mix: { fill: ground, ink, wave: "#A39B92", progress: playhead },
 }
 
 export function lanePaint(layer: string): LanePaint {
   const base = layer.replace(/_[ab]$/, "")
   if (base in LANE_PAINT) return LANE_PAINT[base as LaneId]
-  return { fill: "#161617", ink, wave: "#EDEDED", progress: playhead }
+  return { fill: ground, ink, wave: "#A39B92", progress: playhead }
 }

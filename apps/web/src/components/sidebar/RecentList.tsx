@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { AudioWaveform } from "lucide-react"
 
 import { deleteRecent, readRecent, relativeDate, renameRecent, type RecentIdea } from "../../recentIdeas.ts"
 import { useStudio } from "../../state/studio.ts"
@@ -37,7 +38,7 @@ export function RecentList({ onOpen }: Props) {
 
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <p className="text-sm text-muted">Recent ideas</p>
+      <p className="side-label text-sm text-secondary">Recent ideas</p>
       {ideas.length === 0 ? (
         <p className="mt-2 text-sm text-secondary">Recent ideas land here.</p>
       ) : (
@@ -66,12 +67,14 @@ export function RecentList({ onOpen }: Props) {
               ) : (
                 <button
                   type="button"
+                  title={idea.title}
                   aria-current={idea.sessionId === active ? "true" : undefined}
-                  className="flex w-full items-baseline gap-2 rounded-xl px-2 py-1.5 pr-8 text-left text-sm text-secondary hover:text-ink"
+                  className="recent-row pr-8 text-sm hover:text-ink"
                   onClick={() => onOpen(idea)}
                 >
-                  <span className="min-w-0 flex-1 truncate">{idea.title}</span>
-                  <span className="shrink-0 text-muted">{relativeDate(idea.date)}</span>
+                  <AudioWaveform aria-hidden="true" size={14} />
+                  <span className="recent-copy min-w-0 flex-1 truncate">{idea.title}</span>
+                  <span className="recent-copy shrink-0 text-secondary">{relativeDate(idea.date)}</span>
                 </button>
               )}
               {renaming === idea.id ? null : (

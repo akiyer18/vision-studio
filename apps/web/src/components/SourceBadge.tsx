@@ -3,7 +3,7 @@ import type { SlotSource } from "../types/slot_source.ts"
 const labels: Record<SlotSource, string> = {
   you: "you",
   detected: "detected",
-  guessed: "default",
+  guessed: "auto",
   reference: "reference",
 }
 

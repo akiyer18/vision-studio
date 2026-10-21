@@ -7,15 +7,17 @@ import { useStudio } from "../../state/studio.ts"
 import { useTour } from "../../tour.ts"
 import { Composer } from "../composer/Composer.tsx"
 import { BriefCard } from "../brief/BriefCard.tsx"
-import { LayersCard } from "../layers/LayersCard.tsx"
 import { ReasoningCard } from "../reasoning/ReasoningCard.tsx"
 import { Sidebar } from "../sidebar/Sidebar.tsx"
 import { Thread, type Bubble } from "../thread/Thread.tsx"
 import { Tour } from "../tour/Tour.tsx"
+import { Insight } from "./Insight.tsx"
+import { Readouts } from "./Readouts.tsx"
 import { Transport } from "./Transport.tsx"
 import { GenreRoom, type GenreDetail } from "../genre/GenreRoom.tsx"
 
 const PlayerBar = lazy(() => import("../layers/stage.tsx").then((module) => ({ default: module.PlayerBar })))
+const LayersView = lazy(() => import("../layers/stage.tsx").then((module) => ({ default: module.LayersView })))
 
 const demoQuery = new URLSearchParams(window.location.search).get("demo") === "1"
 
@@ -27,7 +29,6 @@ export function Dashboard() {
   const status = useStudio((state) => state.status)
   const thread = useStudio((state) => state.thread)
   const tour = useTour()
-  const [open, setOpen] = useState(false)
   const [room, setRoom] = useState<"create" | "genre">("create")
   const mode = useStudio((state) => state.mode)
   const [mark, setMark] = useState<string | null>(null)
@@ -94,7 +95,6 @@ export function Dashboard() {
     useStudio.getState().showReference(genre.prefill, `Using ${genre.title}.`)
     setRoom("create")
     setTalking(true)
-    setOpen(false)
   }
 
   function startOver() {
@@ -109,54 +109,48 @@ export function Dashboard() {
 
   const sessionName = bubbles.find((item) => item.role === "you" && !item.prompt)?.text || "New session"
 
+  const hot = status === "working"
+
   return (
     <div className="studio-root">
-      <button type="button" className="studio-menu pad" aria-label="Open the menu" onClick={() => setOpen(true)}>
-        Menu
-      </button>
-      {open ? (
-        <button type="button" className="fixed inset-0 z-40 bg-black/50 min-[768px]:hidden" aria-label="Close the menu" onClick={() => setOpen(false)} />
-      ) : null}
-      <div className={`studio-shell ${showLayers ? "has-player" : ""}`}>
-        <Transport sessionName={sessionName} />
-        <Sidebar open={open} room={room} onRoom={setRoom} onClose={() => setOpen(false)} onReplay={tour.replay} />
+      <div className="grain" aria-hidden="true" />
+      <div className="studio-shell">
+        <Sidebar room={room} onRoom={setRoom} onReplay={tour.replay} />
         {room === "genre" ? (
-          <GenreRoom onUse={useGenre} />
+          <main className="studio-main">
+            <GenreRoom onUse={useGenre} />
+          </main>
         ) : (
-          <>
-        <div className="studio-canvas">
-          <div className="studio-composer">
-            <Composer started={started} onBegin={() => setTalking(true)} onBubble={addBubble} onExchange={addExchange} />
-          </div>
-          <Thread bubbles={bubbles} onExchange={addExchange} showLayers={showLayers} showDemo={demoQuery} />
-        </div>
-        <div className="studio-rail px-2 py-4" role="radiogroup" aria-label="Song details">
-          <input id="rail-brief" className="sr-only" type="radio" name="rail" defaultChecked />
-          <input id="rail-reasoning" className="sr-only" type="radio" name="rail" />
-          <input id="rail-layers" className="sr-only" type="radio" name="rail" />
-          <div className="rail-tabs mb-2 gap-1">
-            <label htmlFor="rail-brief" className="pad">
-              Brief
-            </label>
-            <label htmlFor="rail-reasoning" className="pad">
-              Trace
-            </label>
-            <label htmlFor="rail-layers" className="pad">
-              Layers
-            </label>
-          </div>
-          <div className="rail-stack flex flex-col gap-4">
-            <BriefCard mark={mark} onDescribe={describe} />
-            {turn ? <ReasoningCard mark={mark} onMark={setMark} onDescribe={describe} /> : null}
-            <LayersCard />
-          </div>
-        </div>
-        {showLayers ? (
-          <Suspense fallback={<p className="studio-player px-4 py-3 text-secondary">Opening the player.</p>}>
-            <PlayerBar onStartOver={startOver} />
-          </Suspense>
-        ) : null}
-          </>
+          <main className="studio-main">
+            <Transport sessionName={sessionName} />
+            <Readouts />
+            <div className="studio-split">
+              <section className={`card conversation-card p-5 ${hot ? "is-hot" : ""}`} aria-label="Conversation">
+                <h2 className="section-title">Conversation</h2>
+                <Thread bubbles={bubbles} onExchange={addExchange} showLayers={false} showDemo={demoQuery} />
+                <div className="studio-composer">
+                  <Composer started={started} onBegin={() => setTalking(true)} onBubble={addBubble} onExchange={addExchange} />
+                </div>
+              </section>
+              <div className="brief-column">
+                <BriefCard mark={mark} onDescribe={describe} hot={hot} />
+                {turn ? <ReasoningCard mark={mark} onMark={setMark} onDescribe={describe} /> : null}
+              </div>
+            </div>
+            {showLayers ? (
+              <section className={`card p-5 ${hot ? "is-hot" : ""}`} aria-label="Results">
+                <Suspense fallback={<p className="text-secondary">Opening the takes.</p>}>
+                  <LayersView />
+                </Suspense>
+              </section>
+            ) : null}
+            <Insight />
+            {showLayers ? (
+              <Suspense fallback={<p className="studio-player px-4 py-3 text-secondary">Opening the player.</p>}>
+                <PlayerBar onStartOver={startOver} />
+              </Suspense>
+            ) : null}
+          </main>
         )}
       </div>
       <Tour open={tour.open} onClose={tour.finish} />

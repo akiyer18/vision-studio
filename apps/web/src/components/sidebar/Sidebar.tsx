@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
+import { CircleHelp, Library, PenLine, ScanSearch, SlidersHorizontal } from "lucide-react"
 
 import { features } from "../../features.ts"
 import { transport } from "../../playback/transport.ts"
@@ -9,14 +10,12 @@ import { RecentList } from "./RecentList.tsx"
 type Room = "create" | "genre"
 
 type Props = {
-  open: boolean
   room: Room
   onRoom: (room: Room) => void
-  onClose: () => void
   onReplay: () => void
 }
 
-export function Sidebar({ open, room, onRoom, onClose, onReplay }: Props) {
+export function Sidebar({ room, onRoom, onReplay }: Props) {
   const restoreSession = useStudio((state) => state.restoreSession)
   const [menu, setMenu] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
@@ -61,52 +60,50 @@ export function Sidebar({ open, room, onRoom, onClose, onReplay }: Props) {
   function openRecent(entry: RecentIdea) {
     transport.stop()
     restoreSession(entry)
-    onClose()
+    onRoom("create")
   }
 
   return (
-    <aside className="studio-side flex h-full min-h-0 flex-col gap-4 p-3" data-open={open ? "true" : "false"} data-tour="sidebar">
-      <div className="flex items-center justify-end">
-        <button type="button" className="text-secondary min-[768px]:hidden" aria-label="Close the menu" onClick={onClose}>
-          Close
-        </button>
-      </div>
-      <nav aria-label="Studio" className="flex flex-col gap-1">
+    <aside className="studio-side" data-tour="sidebar">
+      <p className="wordmark flex items-center gap-2" data-tour="welcome">
+        <span aria-hidden="true">VS</span>
+        <span className="wordmark-copy">Vision Studio</span>
+      </p>
+      <nav aria-label="Studio" className="side-nav flex flex-col gap-1">
         <RoomButton
-          index="01"
+          icon={<PenLine aria-hidden="true" size={16} />}
           label="Create"
           live={features.create}
           current={room === "create"}
           onClick={() => {
             onRoom("create")
-            onClose()
             document.getElementById("idea")?.focus()
           }}
         />
         <RoomButton
-          index="02"
+          icon={<Library aria-hidden="true" size={16} />}
           label="Genres"
           live={features.genre}
           current={room === "genre"}
-          onClick={() => {
-            onRoom("genre")
-            onClose()
-          }}
+          onClick={() => onRoom("genre")}
         />
-        <SoonItem index="03" label="Analyse" soon={!features.analyser} />
-        <SoonItem index="04" label="Tweak" soon={!features.edits} />
+        <SoonItem icon={<ScanSearch aria-hidden="true" size={16} />} label="Analyse" soon={!features.analyser} />
+        <SoonItem icon={<SlidersHorizontal aria-hidden="true" size={16} />} label="Tweak" soon={!features.edits} />
       </nav>
       <RecentList onOpen={openRecent} />
-      <div className="relative flex flex-col gap-3">
+      <div className="relative mt-auto flex flex-col gap-3">
+        <p className="tip-card">Press Build now at any time, your details stay exactly as you said them</p>
         <button
           ref={helpRef}
           type="button"
+          title="Help"
           aria-expanded={menu}
           aria-haspopup="menu"
-          className="text-left text-[13px] text-secondary"
+          className="flex items-center gap-2 text-left text-secondary"
           onClick={() => setMenu((value) => !value)}
         >
-          Help
+          <CircleHelp aria-hidden="true" size={16} />
+          <span className="side-label">Help</span>
         </button>
         {menu ? (
           <div role="menu" className="absolute bottom-16 left-0 z-30 flex w-44 flex-col rounded-2xl border border-white/15 bg-canvas p-2">
@@ -167,46 +164,41 @@ export function Sidebar({ open, room, onRoom, onClose, onReplay }: Props) {
 }
 
 function RoomButton({
-  index,
+  icon,
   label,
   live,
   current,
   onClick,
 }: {
-  index: string
+  icon: ReactNode
   label: string
   live: boolean
   current: boolean
   onClick: () => void
 }) {
-  if (!live) return <SoonItem index={index} label={label} soon />
+  if (!live) return <SoonItem icon={icon} label={label} soon />
   return (
-    <button
-      type="button"
-      aria-current={current ? "page" : undefined}
-      className={`flex h-8 items-center gap-2 rounded-[6px] px-2 text-left text-[15px] ${current ? "text-ink shadow-[inset_0_0_0_1px_var(--accent)]" : "text-secondary"}`}
-      onClick={onClick}
-    >
-      <span className="mono w-6 text-[13px]">{index}</span>
-      <span className="truncate">{label}</span>
+    <button type="button" title={label} aria-current={current ? "page" : undefined} onClick={onClick}>
+      {icon}
+      <span className="side-label truncate">{label}</span>
     </button>
   )
 }
 
-function SoonItem({ index, label, soon }: { index: string; label: string; soon: boolean }) {
+function SoonItem({ icon, label, soon }: { icon: ReactNode; label: string; soon: boolean }) {
   if (!soon) {
     return (
-      <button type="button" className="flex h-8 items-center gap-2 rounded-[6px] px-2 text-left text-[15px] text-secondary">
-        <span className="mono w-6 text-[13px]">{index}</span>
-        {label}
+      <button type="button" title={label}>
+        {icon}
+        <span className="side-label truncate">{label}</span>
       </button>
     )
   }
   return (
-    <div className="flex h-8 items-center gap-2 rounded-[6px] px-2 text-[15px] text-secondary" aria-disabled="true">
-      <span className="mono w-6 text-[13px]">{index}</span>
-      <span className="truncate">{label}</span>
-      <span className="ml-auto text-[13px]">Soon</span>
+    <div className="flex items-center gap-2 px-2 py-1.5 text-secondary" title={`${label}, soon`} aria-disabled="true">
+      {icon}
+      <span className="side-label truncate">{label}</span>
+      <span className="side-copy ml-auto rounded-full border border-[var(--line)] px-2 py-0.5 text-[12px]">Soon</span>
     </div>
   )
 }

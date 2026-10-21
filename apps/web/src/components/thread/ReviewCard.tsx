@@ -79,7 +79,7 @@ export function ReviewCard() {
       </Group>
       <Group title="Defaults">
         {defaults.map((name) => (
-          <Fact key={name} name={name} slot={brief.slots[name]} mark="default" onCommit={(value) => void save(name, value)} />
+          <Fact key={name} name={name} slot={brief.slots[name]} mark="auto" onCommit={(value) => void save(name, value)} />
         ))}
       </Group>
       <Group title="Heard">

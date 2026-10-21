@@ -1,4 +1,5 @@
 import { motion, useReducedMotion } from "framer-motion"
+import { Download } from "lucide-react"
 import { memo, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react"
 
 import { explainResult, fileName, fileUrl, type Explanation } from "../../api/client.ts"
@@ -111,13 +112,14 @@ const LayerCard = memo(function LayerCard({ layer, reduce }: { layer: string; re
         if (useStudio.getState().focusedLane === layer) setFocusedLane(null)
       }}
       className="lane outline-none"
-      style={{ borderLeftColor: paint.wave, color: paint.ink }}
+      style={{ color: paint.ink }}
       initial={reduce ? false : { opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: reduce ? 0 : 0.15 }}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="text-[20px] font-medium">{title}</h3>
+        <span className="lane-dot" style={{ background: paint.wave }} aria-hidden="true" />
+        <h3 className="lane-name">{title}</h3>
         {features.soloMute ? (
           <>
             <Button tone="secondary" aria-pressed={solo === layer} aria-label={`Solo ${title}`} onClick={() => toggleSolo(layer)}>
@@ -181,7 +183,7 @@ const LayerCard = memo(function LayerCard({ layer, reduce }: { layer: string; re
       {unavailable
         ? null
         : variations.map((item) => (
-            <Variation key={item.variant} result={item} take={take} selected={tab === item.variant} ink={paint.ink} wave={paint.wave} progress={paint.progress} />
+            <Variation key={item.variant} result={item} take={take} selected={tab === item.variant} ink={paint.ink} />
           ))}
     </motion.section>
   )
@@ -256,15 +258,11 @@ function Variation({
   take,
   selected,
   ink,
-  wave,
-  progress,
 }: {
   result: RenderResult
   take: number
   selected: boolean
   ink: string
-  wave: string
-  progress: string
 }) {
   const id = `${result.layer}:${result.variant}`
   const picked = useStudio((state) => state.picks[result.layer] === result.variant)
@@ -333,8 +331,10 @@ function Variation({
 
   return (
     <div hidden={!selected} data-layer={result.layer} data-variant={result.variant} data-seconds={moving ? playback.seconds.toFixed(3) : undefined}>
-      {selected ? <Waveform url={url} label={`${title} variation ${result.variant} waveform`} seek={seekRef} wave={wave} progress={progress} /> : null}
-      <p className="mono mt-2 truncate text-sm">{name}</p>
+      {selected ? (
+        <Waveform url={url} label={`${title} variation ${result.variant} waveform`} seek={seekRef} wave="#FF9A5C" progress="#FF6A2B" height={40} />
+      ) : null}
+      <p className="sr-only">{name}</p>
       <div className="mt-2 flex flex-wrap gap-2">
         <Button tone="secondary" aria-pressed={solo} aria-label={solo ? `Pause ${title} variation ${result.variant}` : `Play ${title} variation ${result.variant}`} onClick={() => void toggle()} style={{ color: ink }}>
           {solo ? "Pause" : "Play"}
@@ -348,8 +348,9 @@ function Variation({
         >
           Pick
         </Button>
-        <Button tone="ghost" aria-label={`Download ${title} variation ${result.variant}`} onClick={() => void download()}>
-          Download
+        <Button tone="ghost" aria-label={`Download ${title} variation ${result.variant}`} title={`Download ${title}`} onClick={() => void download()}>
+          <Download aria-hidden="true" size={16} />
+          <span className="sr-only">Download</span>
         </Button>
       </div>
       {problem ? <p role="alert" className="mt-2">{problem}</p> : null}

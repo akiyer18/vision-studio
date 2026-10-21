@@ -5,14 +5,16 @@ export function Waveform({
   url,
   label,
   seek,
-  wave = "rgba(246, 241, 232, 0.55)",
-  progress = "#F6F1E8",
+  wave = "#FF9A5C",
+  progress = "#FF6A2B",
+  height = 64,
 }: {
   url: string
   label: string
   seek: RefObject<((seconds: number) => void) | null>
   wave?: string
   progress?: string
+  height?: number
 }) {
   const container = useRef<HTMLDivElement>(null)
 
@@ -21,7 +23,7 @@ export function Waveform({
     if (!element) return
     const waveform = WaveSurfer.create({
       container: element,
-      height: 64,
+      height,
       waveColor: wave,
       progressColor: progress,
       cursorColor: progress,
@@ -45,7 +47,7 @@ export function Waveform({
       seek.current = null
       waveform.destroy()
     }
-  }, [progress, seek, url, wave])
+  }, [height, progress, seek, url, wave])
 
-  return <div ref={container} role="img" aria-label={label} className="min-h-16 w-full min-w-0 overflow-hidden" />
+  return <div ref={container} role="img" aria-label={label} className="min-w-0 flex-1 overflow-hidden" style={{ minHeight: height }} />
 }

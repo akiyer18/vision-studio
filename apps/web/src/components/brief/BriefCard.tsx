@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { Lock } from "lucide-react"
 
 import { SLOT_LABEL } from "../../brief/slots.ts"
 import { inFlight } from "../../conversation/flight.ts"
@@ -9,71 +10,112 @@ import type { SlotName } from "../../types/slot_name.ts"
 import type { SlotSource } from "../../types/slot_source.ts"
 import type { SongBrief } from "../../types/song_brief.ts"
 import { layerTitle } from "../../studio/output.ts"
+import { LayersCard } from "../layers/LayersCard.tsx"
 import { SourceBadge } from "../SourceBadge.tsx"
 
 const CORE: SlotName[] = ["tempo", "key", "structure", "mood", "energy", "world"]
-const EXTRA: SlotName[] = ["style", "palette", "must_keep", "sound", "genre", "brightness", "pattern", "production"]
+const EXTRA: SlotName[] = ["style", "palette", "must_keep", "sound", "genre", "brightness", "pattern", "production", "progression", "meter", "intent"]
+const LOCKED: SlotName[] = ["tempo", "key", "progression", "structure", "palette", "sound", "meter"]
 
 type Props = {
   mark: string | null
   onDescribe: () => void
+  hot?: boolean
 }
 
-export function BriefCard({ mark, onDescribe }: Props) {
+export function BriefCard({ mark, onDescribe, hot = false }: Props) {
   const brief = useStudio((state) => state.turn?.brief ?? null)
   const ready = useStudio((state) => state.turn?.status === "ready")
   const overrides = useStudio((state) => state.overrides)
   const queueOverride = useStudio((state) => state.queueOverride)
   const facets = brief?.facets ?? []
   const arc = brief?.arc
-  const extras = EXTRA.filter((slot) => Boolean(overrides[slot] ?? brief?.slots[slot]?.value))
+  const [open, setOpen] = useState(true)
+  const rows = rowsFor(brief, overrides, mark)
   const output = brief?.output?.length ? brief.output.join(", ") : ""
+  const summary = [rows.find((row) => row.slot === "tempo"), rows.find((row) => row.slot === "key"), rows.find((row) => row.slot === "structure")]
+    .map((row) => row?.text || "auto")
+    .join(" · ")
 
   return (
-    <section className="panel-brief flex flex-col gap-3 p-3" data-tour="brief" aria-label="Song brief">
-      <h2 className="section-title">Song brief</h2>
-      <div className="param-grid">
-        {CORE.map((slot) => {
-          const item = field(slot, brief, overrides)
+    <section className={`card brief-card flex flex-col gap-4 p-5 ${hot ? "is-hot" : ""}`} data-open={open ? "true" : "false"} data-tour="brief" aria-label="Song brief">
+      <button type="button" className="brief-summary" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        <span className="section-title">Brief</span>
+        <span className="mono text-secondary">{summary}</span>
+      </button>
+      <div className="brief-body flex flex-col gap-3">
+        <h2 className="section-title">Brief</h2>
+        {(["locked", "you", "detected", "defaults"] as const).map((name) => {
+          const items = rows.filter((row) => row.group === name)
+          const withOutput =
+            name === "you" && output
+              ? [...items, { slot: "output", label: "Output", text: output, source: "you" as const, reason: undefined, marked: false, group: "you" as const }]
+              : items
+          if (withOutput.length === 0) return null
           return (
-            <Cell
-              key={slot}
-              slot={slot}
-              label={slot === "structure" ? "Bars" : SLOT_LABEL[slot]}
-              text={item?.text ?? ""}
-              source={item?.source}
-              reason={item?.reason}
-              marked={mark === slot}
-              onChange={(value) => queueOverride(slot, value)}
-            />
+            <div key={name} className="flex flex-col gap-2">
+              <p className="text-[12px] font-medium text-secondary">{GROUP_LABEL[name]}</p>
+              {withOutput.map((row) => (
+                <Cell
+                  key={row.slot}
+                  slot={row.slot}
+                  label={row.label}
+                  text={row.text}
+                  source={row.source}
+                  reason={row.reason}
+                  marked={row.marked}
+                  locked={row.group === "locked"}
+                  onChange={row.slot === "output" ? undefined : (value) => queueOverride(row.slot as SlotName, value)}
+                />
+              ))}
+            </div>
           )
         })}
-        {extras.map((slot) => {
-          const item = field(slot, brief, overrides)
-          if (!item) return null
-          return (
-            <Cell
-              key={slot}
-              slot={slot}
-              label={SLOT_LABEL[slot]}
-              text={item.text}
-              source={item.source}
-              reason={item.reason}
-              marked={mark === slot}
-              onChange={(value) => queueOverride(slot, value)}
-            />
-          )
-        })}
-        <Cell slot="output" label="Output" text={output} />
+        {facets.length === 0 && !arc && !brief ? (
+          <button type="button" className="self-start text-secondary underline-offset-4 hover:underline" onClick={onDescribe}>
+            Describe a feeling
+          </button>
+        ) : null}
+        <FacetBlock facets={facets} arcLabel={arc?.label} ready={ready} />
+        <LayersCard />
       </div>
-      {facets.length === 0 && !arc && !brief ? (
-        <button type="button" className="self-start text-[13px] text-secondary underline-offset-4 hover:underline" onClick={onDescribe}>
-          Describe a feeling
-        </button>
-      ) : null}
-      <FacetBlock facets={facets} arcLabel={arc?.label} ready={ready} />
     </section>
   )
+}
+
+const GROUP_LABEL = {
+  locked: "Locked",
+  you: "From you",
+  detected: "Detected",
+  defaults: "Defaults",
+} as const
+
+function rowsFor(brief: SongBrief | null, overrides: Record<string, string>, mark: string | null) {
+  const slots = [...CORE, ...EXTRA.filter((slot) => Boolean(overrides[slot] ?? brief?.slots[slot]?.value) || CORE.includes(slot as (typeof CORE)[number]))]
+  const unique = [...new Set(slots)]
+  return unique.map((slot) => {
+    const item = field(slot, brief, overrides)
+    const text = item?.text ?? ""
+    const source = item?.source
+    const group = groupFor(slot, source, text)
+    return {
+      slot,
+      label: slot === "structure" ? "Bars" : SLOT_LABEL[slot],
+      text,
+      source,
+      reason: item?.reason,
+      marked: mark === slot,
+      group,
+    }
+  })
+}
+
+function groupFor(slot: SlotName, source: SlotSource | undefined, text: string): "locked" | "you" | "detected" | "defaults" {
+  if (!text) return "defaults"
+  if (source === "you" && LOCKED.includes(slot)) return "locked"
+  if (source === "you") return "you"
+  if (source === "detected") return "detected"
+  return "defaults"
 }
 
 function FacetBlock({ facets, arcLabel, ready }: { facets: FacetAnswer[]; arcLabel?: string; ready: boolean }) {
@@ -177,6 +219,7 @@ function Cell({
   source,
   reason,
   marked = false,
+  locked = false,
   onChange,
 }: {
   slot: string
@@ -185,13 +228,27 @@ function Cell({
   source?: SlotSource
   reason?: string
   marked?: boolean
+  locked?: boolean
   onChange?: (value: string) => void
 }) {
   return (
-    <div data-slot={slot} className={`param-cell ${marked ? "is-marked" : ""}`}>
-      <p className="text-[13px] text-secondary">{label}</p>
-      {text && onChange ? <Editable text={text} label={label} onChange={onChange} /> : <p className="mono text-[15px] text-ink">{text || "—"}</p>}
-      {source ? <SourceBadge source={source} reason={reason} /> : null}
+    <div data-slot={slot} className={`flex items-start justify-between gap-3 ${marked ? "is-marked" : ""}`}>
+      <div className="min-w-0">
+        <p className="flex items-center gap-1 text-secondary">
+          {locked ? <Lock aria-hidden="true" size={12} /> : null}
+          {label}
+        </p>
+        {text && onChange ? (
+          <Editable text={text} label={label} onChange={onChange} />
+        ) : text ? (
+          <p className="mono text-ink">{text}</p>
+        ) : (
+          <p className="text-secondary">
+            auto <span className="readout-hint">set from your words</span>
+          </p>
+        )}
+      </div>
+      {text && source ? <SourceBadge source={source} reason={reason} /> : null}
     </div>
   )
 }
