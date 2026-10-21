@@ -462,15 +462,33 @@ app.post('/api/tweak', async (req, res) => {
 // ================= v3: the producer agent (Claude with tools) =================
 const STATE_FILE = path.join(TMP, 'chat-state.json');
 const chat = { history: [], recordings: { refs: [] } };   // attachments persist for the whole session (and across restarts)
-try { const st = JSON.parse(await fs.readFile(STATE_FILE, 'utf8')); chat.history = st.history || []; chat.recordings = st.recordings || { refs: [] }; if (st.samples) lastBuild.samples = st.samples; if (st.tracks) lastBuild.tracks = st.tracks; if (st.bpm) lastBuild.bpm = st.bpm; if (st.clips) lastBuild.clips = st.clips; } catch {}
+try { const st = JSON.parse(await fs.readFile(STATE_FILE, 'utf8')); chat.history = st.history || []; chat.recordings = st.recordings || { refs: [] }; if (st.samples) lastBuild.samples = st.samples; if (st.tracks) lastBuild.tracks = st.tracks; if (st.bpm) lastBuild.bpm = st.bpm; if (st.clips) lastBuild.clips = st.clips; chat.promptHash = st.promptHash; } catch {}
 lastBuild.samples ||= {};   // track name (lower) -> { samplePath, slotPath, role }
+// Thinking blocks are bound to the system prompt + tool list that produced them; after we change either, replaying them is a 400.
+import { createHash } from 'node:crypto';
+async function promptHash() {
+  const m = await import('./lib/agent.js');
+  const names = m.makeTools ? m.makeTools({ emit() {}, live: {} }, {}).map((t) => t.name).sort().join(',') : '';
+  return createHash('sha1').update(String(m.PRODUCER_SYSTEM || '') + '|' + names).digest('hex').slice(0, 12);
+}
+function stripThinking(history) {
+  return history.map((msg) => {
+    if (msg.role !== 'assistant' || !Array.isArray(msg.content)) return msg;
+    const content = msg.content.filter((b) => b.type !== 'thinking' && b.type !== 'redacted_thinking');
+    return { ...msg, content: content.length ? content : [{ type: 'text', text: '(earlier reasoning omitted)' }] };
+  });
+}
+async function reconcileHistory() {
+  const h = await promptHash();
+  if (chat.promptHash !== h) { if (chat.history.length) console.log(`[chat] prompt/tools changed (${chat.promptHash} -> ${h}); dropping ${chat.history.length ? 'thinking blocks from' : ''} stored history`); chat.history = stripThinking(chat.history); chat.promptHash = h; await saveChat(); }
+}
 function safeHistory(h, max = 60) {   // cut only at a plain user text message so no tool_result is orphaned
   if (h.length <= max) return h;
   let i = h.length - max;
   while (i < h.length && !(h[i].role === 'user' && typeof h[i].content === 'string')) i++;
   return i < h.length ? h.slice(i) : [];
 }
-async function saveChat() { try { await fs.writeFile(STATE_FILE, JSON.stringify({ history: safeHistory(chat.history), recordings: chat.recordings, samples: lastBuild.samples, tracks: lastBuild.tracks, bpm: lastBuild.bpm, clips: lastBuild.clips })); } catch (e) { console.warn('[state]', e.message); } }
+async function saveChat() { try { await fs.writeFile(STATE_FILE, JSON.stringify({ history: safeHistory(chat.history), recordings: chat.recordings, samples: lastBuild.samples, tracks: lastBuild.tracks, bpm: lastBuild.bpm, clips: lastBuild.clips, promptHash: chat.promptHash })); } catch (e) { console.warn('[state]', e.message); } }
 function rememberSound(trackName, samplePath, slotPath, role) { reservedSlots.delete(path.basename(slotPath || '')); lastBuild.samples[String(trackName).toLowerCase()] = { samplePath, slotPath, role, at: Date.now() }; }
 lastBuild.clips ||= {};   // track name (lower) -> { steps|notes, bars, swing, slot }
 function rememberClip(trackName, clip) { lastBuild.clips[String(trackName).toLowerCase()] = { ...clip, at: Date.now() }; }
@@ -704,6 +722,7 @@ app.post('/api/chat', async (req, res) => {
     if (reset) { chat.history = []; chat.recordings = { refs: [] }; lastBuild.samples = {}; lastBuild.tracks = {}; await saveChat(); }
     if (!hasKey(process.env.ANTHROPIC_API_KEY)) throw new Error('ANTHROPIC_API_KEY is not set in .env (the producer agent needs Claude)');
     const { runProducer } = await import('./lib/agent.js');
+    await reconcileHistory();
     const attachedThisTurn = [];
     const beat = beatId && await getUpload(beatId); if (beat) { chat.recordings.beat = beat.path; attachedThisTurn.push('beat'); }
     const hum = humId && await getUpload(humId); if (hum) { chat.recordings.hum = hum.path; attachedThisTurn.push('hum'); }
@@ -712,7 +731,12 @@ app.post('/api/chat', async (req, res) => {
     const missing = (Array.isArray(refIds) ? refIds.length : 0) + (beatId ? 1 : 0) + (humId ? 1 : 0) - refs.length - (beat ? 1 : 0) - (hum ? 1 : 0);
     if (missing) emit({ type: 'tool_done', name: 'attachments', ok: false, summary: `${missing} attachment(s) could not be found on the server, please re-attach` });
     const recordings = { ...chat.recordings, refs: chat.recordings.refs.length ? chat.recordings.refs : undefined, attachedThisTurn };
-    const out = await runProducer({ history: chat.history, userText: String(text), recordings, ctx: makeCtx(emit) });
+    let out;
+    try { out = await runProducer({ history: chat.history, userText: String(text), recordings, ctx: makeCtx(emit) }); }
+    catch (e) {
+      if (/thinking/i.test(e?.message || '') && /signature|bound/i.test(e?.message || '')) { console.warn('[chat] thinking block rejected, stripping and retrying'); chat.history = stripThinking(chat.history); out = await runProducer({ history: chat.history, userText: String(text), recordings, ctx: makeCtx(emit) }); }
+      else throw e;
+    }
     chat.history = out.history;
     await saveChat();
     emit({ type: 'text', text: out.text });
