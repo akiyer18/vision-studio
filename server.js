@@ -514,7 +514,28 @@ function stripThinking(history) {
     return { ...msg, content: content.length ? content : [{ type: 'text', text: '(earlier reasoning omitted)' }] };
   });
 }
+/** Claude rejects a tool_use without its tool_result in the next message (a turn cut off by max_iterations, a crash or a restart leaves exactly that). Fill the gaps with synthetic results so the thread survives. */
+function repairHistory(h) {
+  const out = []; let fixed = 0;
+  for (let i = 0; i < h.length; i++) {
+    const m = h[i]; out.push(m);
+    if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
+    const ids = m.content.filter((b) => b.type === 'tool_use').map((b) => b.id);
+    if (!ids.length) continue;
+    const nxt = h[i + 1];
+    const got = new Set(nxt && Array.isArray(nxt.content) ? nxt.content.filter((b) => b.type === 'tool_result').map((b) => b.tool_use_id) : []);
+    const missing = ids.filter((id) => !got.has(id));
+    if (!missing.length) continue;
+    const results = missing.map((id) => ({ type: 'tool_result', tool_use_id: id, content: 'interrupted: this tool call never ran (the turn was cut off). Redo it if it is still needed.', is_error: true }));
+    if (nxt && nxt.role === 'user' && Array.isArray(nxt.content) && got.size) { h[i + 1] = { ...nxt, content: [...results, ...nxt.content] }; }
+    else out.push({ role: 'user', content: results });
+    fixed += missing.length;
+  }
+  if (fixed) console.warn(`[chat] repaired history: ${fixed} tool call(s) without results`);
+  return out;
+}
 async function reconcileHistory() {
+  chat.history = repairHistory(chat.history);
   const h = await promptHash();
   if (chat.promptHash !== h) { if (chat.history.length) console.log(`[chat] prompt/tools changed (${chat.promptHash} -> ${h}); dropping ${chat.history.length ? 'thinking blocks from' : ''} stored history`); chat.history = stripThinking(chat.history); chat.promptHash = h; await saveChat(); }
 }
@@ -1511,7 +1532,7 @@ async function runChatTurn(req, res, emit0) {
       if (/thinking/i.test(e?.message || '') && /signature|bound/i.test(e?.message || '')) { console.warn('[chat] thinking block rejected, stripping and retrying'); chat.history = stripThinking(chat.history); out = await runProducer({ history: chat.history, userText, recordings, ctx: makeCtx(emit) }); }
       else throw e;
     }
-    chat.history = out.history;
+    chat.history = repairHistory(out.history);
     await saveChat();
     emit({ type: 'text', text: out.text });
     // Arrangement mode: Live 10 can't create arrangement clips via API, so record the playing scene onto the timeline after changes
