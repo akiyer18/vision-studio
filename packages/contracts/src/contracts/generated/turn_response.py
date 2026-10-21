@@ -31,3 +31,4 @@ class TurnResponse(BaseModel):
     prompts: list[LayerPrompt] | None = None
     progression: Progression | None = None
     trace: list[TraceStep]
+    summary: str | None = None

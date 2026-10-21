@@ -3,6 +3,10 @@ import { Suspense, lazy, useCallback, useRef, useState } from "react"
 
 import { ApiError } from "../../api/client.ts"
 import { postTurn } from "../../conversation/postTurn.ts"
+import { inputBridge } from "../../input/bridge.ts"
+import type { ReadingPatch } from "../../input/bridge.ts"
+import type { RecentMessage } from "../../recentIdeas.ts"
+import { renderCurrent } from "../../studio/renderSession.ts"
 import { useStudio } from "../../state/studio.ts"
 import type { AnswerAction } from "../../types/answer_action.ts"
 import type { SlotName } from "../../types/slot_name.ts"
@@ -12,23 +16,30 @@ import { QuestionMessage } from "./QuestionMessage.tsx"
 
 const LayersView = lazy(() => import("../layers/stage.tsx").then((module) => ({ default: module.LayersView })))
 
-export type Bubble = { id: number; text: string }
+export type Bubble = RecentMessage
 
 type Props = {
   started: boolean
   bubbles: Bubble[]
-  onBubble: (text: string) => void
+  onExchange: (question: string, answer: string) => void
   showLayers: boolean
   showDemo: boolean
 }
 
-export function Thread({ started, bubbles, onBubble, showLayers, showDemo }: Props) {
+export function Thread({ started, bubbles, onExchange, showLayers, showDemo }: Props) {
   const question = useStudio((state) => (state.turn?.status === "question" ? (state.turn.question ?? null) : null))
   const turnStatus = useStudio((state) => state.turn?.status ?? null)
+  const summary = useStudio((state) => (state.turn?.status === "ready" ? state.turn.summary : undefined))
+  const prompts = useStudio((state) => (state.turn?.status === "ready" ? state.turn.prompts : undefined))
+  const status = useStudio((state) => state.status)
+  const reading = useStudio((state) => state.reading)
   const reduce = useReducedMotion()
   const [error, setError] = useState<string | null>(null)
   const [last, setLast] = useState<{ action: AnswerAction; value?: string } | null>(null)
   const busy = useRef(false)
+  const firstExchange = bubbles.findIndex((bubble) => bubble.prompt)
+  const earlier = firstExchange === -1 ? bubbles : bubbles.slice(0, firstExchange)
+  const later = firstExchange === -1 ? [] : bubbles.slice(firstExchange)
 
   const send = useCallback(
     async (action: AnswerAction, value?: string) => {
@@ -38,11 +49,12 @@ export function Thread({ started, bubbles, onBubble, showLayers, showDemo }: Pro
       busy.current = true
       setLast({ action, value })
       setError(null)
-      if (action === "answer" && value) onBubble(value)
+      const asked = current?.status === "question" ? current.question?.text : ""
       try {
         await postTurn({
           answer: value ? { slot, action, value } : { slot, action },
         })
+        if (asked) onExchange(asked, answerLabel(action, value))
       } catch (err) {
         const message = err instanceof ApiError ? err.message : "That did not go through. Try again."
         setError(message.trim().length < 160 ? message : "That did not go through. Try again.")
@@ -50,7 +62,7 @@ export function Thread({ started, bubbles, onBubble, showLayers, showDemo }: Pro
         busy.current = false
       }
     },
-    [onBubble],
+    [onExchange],
   )
 
   return (
@@ -67,16 +79,12 @@ export function Thread({ started, bubbles, onBubble, showLayers, showDemo }: Pro
             transition={{ duration: reduce ? 0 : 0.28 }}
           >
             <h1 className="sr-only">Your song</h1>
-            {bubbles.map((bubble) => (
-              <motion.p
-                key={bubble.id}
-                className="ml-auto max-w-md rounded-2xl bg-white/8 px-4 py-3 text-ink"
-                initial={reduce ? false : { opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: reduce ? 0 : 0.22 }}
-              >
-                {bubble.text}
-              </motion.p>
+            {earlier.map((bubble) => (
+              <Line key={bubble.id} bubble={bubble} reduce={reduce === true} />
+            ))}
+            {reading ? <ReadingMessage /> : null}
+            {later.map((bubble) => (
+              <Line key={bubble.id} bubble={bubble} reduce={reduce === true} />
             ))}
             {question ? (
               <QuestionMessage question={question} onAnswer={(action, value) => void send(action, value)} />
@@ -88,6 +96,14 @@ export function Thread({ started, bubbles, onBubble, showLayers, showDemo }: Pro
                   Skip all and build
                 </Button>
               </div>
+            ) : null}
+            {(prompts?.length ?? 0) > 0 ? (
+              <article className="max-w-xl rounded-2xl border border-white/10 px-4 py-3">
+                <p className="text-ink">{summary || "Ready to build."}</p>
+                <Button className="mt-3" disabled={status === "working"} onClick={() => void renderCurrent()}>
+                  Build
+                </Button>
+              </article>
             ) : null}
             {error && last ? (
               <div role="alert" className="text-danger">
@@ -121,4 +137,93 @@ export function Thread({ started, bubbles, onBubble, showLayers, showDemo }: Pro
       </AnimatePresence>
     </div>
   )
+}
+
+function answerLabel(action: AnswerAction, value?: string): string {
+  if (action === "you_decide") return "You decide"
+  if (action === "skip") return "Skip this"
+  if (action === "skip_all") return "Skip all and build"
+  return value?.trim() || "Answered"
+}
+
+function Line({ bubble, reduce }: { bubble: Bubble; reduce: boolean }) {
+  if (bubble.prompt) {
+    return (
+      <p className="max-w-xl text-sm">
+        <span className="text-secondary">{bubble.prompt}</span> <span className="text-ink">{bubble.text}</span>
+      </p>
+    )
+  }
+  if (bubble.role === "agent") {
+    return <p className="max-w-xl rounded-2xl border border-white/10 px-4 py-3 text-ink">{bubble.text}</p>
+  }
+  return (
+    <motion.p
+      className="ml-auto max-w-md rounded-2xl bg-white/8 px-4 py-3 text-ink"
+      initial={reduce ? false : { opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: reduce ? 0 : 0.22 }}
+    >
+      {bubble.text}
+    </motion.p>
+  )
+}
+
+function ReadingMessage() {
+  const reading = useStudio((state) => state.reading)
+  if (!reading) return null
+  return (
+    <article className="max-w-xl rounded-2xl border border-white/10 px-4 py-3">
+      <p className="text-ink">{reading.text}</p>
+      {reading.unsure ? (
+        <div className="mt-3 flex flex-col gap-3">
+          {reading.fixing ? (
+            <div className="flex flex-col gap-2">
+              <label className="text-sm text-muted" htmlFor="fix-key">
+                Key
+              </label>
+              <input
+                id="fix-key"
+                value={reading.key}
+                onChange={(event) => revise({ key: event.target.value })}
+                className="mono rounded-xl border border-white/15 bg-transparent px-3 py-2 text-ink outline-none"
+              />
+              <label className="text-sm text-muted" htmlFor="fix-tempo">
+                Tempo
+              </label>
+              <input
+                id="fix-tempo"
+                inputMode="decimal"
+                value={reading.tempo}
+                onChange={(event) => revise({ tempo: event.target.value })}
+                className="mono rounded-xl border border-white/15 bg-transparent px-3 py-2 text-ink outline-none"
+              />
+            </div>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={() => {
+                void inputBridge().confirm()
+              }}
+            >
+              {reading.confirmLabel}
+            </Button>
+            {reading.fixing ? null : (
+              <Button tone="secondary" onClick={() => revise({ fixing: true })}>
+                Fix the key or tempo
+              </Button>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </article>
+  )
+}
+
+function revise(patch: ReadingPatch) {
+  try {
+    inputBridge().revise(patch)
+  } catch {
+    return
+  }
 }

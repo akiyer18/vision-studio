@@ -79,7 +79,13 @@ export function Dashboard() {
   function addBubble(text: string) {
     const trimmed = text.trim()
     if (!trimmed) return
-    setBubbles((current) => [...current, { id: current.reduce((max, item) => Math.max(max, item.id), 0) + 1, text: trimmed }])
+    setBubbles((current) => [...current, { id: current.reduce((max, item) => Math.max(max, item.id), 0) + 1, text: trimmed, role: "you" }])
+  }
+
+  function addExchange(question: string, answer: string) {
+    const trimmed = answer.trim()
+    if (!question.trim() || !trimmed) return
+    setBubbles((current) => [...current, { id: current.reduce((max, item) => Math.max(max, item.id), 0) + 1, text: trimmed, role: "agent", prompt: question }])
   }
 
   function useGenre(genre: GenreDetail) {
@@ -117,9 +123,9 @@ export function Dashboard() {
         ) : (
           <>
         <div className="studio-canvas">
-          <Thread started={started} bubbles={bubbles} onBubble={addBubble} showLayers={showLayers} showDemo={demoQuery} />
+          <Thread started={started} bubbles={bubbles} onExchange={addExchange} showLayers={showLayers} showDemo={demoQuery} />
           <div className="studio-composer">
-            <Composer started={started} onBegin={() => setTalking(true)} onBubble={addBubble} />
+            <Composer started={started} onBegin={() => setTalking(true)} onBubble={addBubble} onExchange={addExchange} />
           </div>
         </div>
         <div className="studio-rail px-2 py-4" role="radiogroup" aria-label="Song details">

@@ -16,6 +16,14 @@ export type RenderAction = "render" | "regenerate"
 export type LayerRun = { take: number; variant: number; total: number }
 export type LayerFailure = { message: string; action: RenderAction }
 export type ExportListing = { folder: string; files: string[]; defaults: boolean }
+export type Reading = {
+  text: string
+  unsure: boolean
+  fixing: boolean
+  key: string
+  tempo: string
+  confirmLabel: string
+}
 
 type StudioState = {
   sessionId: string
@@ -42,7 +50,9 @@ type StudioState = {
   thread: RecentMessage[]
   mode: IdeaMode
   reference: SlotReference
+  reading: Reading | null
   setTurn: (turn: TurnResponse | null) => void
+  setReading: (reading: Reading | null) => void
   commitTurn: (turn: TurnResponse, clearOverrides?: boolean) => void
   queueOverride: (slot: SlotName, value: string) => void
   editPrompt: (layer: string, field: keyof PromptEdit, value: string) => void
@@ -94,7 +104,13 @@ export const useStudio = create<StudioState>((set) => ({
   thread: [],
   mode: "full",
   reference: {},
+  reading: null,
   setTurn: (turn) => set({ turn }),
+  setReading: (reading) =>
+    set((state) => {
+      if (sameReading(state.reading, reading)) return state
+      return { reading }
+    }),
   commitTurn: (turn, clearOverrides = false) =>
     set((state) => ({
       turn,
@@ -215,6 +231,7 @@ export const useStudio = create<StudioState>((set) => ({
       missing: [],
       thread: [],
       reference: {},
+      reading: null,
     })),
   restoreSession: (entry) =>
     set((state) => ({
@@ -248,6 +265,7 @@ export const useStudio = create<StudioState>((set) => ({
       thread: entry.thread,
       mode: entry.mode ?? "full",
       reference: {},
+      reading: null,
     })),
   setMode: (mode) => set({ mode }),
   showReference: (prefill, line) =>
@@ -277,6 +295,19 @@ function referenceBrief(prefill: SlotReference): SongBrief {
     slots[name as SlotName] = { value, source: "reference", reason: "From the genre file", confidence: 1 }
   }
   return { slots, output: [], questions_asked: 0, skipped: [] }
+}
+
+function sameReading(left: Reading | null, right: Reading | null): boolean {
+  if (left === right) return true
+  if (left === null || right === null) return false
+  return (
+    left.text === right.text &&
+    left.unsure === right.unsure &&
+    left.fixing === right.fixing &&
+    left.key === right.key &&
+    left.tempo === right.tempo &&
+    left.confirmLabel === right.confirmLabel
+  )
 }
 
 function layerOrder(renders: { layer: string }[]): string[] {

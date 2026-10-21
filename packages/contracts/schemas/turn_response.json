@@ -33,6 +33,7 @@
     "trace": {
       "type": "array",
       "items": { "$ref": "trace_step.json" }
-    }
+    },
+    "summary": { "type": "string" }
   }
 }

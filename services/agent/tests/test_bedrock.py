@@ -104,9 +104,19 @@ def test_user_answer_and_override_stay_locked() -> None:
     stub = Stub(
         [
             tool_response(
+                "interview",
+                {
+                    "decision": "next_question",
+                    "slot": "mood",
+                    "question": "Still joyful?",
+                    "options": ["joyful", "tense"],
+                    "reason": "Checking",
+                },
+            ),
+            tool_response(
                 "record_slots",
                 {"slots": {"mood": slot("tense", reason="The text sounds tense"), "key": slot("G minor")}},
-            )
+            ),
         ]
     )
     provider = BedrockProvider(client=stub, model_id="anthropic.test")
@@ -180,6 +190,17 @@ def test_guessed_slot_is_replaced_when_new_input_is_stronger() -> None:
         [
             tool_response("record_slots", {"slots": {}}),
             tool_response(
+                "interview",
+                {
+                    "decision": "next_question",
+                    "slot": "mood",
+                    "question": "What feeling should this carry?",
+                    "options": ["joyful", "peaceful", "longing", "tense"],
+                    "reason": "Asked about mood because the text was almost empty",
+                },
+            ),
+            ClientError({"Error": {"Code": "ServiceUnavailable", "Message": "down"}}, "Converse"),
+            tool_response(
                 "record_slots",
                 {"slots": {"mood": slot("longing", confidence=0.9, reason="You said you miss the rain")}},
             ),
@@ -198,7 +219,21 @@ def test_guessed_slot_is_replaced_when_new_input_is_stronger() -> None:
 
 
 def test_invalid_closed_label_is_dropped() -> None:
-    stub = Stub([tool_response("record_slots", {"slots": {"mood": slot("sad", reason="The text says sad")}})])
+    stub = Stub(
+        [
+            tool_response(
+                "interview",
+                {
+                    "decision": "next_question",
+                    "slot": "mood",
+                    "question": "Still joyful?",
+                    "options": ["joyful", "tense"],
+                    "reason": "Checking",
+                },
+            ),
+            tool_response("record_slots", {"slots": {"mood": slot("sad", reason="The text says sad")}}),
+        ]
+    )
     provider = BedrockProvider(client=stub, model_id="anthropic.test")
     provider.run_turn(request("invalid", answer={"slot": "mood", "action": "answer", "value": "joyful"}))
     response = provider.run_turn(request("invalid", text="I feel sad"))

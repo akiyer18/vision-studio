@@ -6,7 +6,7 @@ import type { TraceStep } from "./types/trace_step.ts"
 const KEY = "vision-studio-recent"
 const LIMIT = 20
 
-export type RecentMessage = { id: number; text: string }
+export type RecentMessage = { id: number; text: string; role?: "you" | "agent"; prompt?: string }
 
 export type RecentRender = {
   layer: string

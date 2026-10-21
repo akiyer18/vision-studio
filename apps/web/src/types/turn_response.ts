@@ -15,4 +15,5 @@ export interface TurnResponse {
     chords: string[];
   };
   trace: TraceStep[];
+  summary?: string;
 }

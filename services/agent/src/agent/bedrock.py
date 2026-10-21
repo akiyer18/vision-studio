@@ -9,17 +9,21 @@ from dataclasses import dataclass
 from contracts import LayerPrompt, SlotValue
 
 from agent.defaults import parse_bpm
+from agent.extract import user_mood
+from agent.interview import Ready, interpret
 from agent.polish import rejection_reason
 from agent.prompts import anchor_for
-from agent.slots import slot_specs
+from agent.slots import MAX_QUESTIONS, slot_specs
 from agent.theory import chords_for
 from agent.tool_schema import extraction_schema
-from agent.turn import Session, TurnHooks, ingest_mock, run_session, store_slot
+from agent.turn import Choice, Session, TurnHooks, ingest_mock, run_session, store_slot
 
 _EXTRACT = "record_slots"
 _POLISH = "polish_prompts"
+_INTERVIEW = "interview"
 _EXTRACT_TOKENS = 600
 _POLISH_TOKENS = 300
+_INTERVIEW_TOKENS = 400
 _CLOSED = ("mood", "energy", "world")
 
 _EXTRACT_SYSTEM = (
@@ -39,6 +43,30 @@ _POLISH_SYSTEM = (
     "the template has one, and the anchor instrument. Return one positive prompt per layer. "
     "Do not write negative prompts."
 )
+
+_INTERVIEW_SYSTEM = (
+    "You are the interviewer for Vision Studio. You are a helper, not the author. "
+    "Read the conversation, the brief, the audio features, the slot schema, and the remaining question budget. "
+    "Either ask one short question that refers to what the producer already said, with 2 to 4 options, "
+    "or say the brief is ready and summarise it in one line. "
+    "Never ask tempo. Never ask a slot whose source is you or detected. "
+    "Options for a slot that lists allowed values must be those labels. "
+    "Do not invent a mood, instrument, genre, or tempo. Do not steer the song somewhere new."
+)
+
+_INTERVIEW_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["decision"],
+    "properties": {
+        "decision": {"type": "string", "enum": ["next_question", "ready"]},
+        "slot": {"type": "string"},
+        "question": {"type": "string"},
+        "options": {"type": "array", "items": {"type": "string"}},
+        "reason": {"type": "string"},
+        "summary": {"type": "string"},
+    },
+}
 
 _POLISH_SCHEMA: dict[str, object] = {
     "type": "object",
@@ -138,6 +166,35 @@ class _Hooks:
             return
         merge_slots(session, payload)
 
+    def choose(self, session: Session) -> Choice | None:
+        if session.questions_asked >= MAX_QUESTIONS:
+            return None
+        try:
+            payload = _converse(
+                self.provider,
+                name=_INTERVIEW,
+                description="The next question, or a one-line summary when the brief is ready.",
+                schema=_INTERVIEW_SCHEMA,
+                system=_INTERVIEW_SYSTEM,
+                message=_interview_message(session),
+                max_tokens=_INTERVIEW_TOKENS,
+            )
+        except Exception:
+            session.note("fallback", "Bedrock unavailable, used the asking rule")
+            return None
+        result = interpret(
+            payload,
+            sources={name: slot.source for name, slot in session.slots.items()},
+            questions_asked=session.questions_asked,
+            mode=session.mode,
+        )
+        if isinstance(result, str):
+            session.note("ask", result)
+            return None
+        if isinstance(result, Ready):
+            return Choice(ready=True, summary=result.summary)
+        return Choice(ready=False, slot=result.slot, text=result.text, options=result.options, reason=result.reason)
+
     def polish(self, session: Session, prompts: list[LayerPrompt]) -> list[LayerPrompt]:
         if not prompts:
             return prompts
@@ -190,6 +247,25 @@ def _tool_input(response: object, name: str) -> dict:
         if isinstance(tool, dict) and tool.get("name") == name and isinstance(tool.get("input"), dict):
             return tool["input"]
     raise RuntimeError("Bedrock returned no tool call")
+
+
+def _interview_message(session: Session) -> str:
+    features = session.features.model_dump(exclude_none=True) if session.features is not None else None
+    brief = {
+        name: {"value": slot.value, "source": slot.source, "reason": slot.reason}
+        for name, slot in session.slots.items()
+    }
+    schema = [{"slot": spec.slot, "options": list(spec.options)} for spec in slot_specs() if spec.slot != "tempo"]
+    return json.dumps(
+        {
+            "conversation": session.transcript,
+            "brief": brief,
+            "audio_features": features,
+            "slots": schema,
+            "questions_remaining": max(0, MAX_QUESTIONS - session.questions_asked),
+        },
+        indent=2,
+    )
 
 
 def _extract_message(session: Session) -> str:
@@ -261,6 +337,18 @@ def _merge_one(session: Session, proposal: _Proposal, closed: dict[str, set[str]
     if proposal.slot == "key" and not _key_parses(stored):
         session.note("extract", f"Dropped key: {stored} is not a key")
         return
+    if proposal.slot == "mood":
+        said = user_mood(session.text)
+        if said is not None and said[0] != stored:
+            label, word = said
+            current = session.slots.get("mood")
+            if current is not None and current.source == "you":
+                session.note("extract", f"Kept {current.value}: you said {word}")
+                return
+            kept = SlotValue(value=label, source="you", reason=f"You said {word}", confidence=1.0)
+            _keep_new(session, "mood", kept)
+            session.note("extract", f"Kept {label}: you said {word}")
+            return
     source = "you" if proposal.evidence == "text" else "detected"
     incoming = SlotValue(value=stored, source=source, reason=proposal.reason, confidence=proposal.confidence)
     current = session.slots.get(proposal.slot)

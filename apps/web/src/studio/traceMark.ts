@@ -5,6 +5,13 @@ import { LANES } from "./lanes.ts"
 
 const SLOTS: SlotName[] = ["mood", "energy", "world", "style", "palette", "must_keep", "structure", "key", "tempo", "output"]
 
+export function traceSentence(step: TraceStep): string {
+  const detail = step.detail.trim()
+  const wrapped = detail.match(/^[a-z_]+:\s.+\(([^)]+)\)\s*$/i)
+  if (wrapped?.[1]) return wrapped[1]
+  return detail
+}
+
 export function traceTarget(step: TraceStep): string | null {
   const text = `${step.step} ${step.detail}`
   for (const layer of LANES) {

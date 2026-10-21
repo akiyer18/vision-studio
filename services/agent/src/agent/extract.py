@@ -108,6 +108,91 @@ def _best_mood(hits: dict[str, int]) -> tuple[str, int] | None:
     return ranked[0]
 
 
+_BPM = re.compile(r"\b((?:around|about)\s+)?(\d+)\s*bpm\b", re.IGNORECASE)
+_KEY = re.compile(r"\b([A-G])([#b]?)\s+(major|minor)\b", re.IGNORECASE)
+_BARS = re.compile(r"\b(\d+)\s+bars?\b", re.IGNORECASE)
+MOOD_SAID = (
+    ("aggressive", "tense"),
+    ("aggression", "tense"),
+    ("angry", "tense"),
+    ("anger", "tense"),
+    ("harsh", "tense"),
+    ("calm", "peaceful"),
+    ("peaceful", "peaceful"),
+    ("gentle", "peaceful"),
+    ("sad", "longing"),
+    ("lonely", "longing"),
+    ("happy", "joyful"),
+    ("joyful", "joyful"),
+)
+
+
+def stated_tempo(text: str) -> tuple[int, str] | None:
+    """BPM and the phrase the producer used, such as 'around 90 BPM'."""
+    match = _BPM.search(text)
+    if match is None:
+        return None
+    number = int(match.group(2))
+    if number <= 0:
+        return None
+    prefix = (match.group(1) or "").strip()
+    phrase = f"{prefix} {number}".strip() if prefix else str(number)
+    if "bpm" not in phrase.lower():
+        phrase = f"{phrase} BPM"
+    return number, phrase
+
+
+def extract_numbers(text: str) -> dict[str, SlotValue]:
+    """Tempo, key, and bar count written in the text. Both providers use this."""
+    found: dict[str, SlotValue] = {}
+    tempo = stated_tempo(text)
+    if tempo is not None:
+        number, _phrase = tempo
+        found["tempo"] = SlotValue(
+            value=str(number),
+            source="you",
+            reason=f"Heard {number} BPM in your words",
+            confidence=1.0,
+        )
+    key_match = _KEY.search(text)
+    if key_match is not None:
+        letter, accidental, mode = key_match.group(1).upper(), key_match.group(2), key_match.group(3).lower()
+        key = f"{letter}{accidental} {mode}"
+        found["key"] = SlotValue(
+            value=key,
+            source="you",
+            reason=f"Heard {key} in your words",
+            confidence=1.0,
+        )
+    bars_match = _BARS.search(text)
+    if bars_match is not None:
+        count = int(bars_match.group(1))
+        if count > 0:
+            label = f"{count} bars"
+            found["structure"] = SlotValue(
+                value=label,
+                source="you",
+                reason=f"Heard {label} in your words",
+                confidence=1.0,
+            )
+    return found
+
+
+def user_mood(text: str) -> tuple[str, str] | None:
+    """Closed mood label implied by the producer's own words, and the word that implied it."""
+    lowered = text.lower()
+    found: tuple[int, str, str] | None = None
+    for word, label in MOOD_SAID:
+        match = re.search(rf"\b{re.escape(word)}\b", lowered)
+        if match is None:
+            continue
+        if found is None or match.start() < found[0]:
+            found = (match.start(), label, word)
+    if found is None:
+        return None
+    return found[1], found[2]
+
+
 def _hits(text: str, phrases: tuple[str, ...]) -> int:
     lowered = text.lower()
     total = 0

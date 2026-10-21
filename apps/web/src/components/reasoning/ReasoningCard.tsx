@@ -3,7 +3,7 @@ import { motion, useReducedMotion } from "framer-motion"
 import { useState } from "react"
 
 import { LANES, lanePaint } from "../../studio/lanes.ts"
-import { traceTarget } from "../../studio/traceMark.ts"
+import { traceSentence, traceTarget } from "../../studio/traceMark.ts"
 import { useStudio } from "../../state/studio.ts"
 import type { TraceStep } from "../../types/trace_step.ts"
 
@@ -87,7 +87,7 @@ function StepRow({
       >
         {lane ? <Circle size={10} className="mt-1 shrink-0" style={{ color: lanePaint(lane).fill }} fill={lanePaint(lane).fill} aria-hidden /> : <StepIcon name={step.step} />}
         <span>
-          {step.step}: {step.detail}
+          {traceSentence(step)}
         </span>
       </button>
     </motion.li>

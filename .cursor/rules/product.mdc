@@ -11,7 +11,7 @@ Four rooms. Create makes something new. Genre deep dive studies a curated genre 
 
 Create today:
 
-- An agent fills a song brief. If it lacks information, ask one question at a time, using the slot question text, up to 5.
+- An agent fills a song brief. Bedrock asks in the producer's own words, one question at a time, up to 5. If Bedrock is off or fails, it uses the slot question text. Never ask a slot the producer or the audio already filled.
 - The composer chooses "A full idea" or "One sound". One sound asks only sound type, genre, duration, mood, and brightness, and returns one layer with three variations.
 - Every question offers: an answer, You decide, Skip this, Skip all and build.
 - Skip all and build always produces a prompt, however little input is given. The render action is Build.

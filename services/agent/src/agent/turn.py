@@ -19,7 +19,7 @@ from contracts import (
 
 from agent.asking import AskContext, almost_empty, next_one_sound, next_question
 from agent.defaults import PRESETS, default_slot, derive_bpm, parse_bpm, preset_for, skipped
-from agent.extract import extract_audio, extract_text
+from agent.extract import extract_audio, extract_numbers, extract_text, stated_tempo
 from agent.prompts import compile_one_sound, compile_prompts
 from agent.slots import ABOUT_QUESTION, MAX_QUESTIONS, slot_specs
 from agent.theory import chords_for
@@ -46,10 +46,22 @@ class Pending:
     options: tuple[str, ...]
 
 
+@dataclass
+class Choice:
+    ready: bool
+    summary: str = ""
+    slot: str = ""
+    text: str = ""
+    options: tuple[str, ...] = ()
+    reason: str = ""
+
+
 class TurnHooks(Protocol):
     def ingest_text(self, session: Session) -> None: ...
 
     def polish(self, session: Session, prompts: list[LayerPrompt]) -> list[LayerPrompt]: ...
+
+    def choose(self, session: Session) -> Choice | None: ...
 
 
 @dataclass
@@ -69,6 +81,8 @@ class Session:
     about_asked: bool = False
     force_ready: bool = False
     mode: str = "full"
+    summary: str = ""
+    transcript: list[dict[str, str]] = field(default_factory=list)
     trace: list[TraceStep] = field(default_factory=list)
 
     def note(self, step: str, detail: str) -> None:
@@ -91,6 +105,9 @@ class MockHooks:
 
     def polish(self, session: Session, prompts: list[LayerPrompt]) -> list[LayerPrompt]:
         return prompts
+
+    def choose(self, session: Session) -> Choice | None:
+        return None
 
 
 class MockProvider:
@@ -141,6 +158,13 @@ def run_session(sessions: dict[str, Session], request: TurnRequest, hooks: TurnH
         return _question_response(session, session.pending, waiting=True)
     if session.force_ready:
         return _ready(session, hooks)
+    picked = hooks.choose(session)
+    if picked is not None and picked.ready:
+        if picked.summary:
+            session.summary = picked.summary
+        return _ready(session, hooks)
+    if picked is not None:
+        return _ask(session, Pending("slot", picked.slot, picked.text, picked.options), picked.reason)
     if session.mode != "one_sound" and _should_ask_about(session):
         session.about_asked = True
         pending = Pending("about", "mood", ABOUT_QUESTION, ())
@@ -160,6 +184,8 @@ def _remember_text(session: Session, text: str, hooks: TurnHooks) -> None:
     incoming = text.strip()
     if incoming:
         session.text = f"{session.text} {incoming}".strip() if session.text else incoming
+        session.transcript.append({"role": "user", "text": incoming})
+        _apply_numbers(session, incoming)
     if session.text:
         hooks.ingest_text(session)
 
@@ -256,10 +282,32 @@ def _apply_overrides(session: Session, overrides: object) -> None:
         session.note("answer", f"{name}: {session.slots[name].value}")
 
 
+def _apply_numbers(session: Session, text: str) -> None:
+    stated = stated_tempo(text)
+    for name, value in extract_numbers(text).items():
+        current = session.slots.get(name)
+        if current is not None and current.source == "you":
+            continue
+        if (
+            name == "tempo"
+            and stated is not None
+            and current is not None
+            and current.source == "detected"
+            and current.value != value.value
+        ):
+            phrase, kept = stated[1], value.value
+            session.note("extract", f"You said {phrase}, the audio measured {current.value}, kept {kept}")
+        _store(session, name, value)
+        session.note("extract", value.reason)
+        if name == "key":
+            session.gave_key = True
+
+
 def _apply_answer(session: Session, slot: str, action: str, value: str | None, hooks: TurnHooks) -> None:
     pending = session.pending
     session.pending = None
     if action == "skip_all":
+        session.transcript.append({"role": "user", "text": "Skip all and build"})
         session.note("answer", "skip all, filling the remaining slots")
         _fill_gaps(session, skipped_fill=True)
         session.force_ready = True
@@ -268,6 +316,13 @@ def _apply_answer(session: Session, slot: str, action: str, value: str | None, h
         _remember_text(session, value or "", hooks)
         session.note("answer", "Re-ran extraction on the description")
         return
+    spoken = value.strip() if value else ""
+    if action == "you_decide":
+        spoken = "You decide"
+    elif action == "skip":
+        spoken = "Skip this"
+    if spoken:
+        session.transcript.append({"role": "user", "text": spoken})
     target = pending.slot if pending is not None else slot
     if action == "you_decide" or (action == "answer" and target == "key" and (value or "").lower() == "not sure"):
         _use_default(session, target, mark_skipped=False)
@@ -358,10 +413,11 @@ def _context(session: Session) -> AskContext:
     )
 
 
-def _ask(session: Session, pending: Pending) -> TurnResponse:
+def _ask(session: Session, pending: Pending, reason: str = "") -> TurnResponse:
     session.questions_asked += 1
     session.pending = pending
-    session.note("ask", f"{pending.slot}: {pending.text}")
+    session.transcript.append({"role": "agent", "text": pending.text})
+    session.note("ask", reason or f"Asked: {pending.text}")
     return _question_response(session, pending, waiting=False)
 
 
@@ -434,13 +490,32 @@ def _ready(session: Session, hooks: TurnHooks) -> TurnResponse:
     session.note("prompt", f"Wrote {len(prompts)} prompt" if len(prompts) == 1 else f"Wrote {len(prompts)} prompts")
     session.pending = None
     session.force_ready = True
+    if not session.summary:
+        session.summary = _summary(session, bpm)
     return TurnResponse(
         status="ready",
         brief=_brief(session),
         prompts=prompts,
         progression={"roman": romans, "chords": chords},
         trace=list(session.trace),
+        summary=session.summary,
     )
+
+
+def _summary(session: Session, bpm: int) -> str:
+    mood = session.slots.get("mood")
+    world = session.slots.get("world")
+    key = session.slots.get("key")
+    parts: list[str] = []
+    if mood is not None:
+        parts.append(mood.value)
+    if world is not None:
+        parts.append(world.value)
+    if key is not None:
+        parts.append(f"{bpm} BPM in {key.value}")
+    else:
+        parts.append(f"{bpm} BPM")
+    return "Ready to build: " + ", ".join(parts) + "."
 
 
 def _brief(session: Session) -> SongBrief:

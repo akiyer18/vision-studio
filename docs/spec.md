@@ -34,7 +34,7 @@ LayerPrompt     { layer: string, prompt: string, negative: string,
 
 TurnResponse    { status: "question" | "ready", question?: Question, brief: SongBrief,
                   prompts?: LayerPrompt[], progression?: { roman: string[], chords: string[] },
-                  trace: TraceStep[] }
+                  trace: TraceStep[], summary?: string }
 
 RenderJob       { session_id, layer, prompt, negative, bpm: integer, bars: integer (default 8),
                   seed: integer, variant: integer, take: integer (default 1), init_audio?, noise?: number, lora? }
@@ -66,7 +66,7 @@ Semantics:
 | must_keep | 0.4 | audio input only | What must stay exactly as it is? | everything, the melody, the rhythm, the chords |
 | tempo | 0 | never | never asked | |
 
-Asking rule: score = impact x (1 - confidence). Ask the highest score above 0.35. Max 5 questions.
+Asking rule, used by MockProvider and whenever Bedrock fails: score = impact x (1 - confidence). Ask the highest score above 0.35. Max 5 questions. Bedrock replaces this order with the adaptive interviewer in section 10. The section 2 question text stays the fallback wording.
 Tempo is a real slot (value, source, reason, confidence) and it shows in the brief. It is never asked. A stated tempo wins over a measured one, and a measured tempo wins over a derived one (section 3 and section 10).
 First question when the input is almost empty: "What is this song about?" (free text, then re run extraction).
 Almost empty means no audio and no MIDI, and the text is blank or a single word that matches no keyword.
@@ -258,6 +258,12 @@ Vocabulary is built at load time in `services/agent/src/agent/vocab.py` from the
 
 On any Bedrock error or timeout, including a missing model id, extraction falls back to the MockProvider keyword extractor and polishing keeps the template prompts. The trace says "Bedrock unavailable, used the offline extractor" or "Bedrock unavailable, kept the template prompts". The demo does not break because the network does.
 
+Adaptive interviewer. After every user message or answer, one forced tool call sends Claude the conversation so far, the current brief, the detected audio features, the slot schema with allowed values, and the questions still remaining. Claude returns either next_question (slot, a short question that refers to what the producer already said, 2 to 4 options, and a one-line reason) or ready (a one-line summary of the brief). The summary is TurnResponse.summary.
+
+Guardrails in code, always: never ask a slot filled with source you or detected; never ask tempo; at most 5 questions; options for a closed slot must be labels from section 2; You decide, Skip this, and Skip all still work. One sound still only asks its five slots. If Claude's mood contradicts the producer's words (a calm mood after "aggressive"), keep the mood those words imply and say so in the trace. If the proposal fails a guardrail, the trace says why and the asking rule chooses instead. If the interviewer call fails, the trace says "Bedrock unavailable, used the asking rule".
+
+Both providers read numbers from the text before Claude or the keyword extractor: "94 bpm" is tempo 94, source you, "Heard 94 BPM in your words"; "F minor" is the key; "8 bars" is the structure. A stated tempo still beats a measured one.
+
 Trace lines include "Claude read your idea", "Claude polished the drums prompt", "Kept your mood: joyful", and "Replaced the guessed mood peaceful with longing: …".
 
 Tests stub the Bedrock client. The live test is marked `bedrock` and runs only when `RUN_BEDROCK=1`.
@@ -266,7 +272,9 @@ Tests stub the Bedrock client. The live test is marked `bedrock` and runs only w
 
 Vision Studio is a producer's translator. The producer describes what they hear, in words, with their voice, or with an instrument. The product makes that sound, explains how it got there, and teaches them to make it themselves in Logic. Text and sound can arrive in the same turn. "Here's my beatbox, make it a dusty lo-fi kit" is the headline example.
 
-There is no level setting. Questions use one wording: the section 2 text, the asking rule, and a maximum of 5. Nothing in the interface, the brief, or the agent changes with Beginner, Producer, or Pro.
+There is no level setting. Nothing in the interface, the brief, or the agent changes with Beginner, Producer, or Pro. Bedrock asks in the producer's own words, one question at a time, up to 5 (section 10). MockProvider, and Bedrock when it fails, use the section 2 question text and the asking rule.
+
+The thread is the conversation. Each agent question is an agent message with its option chips and You decide, Skip this, and Skip all and build. After an answer, that message collapses into the question and the answer. The recognition line after an upload is the first agent message. When the brief is ready, the agent posts the one-line summary with the Build button in that message. After the first turn, the composer placeholder is "Answer, or add a detail". Trace lines are plain sentences, for example "Heard 94 BPM in your words", "Industrial and aggressive means a dark, high energy world", and "Asked about texture because the style was unclear".
 
 Four rooms. The sidebar reads them from `features.ts`. A room whose flag is off shows a small Soon pill and is not clickable.
 
@@ -285,7 +293,7 @@ Create:
 4. Hear three variations. Pick one, or ask for another take.
 5. Learn from the result. Under the layer cards, collapsed by default: "How this was made" and "Make it in Logic".
 
-One sound is a sample-library request, such as "a snappy EDM snare" or "a warm 808". It asks only what is missing among sound type, genre, duration, mood, and brightness, in that order, still one at a time and still at most 5. Duration uses the structure slot and its existing question. Sound type, genre, and brightness use the questions in section 2. The other slots are not asked. The same answer, You decide, Skip this, and Skip all and build rules apply. You decide and Skip use these defaults: sound "pad", genre "no genre", brightness "balanced", plus the section 3 defaults for duration and mood. Skip all fills whatever of those five is still empty, then the remaining section 3 defaults, and returns one prompt.
+One sound is a sample-library request, such as "a snappy EDM snare" or "a warm 808". It asks only what is missing among sound type, genre, duration, mood, and brightness, still one at a time and still at most 5. MockProvider asks them in that order. Bedrock may ask any of those five that are still empty. Duration uses the structure slot and its existing question. Sound type, genre, and brightness use the questions in section 2. The other slots are not asked. The same answer, You decide, Skip this, and Skip all and build rules apply. You decide and Skip use these defaults: sound "pad", genre "no genre", brightness "balanced", plus the section 3 defaults for duration and mood. Skip all fills whatever of those five is still empty, then the remaining section 3 defaults, and returns one prompt.
 
 The prompt is one layer named sound:
 

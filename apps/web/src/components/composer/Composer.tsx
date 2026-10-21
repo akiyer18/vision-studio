@@ -6,6 +6,7 @@ import { postTurn } from "../../conversation/postTurn.ts"
 import { runScenario } from "../../demo/runScenario.ts"
 import { features as flags } from "../../features.ts"
 import { registerInput } from "../../input/bridge.ts"
+import type { ReadingPatch } from "../../input/bridge.ts"
 import { applyCorrection, describeFeatures, fileKind, fileProblem, inputTypeFor, keyPhrase } from "../../input/describe.ts"
 import { noteIdea } from "../../recentIdeas.ts"
 import { useStudio } from "../../state/studio.ts"
@@ -28,9 +29,10 @@ type Props = {
   started: boolean
   onBegin: () => void
   onBubble: (text: string) => void
+  onExchange: (question: string, answer: string) => void
 }
 
-export function Composer({ started, onBegin, onBubble }: Props) {
+export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
   const [text, setText] = useState("")
   const [held, setHeld] = useState<Held | null>(null)
   const [hint, setHint] = useState<string | null>(null)
@@ -68,6 +70,8 @@ export function Composer({ started, onBegin, onBubble }: Props) {
   const confirmRef = useRef<() => Promise<void>>(async () => undefined)
   const onBeginRef = useRef(onBegin)
   const onBubbleRef = useRef(onBubble)
+  const onExchangeRef = useRef(onExchange)
+  const turned = useStudio((state) => state.turn !== null)
 
   function markRecording(value: boolean) {
     recordingRef.current = value
@@ -242,9 +246,11 @@ export function Composer({ started, onBegin, onBubble }: Props) {
     useStudio.getState().setStatus("working")
     try {
       if (openQuestion && currentText.trim() && !currentHeld) {
+        const asked = useStudio.getState().turn
+        const questionText = asked?.status === "question" ? (asked.question?.text ?? "") : ""
         const value = currentText.trim()
-        await answerQuestion(value)
-        onBubbleRef.current(value)
+        const answered = await answerQuestion(value)
+        if (answered && questionText) onExchangeRef.current(questionText, value)
         textRef.current = ""
         setText("")
         onBeginRef.current()
@@ -344,13 +350,27 @@ export function Composer({ started, onBegin, onBubble }: Props) {
     confirmRef.current = confirm
     onBeginRef.current = onBegin
     onBubbleRef.current = onBubble
+    onExchangeRef.current = onExchange
   })
+
+  function revise(patch: ReadingPatch) {
+    if (patch.fixing !== undefined) markFixing(patch.fixing)
+    if (patch.key !== undefined) {
+      keyTextRef.current = patch.key
+      setKeyText(patch.key)
+    }
+    if (patch.tempo !== undefined) {
+      tempoTextRef.current = patch.tempo
+      setTempoText(patch.tempo)
+    }
+  }
 
   useEffect(() => {
     registerInput({
       apply,
       submit: () => submitRef.current(),
       confirm: () => confirmRef.current(),
+      revise,
     })
     return () => registerInput(null)
   }, [])
@@ -375,56 +395,23 @@ export function Composer({ started, onBegin, onBubble }: Props) {
   const confirmLabel = error && waiting ? "Try again" : "Confirm this reading"
   const unsure = waiting && features !== null && features.confidence < 0.6
 
+  useEffect(() => {
+    if (!features) {
+      useStudio.getState().setReading(null)
+      return
+    }
+    useStudio.getState().setReading({
+      text: describeFeatures(features),
+      unsure,
+      fixing,
+      key: keyText,
+      tempo: tempoText,
+      confirmLabel,
+    })
+  }, [features, unsure, fixing, keyText, tempoText, confirmLabel])
+
   return (
     <div className={`canvas-column flex flex-col gap-4 ${started ? "pb-4" : ""}`}>
-      {features ? (
-        <div className="rounded-2xl border border-white/15 px-4 py-3">
-          <p className="text-secondary">{describeFeatures(features)}</p>
-          {unsure ? (
-            <div className="mt-3 flex flex-col gap-3">
-              {fixing ? (
-                <div className="flex flex-col gap-2">
-                  <label className="text-sm text-muted" htmlFor="fix-key">
-                    Key
-                  </label>
-                  <input
-                    id="fix-key"
-                    value={keyText}
-                    onChange={(event) => {
-                      keyTextRef.current = event.target.value
-                      setKeyText(event.target.value)
-                    }}
-                    className="mono rounded-xl border border-white/15 bg-transparent px-3 py-2 text-ink outline-none"
-                  />
-                  <label className="text-sm text-muted" htmlFor="fix-tempo">
-                    Tempo
-                  </label>
-                  <input
-                    id="fix-tempo"
-                    inputMode="decimal"
-                    value={tempoText}
-                    onChange={(event) => {
-                      tempoTextRef.current = event.target.value
-                      setTempoText(event.target.value)
-                    }}
-                    className="mono rounded-xl border border-white/15 bg-transparent px-3 py-2 text-ink outline-none"
-                  />
-                </div>
-              ) : null}
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={() => void confirm()} disabled={busy}>
-                  {confirmLabel}
-                </Button>
-                {fixing ? null : (
-                  <Button tone="secondary" onClick={() => markFixing(true)} disabled={busy}>
-                    Fix the key or tempo
-                  </Button>
-                )}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
       <form
         data-tour="composer"
         className={`glass flex flex-col gap-2 p-2 ${dragging ? "outline outline-2 outline-accent" : ""}`}
@@ -486,7 +473,7 @@ export function Composer({ started, onBegin, onBubble }: Props) {
             id="idea"
             value={text}
             rows={2}
-            placeholder="a rainy night drive, missing someone"
+            placeholder={turned ? "Answer, or add a detail" : "a rainy night drive, missing someone"}
             aria-invalid={hint ? true : undefined}
             aria-describedby={hint ? "idea-hint" : undefined}
             onChange={(event) => {
