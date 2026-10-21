@@ -973,6 +973,14 @@ app.post('/api/live/arrange', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 function okOrThrowHttp(r) { if (!r?.ok) throw new Error(r?.error || 'Live rejected the command'); return r; }
+app.post('/api/refine', async (req, res) => {
+  try {
+    const { path: p, intent, currentPrompt, role, rounds, track } = req.body || {};
+    if (!p || !intent) throw new Error('path and intent required');
+    const ctx = makeCtx(() => {});
+    res.json(await ctx.refineSound({ path: String(p), intent: String(intent), currentPrompt: currentPrompt || intent, role: role || 'drum', rounds: rounds || 2, track }));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.post('/api/render', async (req, res) => {
   try { const ctx = makeCtx(() => {}); const r = await ctx.render({ bars: req.body?.bars }); res.json(r); }
   catch (e) { res.status(500).json({ error: e.message }); }
