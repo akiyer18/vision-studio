@@ -1434,6 +1434,23 @@ function makeCtx(emit) {
       },
       fireScene: async (arg) => { const index = typeof arg === 'object' && arg ? arg.index : arg; return okOrThrow(await (await liveClient())({ cmd: 'fire_scene', index: Number(index) }), 'fire_scene'); },
       listScenes: async () => okOrThrow(await (await liveClient())({ cmd: 'list_scenes' }), 'list_scenes'),
+      // ---- ADEHack 5.7: audio clips, warping, undo, meters, recording the producer's own playing ----
+      undo: async ({ steps = 1 } = {}) => okOrThrow(await (await liveClient())({ cmd: 'undo', steps: clamp(Number(steps) || 1, 1, 20) }), 'undo'),
+      redo: async ({ steps = 1 } = {}) => okOrThrow(await (await liveClient())({ cmd: 'redo', steps: clamp(Number(steps) || 1, 1, 20) }), 'redo'),
+      clipInfo: async ({ track, slot = 0 }) => okOrThrow(await (await liveClient())({ cmd: 'clip_info', track, slot: Number(slot) || 0 }), 'clip_info'),
+      setClipWarp: async ({ track, slot = 0, warp = true, warpMode, pitchCoarse, gain }) => okOrThrow(await (await liveClient())({ cmd: 'set_clip_warp', track, slot: Number(slot) || 0, warp: Boolean(warp), ...(warpMode ? { warp_mode: warpMode } : {}), ...(pitchCoarse != null ? { pitch_coarse: clamp(Number(pitchCoarse), -48, 48) } : {}), ...(gain != null ? { gain: clamp(Number(gain), 0, 1) } : {}) }), 'set_clip_warp'),
+      async loadAudioClip({ track, slot = 0, samplePath, warpMode = 'complex_pro', overwrite = false }) {
+        if (!audioPathOk(samplePath)) throw new Error('load_audio_clip: path outside project audio');
+        const send = await liveClient();
+        const slotPath = await toSlot(samplePath, 'synth', 'Synth', { noWiden: true });   // audio clips keep the file as-is
+        const r = okOrThrow(await sendWithRetry(send, { cmd: 'load_audio_clip', track, slot: Number(slot) || 0, name: path.basename(slotPath), warp_mode: warpMode, overwrite: Boolean(overwrite) }), 'load_audio_clip');
+        rememberSound(track, samplePath, slotPath, 'audio');
+        if (!lastBuild.tracks[String(track).toLowerCase()]) lastBuild.tracks[String(track).toLowerCase()] = { index: r.index ?? -1, name: r.track || track };
+        return r;
+      },
+      meters: async ({ ticks = 10 } = {}) => okOrThrow(await (await liveClient())({ cmd: 'meters', ticks: clamp(Number(ticks) || 10, 2, 40) }), 'meters'),
+      setArm: async ({ track, arm = true, monitoring }) => okOrThrow(await (await liveClient())({ cmd: 'set_arm', track, arm: Boolean(arm), ...(monitoring ? { monitoring } : {}) }), 'set_arm'),
+      sessionRecord: async ({ track, slot = 0, bars = 4 }) => okOrThrow(await (await liveClient())({ cmd: 'session_record', track, slot: Number(slot) || 0, bars: clamp(Number(bars) || 4, 1, 32) }), 'session_record'),
       recordArrangement: async ({ bars, scenes, stop } = {}) => {
         const send = await liveClient();
         if (stop) return okOrThrow(await send({ cmd: 'arrangement_record', stop: true }), 'arrangement_record');
