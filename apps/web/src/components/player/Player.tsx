@@ -87,7 +87,7 @@ export function PlayerBar({ onStartOver }: { onStartOver: () => void }) {
 
   return (
     <div className="studio-player px-4 py-3">
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-3">
+      <div className="flex w-full flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
           {problem || exportError ? (
             <Button

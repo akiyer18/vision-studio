@@ -164,9 +164,9 @@ function LayerChip({
       style={
         selected
           ? {
-              background: hue ? `${hue}33` : "rgba(255, 106, 43, 0.16)",
-              borderColor: hue ?? "#FF6A2B",
-              color: "#F2EDE8",
+              background: hue ? `${hue}22` : "rgba(139, 92, 246, 0.16)",
+              borderColor: hue ?? "#8B5CF6",
+              color: "#EEEDF7",
             }
           : undefined
       }

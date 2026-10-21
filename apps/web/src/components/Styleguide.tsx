@@ -5,18 +5,20 @@ import { SourceBadge } from "./SourceBadge.tsx"
 
 const sources: SlotSource[] = ["you", "detected", "guessed", "reference"]
 const swatches = [
-  ["Background", "#0F0F10"],
-  ["Panel", "#161617"],
-  ["Raised", "#1E1E20"],
-  ["Hairline", "#2A2A2D"],
-  ["Ink", "#EDEDED"],
-  ["Secondary", "#9A9A9F"],
-  ["Signal", "#FF5A1F"],
-  ["Drums", "#E0533D"],
-  ["Chords", "#E3B341"],
-  ["Bass", "#2FA37C"],
-  ["Melody", "#4C7DFF"],
-  ["Texture", "#9B6BFF"],
+  ["Background", "#0A0A12"],
+  ["Panel", "#12121C"],
+  ["Raised", "#1A1A27"],
+  ["Ink", "#EEEDF7"],
+  ["Secondary", "#A6A3BF"],
+  ["Muted", "#7E7A9C"],
+  ["Violet", "#8B5CF6"],
+  ["Light violet", "#A78BFA"],
+  ["Cyan", "#5EEAD4"],
+  ["Drums", "#F07167"],
+  ["Chords", "#F2C14E"],
+  ["Bass", "#4FD1A5"],
+  ["Melody", "#7AA2FF"],
+  ["Texture", "#C084FC"],
 ]
 
 export function Styleguide() {

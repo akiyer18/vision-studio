@@ -11,31 +11,32 @@ import type { SlotSource } from "../../types/slot_source.ts"
 import type { SongBrief } from "../../types/song_brief.ts"
 import { layerTitle } from "../../studio/output.ts"
 import { LayersCard } from "../layers/LayersCard.tsx"
+import { Skeleton } from "../Skeleton.tsx"
 import { SourceBadge } from "../SourceBadge.tsx"
 
-const CORE: SlotName[] = ["tempo", "key", "structure", "mood", "energy", "world"]
+const CORE: SlotName[] = ["mood", "energy", "world"]
+const HIDDEN = new Set<SlotName>(["tempo", "key", "structure"])
 const EXTRA: SlotName[] = ["style", "palette", "must_keep", "sound", "genre", "brightness", "pattern", "production", "progression", "meter", "intent"]
 const LOCKED: SlotName[] = ["tempo", "key", "progression", "structure", "palette", "sound", "meter"]
 
 type Props = {
   mark: string | null
-  onDescribe: () => void
   hot?: boolean
 }
 
-export function BriefCard({ mark, onDescribe, hot = false }: Props) {
+export function BriefCard({ mark, hot = false }: Props) {
   const brief = useStudio((state) => state.turn?.brief ?? null)
   const ready = useStudio((state) => state.turn?.status === "ready")
   const overrides = useStudio((state) => state.overrides)
   const queueOverride = useStudio((state) => state.queueOverride)
   const facets = brief?.facets ?? []
   const arc = brief?.arc
+  const working = useStudio((state) => state.status === "working")
   const [open, setOpen] = useState(true)
   const rows = rowsFor(brief, overrides, mark)
-  const output = brief?.output?.length ? brief.output.join(", ") : ""
-  const summary = [rows.find((row) => row.slot === "tempo"), rows.find((row) => row.slot === "key"), rows.find((row) => row.slot === "structure")]
-    .map((row) => row?.text || "auto")
-    .join(" · ")
+  const loading = working && rows.length === 0
+  const output = brief?.output?.length ? brief.output.map((item) => (item === "all_layers" ? "All layers" : item)).join(", ") : ""
+  const summary = rows.slice(0, 3).map((row) => row.text).join(" · ") || "Details appear here as we talk."
 
   return (
     <section className={`card brief-card flex flex-col gap-4 p-5 ${hot ? "is-hot" : ""}`} data-open={open ? "true" : "false"} data-tour="brief" aria-label="Song brief">
@@ -71,10 +72,13 @@ export function BriefCard({ mark, onDescribe, hot = false }: Props) {
             </div>
           )
         })}
-        {facets.length === 0 && !arc && !brief ? (
-          <button type="button" className="self-start text-secondary underline-offset-4 hover:underline" onClick={onDescribe}>
-            Describe a feeling
-          </button>
+        {loading ? (
+          <div className="flex flex-col gap-2" aria-hidden="true">
+            <Skeleton className="w-24" />
+            <Skeleton className="w-40" />
+          </div>
+        ) : rows.length === 0 && !output ? (
+          <p className="text-secondary">Details appear here as we talk.</p>
         ) : null}
         <FacetBlock facets={facets} arcLabel={arc?.label} ready={ready} />
         <LayersCard />
@@ -91,22 +95,23 @@ const GROUP_LABEL = {
 } as const
 
 function rowsFor(brief: SongBrief | null, overrides: Record<string, string>, mark: string | null) {
-  const slots = [...CORE, ...EXTRA.filter((slot) => Boolean(overrides[slot] ?? brief?.slots[slot]?.value) || CORE.includes(slot as (typeof CORE)[number]))]
-  const unique = [...new Set(slots)]
-  return unique.map((slot) => {
+  const slots = [...CORE, ...EXTRA].filter((slot) => !HIDDEN.has(slot))
+  return [...new Set(slots)].flatMap((slot) => {
     const item = field(slot, brief, overrides)
     const text = item?.text ?? ""
+    if (!text) return []
     const source = item?.source
-    const group = groupFor(slot, source, text)
-    return {
-      slot,
-      label: slot === "structure" ? "Bars" : SLOT_LABEL[slot],
-      text,
-      source,
-      reason: item?.reason,
-      marked: mark === slot,
-      group,
-    }
+    return [
+      {
+        slot,
+        label: SLOT_LABEL[slot],
+        text,
+        source,
+        reason: item?.reason,
+        marked: mark === slot,
+        group: groupFor(slot, source, text),
+      },
+    ]
   })
 }
 

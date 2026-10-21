@@ -73,7 +73,7 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
             left: box.left - 6,
             width: box.width + 12,
             height: box.height + 12,
-            boxShadow: "0 0 0 1px #FF5A1F, 0 0 0 9999px rgba(15, 15, 16, 0.72)",
+            boxShadow: "0 0 0 1px #A78BFA, 0 0 0 9999px rgba(10, 10, 18, 0.72)",
           }}
         />
       ) : null}

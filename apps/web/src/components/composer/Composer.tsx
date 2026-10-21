@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { ArrowUp, Mic, Paperclip } from "lucide-react"
 
 import { ApiError, upload } from "../../api/client.ts"
+import { registerDemo, registerQuick } from "../../composer/examples.ts"
 import { setComposerRecording } from "../../composer/recording.ts"
 import { inFlight } from "../../conversation/flight.ts"
 import { postTurn } from "../../conversation/postTurn.ts"
@@ -20,12 +21,6 @@ type Held = {
   file: File
   inputType: InputType
 }
-
-const STARTS = [
-  { label: "Rainy night drive", text: "a rainy night drive, missing someone" },
-  { label: "Summer festival", text: "a summer festival" },
-  { label: "Calm morning", text: "a calm morning" },
-]
 
 type Props = {
   started: boolean
@@ -50,7 +45,6 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
   const [tempoText, setTempoText] = useState("")
   const [busy, setBusy] = useState(false)
   const [dragging, setDragging] = useState(false)
-  const [demoBusy, setDemoBusy] = useState(false)
   const [demoError, setDemoError] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const areaRef = useRef<HTMLTextAreaElement>(null)
@@ -404,13 +398,10 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
 
   async function runDemo() {
     setDemoError(null)
-    setDemoBusy(true)
     try {
       await runScenario("rainy")
     } catch (err) {
       setDemoError(err instanceof Error ? err.message : "The demo did not finish.")
-    } finally {
-      setDemoBusy(false)
     }
   }
 
@@ -418,6 +409,34 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
     apply(next, null)
     await submitRef.current()
   }
+
+  const quickRef = useRef(quick)
+  const demoRef = useRef(runDemo)
+
+  useEffect(() => {
+    quickRef.current = quick
+    demoRef.current = runDemo
+  })
+
+  useEffect(() => {
+    const node = areaRef.current
+    if (!node) return
+    node.style.height = "auto"
+    node.style.height = `${Math.min(node.scrollHeight, 14 * 1.45 * 6)}px`
+  }, [text])
+
+  useEffect(() => {
+    registerQuick((next) => {
+      void quickRef.current(next)
+    })
+    registerDemo(() => {
+      void demoRef.current()
+    })
+    return () => {
+      registerQuick(null)
+      registerDemo(null)
+    }
+  }, [])
 
   const confirmLabel = error && waiting ? "Try again" : "Confirm this reading"
   const unsure = waiting && features !== null && features.confidence < 0.6
@@ -558,38 +577,11 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
           {error}
         </p>
       ) : null}
-      {started ? null : (
-        <>
-          <div className="flex flex-wrap gap-2" role="group" aria-label="Quick start">
-            {STARTS.map((item) => (
-              <button
-                key={item.label}
-                type="button"
-                className="pad"
-                onClick={() => void quick(item.text)}
-                disabled={demoBusy || busy || recording}
-              >
-                {item.label}
-              </button>
-            ))}
-            {flags.demo ? (
-              <button
-                type="button"
-                className="pad disabled:opacity-40"
-                onClick={() => void runDemo()}
-                disabled={demoBusy || busy || recording}
-              >
-                Try the demo
-              </button>
-            ) : null}
-          </div>
-          {demoError ? (
-            <p role="alert" className="text-danger">
-              {demoError}
-            </p>
-          ) : null}
-        </>
-      )}
+      {demoError ? (
+        <p role="alert" className="text-danger">
+          {demoError}
+        </p>
+      ) : null}
     </div>
   )
 }

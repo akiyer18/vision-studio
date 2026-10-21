@@ -15,6 +15,7 @@ import { Insight } from "./Insight.tsx"
 import { Readouts } from "./Readouts.tsx"
 import { Transport } from "./Transport.tsx"
 import { GenreRoom, type GenreDetail } from "../genre/GenreRoom.tsx"
+import { Skeleton } from "../Skeleton.tsx"
 
 const PlayerBar = lazy(() => import("../layers/stage.tsx").then((module) => ({ default: module.PlayerBar })))
 const LayersView = lazy(() => import("../layers/stage.tsx").then((module) => ({ default: module.LayersView })))
@@ -107,8 +108,6 @@ export function Dashboard() {
     }
   }
 
-  const sessionName = bubbles.find((item) => item.role === "you" && !item.prompt)?.text || "New session"
-
   const hot = status === "working"
 
   return (
@@ -117,39 +116,41 @@ export function Dashboard() {
       <div className="studio-shell">
         <Sidebar room={room} onRoom={setRoom} onReplay={tour.replay} />
         {room === "genre" ? (
-          <main className="studio-main">
+          <main className="studio-main is-genre">
             <GenreRoom onUse={useGenre} />
           </main>
         ) : (
           <main className="studio-main">
-            <Transport sessionName={sessionName} />
-            <Readouts />
-            <div className="studio-split">
-              <section className={`card conversation-card p-5 ${hot ? "is-hot" : ""}`} aria-label="Conversation">
-                <h2 className="section-title">Conversation</h2>
-                <Thread bubbles={bubbles} onExchange={addExchange} showLayers={false} showDemo={demoQuery} />
-                <div className="studio-composer">
-                  <Composer started={started} onBegin={() => setTalking(true)} onBubble={addBubble} onExchange={addExchange} />
+            <div className={`studio-frame ${showLayers ? "has-results" : ""}`}>
+              <Transport />
+              <Readouts />
+              <div className="studio-split">
+                <section className={`card conversation-card p-5 ${hot ? "is-hot" : ""}`} aria-label="Conversation">
+                  <h2 className="section-title">Conversation</h2>
+                  <Thread bubbles={bubbles} onExchange={addExchange} showLayers={false} showDemo={demoQuery} />
+                  <div className="studio-composer">
+                    <Composer started={started} onBegin={() => setTalking(true)} onBubble={addBubble} onExchange={addExchange} />
+                  </div>
+                </section>
+                <div className="brief-column">
+                  <BriefCard mark={mark} hot={hot} />
+                  {turn ? <ReasoningCard mark={mark} onMark={setMark} onDescribe={describe} /> : null}
                 </div>
-              </section>
-              <div className="brief-column">
-                <BriefCard mark={mark} onDescribe={describe} hot={hot} />
-                {turn ? <ReasoningCard mark={mark} onMark={setMark} onDescribe={describe} /> : null}
               </div>
-            </div>
-            {showLayers ? (
-              <section className={`card p-5 ${hot ? "is-hot" : ""}`} aria-label="Results">
-                <Suspense fallback={<p className="text-secondary">Opening the takes.</p>}>
-                  <LayersView />
+              {showLayers ? (
+                <section className={`card results-card p-5 ${hot ? "is-hot" : ""}`} aria-label="Results">
+                  <Suspense fallback={<Skeleton className="h-14 w-full" />}>
+                    <LayersView />
+                  </Suspense>
+                </section>
+              ) : null}
+              <Insight />
+              {showLayers ? (
+                <Suspense fallback={<p className="studio-player px-4 py-3 text-secondary">Opening the player.</p>}>
+                  <PlayerBar onStartOver={startOver} />
                 </Suspense>
-              </section>
-            ) : null}
-            <Insight />
-            {showLayers ? (
-              <Suspense fallback={<p className="studio-player px-4 py-3 text-secondary">Opening the player.</p>}>
-                <PlayerBar onStartOver={startOver} />
-              </Suspense>
-            ) : null}
+              ) : null}
+            </div>
           </main>
         )}
       </div>

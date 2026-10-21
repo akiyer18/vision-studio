@@ -6,13 +6,17 @@ import { postTurn } from "../../conversation/postTurn.ts"
 import { inputBridge } from "../../input/bridge.ts"
 import type { ReadingPatch } from "../../input/bridge.ts"
 import type { RecentMessage } from "../../recentIdeas.ts"
+import { EXAMPLES, runDemoExample, runQuick } from "../../composer/examples.ts"
+import { features as flags } from "../../features.ts"
 import { layerTitle } from "../../studio/output.ts"
+import { renderCurrent } from "../../studio/renderSession.ts"
 import { traceSentence } from "../../studio/traceMark.ts"
 import { useStudio } from "../../state/studio.ts"
 import type { AnswerAction } from "../../types/answer_action.ts"
 import type { SlotName } from "../../types/slot_name.ts"
 import { Button } from "../Button.tsx"
 import { DemoMenu } from "../DemoMenu.tsx"
+import { Logo } from "../Logo.tsx"
 import { QuestionMessage } from "./QuestionMessage.tsx"
 import { ReviewCard } from "./ReviewCard.tsx"
 
@@ -38,7 +42,10 @@ export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
   const reading = useStudio((state) => state.reading)
   const [error, setError] = useState<string | null>(null)
   const [last, setLast] = useState<{ action: AnswerAction; value?: string } | null>(null)
+  const [away, setAway] = useState(false)
   const busy = useRef(false)
+  const scroller = useRef<HTMLDivElement>(null)
+  const pinned = useRef(true)
   const firstExchange = bubbles.findIndex((bubble) => bubble.prompt)
   const earlier = firstExchange === -1 ? bubbles : bubbles.slice(0, firstExchange)
   const later = firstExchange === -1 ? [] : bubbles.slice(firstExchange)
@@ -88,12 +95,34 @@ export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
   }, [])
 
   const working = status === "working"
+  const fresh = !intro && bubbles.length === 0 && !reading && !question && turnStatus === null
+
+  useEffect(() => {
+    const node = scroller.current
+    if (!node || !pinned.current) return
+    node.scrollTop = node.scrollHeight
+  }, [bubbles, intro, question, reading, turnStatus, working, prompts, error])
+
+  function onScroll() {
+    const node = scroller.current
+    if (!node) return
+    const distance = node.scrollHeight - node.scrollTop - node.clientHeight
+    const up = distance > 48
+    pinned.current = !up
+    setAway(up)
+  }
 
   return (
-    <div className="studio-thread">
+    <div className="studio-thread-wrap">
+      <div className="studio-thread" ref={scroller} onScroll={onScroll}>
       {showDemo ? <DemoMenu /> : null}
       <p className="sr-only">Your song</p>
-      <div className="messages">
+      <div className="messages" role="log" aria-relevant="additions">
+        {fresh ? (
+          <Agent>
+            <p>I ask a few short questions. Your details stay as you said them. Press Build now at any time.</p>
+          </Agent>
+        ) : null}
         {intro ? <Agent>{intro}</Agent> : null}
         {earlier.map((bubble) => (
           <Exchange key={bubble.id} bubble={bubble} />
@@ -135,10 +164,29 @@ export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
             <p className="text-ink">{summary || "Ready to build."}</p>
             <p className="mt-1 text-secondary">built from your answers</p>
             <PromptCards />
-            <Button tone="secondary" className="mt-2" disabled={working} onClick={() => void goDeeper()}>
-              Go deeper
-            </Button>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button id="render-build" disabled={working} onClick={() => void renderCurrent()}>
+                Build
+              </Button>
+              <Button tone="secondary" disabled={working} onClick={() => void goDeeper()}>
+                Go deeper
+              </Button>
+            </div>
           </Agent>
+        ) : null}
+        {fresh ? (
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Quick start">
+            {EXAMPLES.map((item) => (
+              <button key={item.label} type="button" className="pad" disabled={working} onClick={() => runQuick(item.text)}>
+                {item.label}
+              </button>
+            ))}
+            {flags.demo ? (
+              <button type="button" className="pad" disabled={working} onClick={() => runDemoExample()}>
+                Try the demo
+              </button>
+            ) : null}
+          </div>
         ) : null}
         {error ? (
           <Agent>
@@ -159,6 +207,18 @@ export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
         </Suspense>
       ) : null}
       <DebugPanel />
+      </div>
+      {away ? (
+        <button type="button" className="jump-latest pad" onClick={() => {
+          const node = scroller.current
+          if (!node) return
+          node.scrollTop = node.scrollHeight
+          pinned.current = true
+          setAway(false)
+        }}>
+          Jump to latest
+        </button>
+      ) : null}
     </div>
   )
 }
@@ -167,7 +227,7 @@ function Agent({ children }: { children: ReactNode }) {
   return (
     <div className="bubble-row">
       <span className="vs-mark" aria-hidden="true">
-        VS
+        <Logo />
       </span>
       <div className="bubble">{children}</div>
     </div>
@@ -210,7 +270,7 @@ function PromptCards() {
               rows={3}
               value={edit?.prompt ?? item.prompt}
               onChange={(event) => editPrompt(item.layer, "prompt", event.target.value)}
-              className="rounded-[6px] border border-[var(--line)] bg-raised px-2 py-1 text-ink outline-none"
+              className="rounded-[10px] border border-[var(--line)] bg-raised px-2 py-1 text-ink outline-none"
             />
             <label className="text-secondary" htmlFor={`thread-${item.layer}-negative`}>
               Leave out
@@ -220,7 +280,7 @@ function PromptCards() {
               rows={2}
               value={edit?.negative ?? item.negative}
               onChange={(event) => editPrompt(item.layer, "negative", event.target.value)}
-              className="rounded-[6px] border border-[var(--line)] bg-raised px-2 py-1 text-ink outline-none"
+              className="rounded-[10px] border border-[var(--line)] bg-raised px-2 py-1 text-ink outline-none"
             />
           </div>
         )
@@ -260,8 +320,12 @@ function DebugPanel() {
 function Thinking({ latest }: { latest: string }) {
   return (
     <div className="flex items-center gap-2 text-secondary" role="status">
-      <span className="led" aria-hidden="true" />
-      <p className="mono text-[13px]">{latest}</p>
+      <span className="dots" aria-hidden="true">
+        <i />
+        <i />
+        <i />
+      </span>
+      <p className="text-[13px]">{latest}</p>
     </div>
   )
 }

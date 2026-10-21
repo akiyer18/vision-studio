@@ -4,21 +4,17 @@ import { ApiError } from "../../api/client.ts"
 import { inFlight } from "../../conversation/flight.ts"
 import { composerRecording, subscribeRecording } from "../../composer/recording.ts"
 import { postTurn } from "../../conversation/postTurn.ts"
-import { renderCurrent } from "../../studio/renderSession.ts"
 import { useStudio } from "../../state/studio.ts"
 import { Button } from "../Button.tsx"
 
-export function Transport({ sessionName }: { sessionName: string }) {
+export function Transport() {
   const status = useStudio((state) => state.status)
   const layerOrder = useStudio((state) => state.layerOrder)
   const runs = useStudio((state) => state.runs)
-  const prompts = useStudio((state) => (state.turn?.status === "ready" ? state.turn.prompts : undefined))
   const recording = useSyncExternalStore(subscribeRecording, composerRecording, () => false)
   const [error, setError] = useState<string | null>(null)
-  const cards = prompts?.length ?? 0
   const building = layerOrder.length > 0 || Object.keys(runs).length > 0
   const word = statusWord(status, building)
-  const canBuild = cards > 0 && status !== "working" && status !== "error"
   const light = word === "ready" ? "is-ready" : word === "thinking" || word === "building" ? "is-thinking" : word === "error" ? "is-error" : ""
 
   async function buildNow() {
@@ -38,7 +34,6 @@ export function Transport({ sessionName }: { sessionName: string }) {
         <p className="eyebrow">Create</p>
         <h1 className="page-title">Shape your idea</h1>
         <p className="page-sub">Describe it, record it, or drop a file. I ask only what is missing.</p>
-        {sessionName !== "New session" ? <p className="session-name mt-2">{sessionName}</p> : null}
       </div>
       <div className="page-actions">
         <p className="status-readout">
@@ -46,11 +41,8 @@ export function Transport({ sessionName }: { sessionName: string }) {
           <span className="sr-only">Status</span>
           {word}
         </p>
-        <Button tone="secondary" disabled={status === "working" || recording} onClick={() => void buildNow()}>
+        <Button data-tour="build" disabled={status === "working" || recording} onClick={() => void buildNow()}>
           Build now
-        </Button>
-        <Button data-tour="build" disabled={!canBuild} title={cards === 0 ? "Send an idea first." : undefined} onClick={() => void renderCurrent()}>
-          Build
         </Button>
       </div>
       {error ? (

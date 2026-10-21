@@ -14,7 +14,7 @@ type Props = {
 export function ReasoningCard({ mark, onMark, onDescribe }: Props) {
   const trace = useStudio((state) => state.turn?.trace)
   const steps = trace ?? []
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
 
   return (
     <section className="card panel-reasoning flex flex-col gap-2 p-5" aria-label="Agent reasoning">

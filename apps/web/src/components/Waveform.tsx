@@ -5,18 +5,19 @@ export function Waveform({
   url,
   label,
   seek,
-  wave = "#FF9A5C",
-  progress = "#FF6A2B",
+  wave = "#A78BFA",
+  progress = "#8B5CF6",
   height = 64,
 }: {
   url: string
   label: string
   seek: RefObject<((seconds: number) => void) | null>
-  wave?: string
+  wave?: string | string[]
   progress?: string
   height?: number
 }) {
   const container = useRef<HTMLDivElement>(null)
+  const colors = Array.isArray(wave) ? wave.join("|") : wave
 
   useEffect(() => {
     const element = container.current
@@ -24,7 +25,7 @@ export function Waveform({
     const waveform = WaveSurfer.create({
       container: element,
       height,
-      waveColor: wave,
+      waveColor: colors.includes("|") ? colors.split("|") : colors,
       progressColor: progress,
       cursorColor: progress,
       cursorWidth: 1,
@@ -47,7 +48,7 @@ export function Waveform({
       seek.current = null
       waveform.destroy()
     }
-  }, [height, progress, seek, url, wave])
+  }, [colors, height, progress, seek, url])
 
   return <div ref={container} role="img" aria-label={label} className="min-w-0 flex-1 overflow-hidden" style={{ minHeight: height }} />
 }

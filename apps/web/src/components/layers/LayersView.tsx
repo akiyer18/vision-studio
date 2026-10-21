@@ -56,7 +56,12 @@ export function LayersView() {
   return (
     <div id="results" ref={results} tabIndex={-1} className="flex flex-col gap-3 outline-none" aria-busy={status === "working" || undefined}>
       <h2 className="text-secondary">Your layers</h2>
-      {lanes.length === 0 ? <p className="text-secondary">The takes are being built.</p> : null}
+      {lanes.length === 0 ? (
+        <div className="flex flex-col gap-3" aria-hidden="true">
+          <span className="skeleton h-14 w-full" />
+          <span className="skeleton h-14 w-full" />
+        </div>
+      ) : null}
       {lanes.map((layer) => (
         <LayerCard key={layer} layer={layer} reduce={reduce === true} />
       ))}
@@ -332,7 +337,7 @@ function Variation({
   return (
     <div hidden={!selected} data-layer={result.layer} data-variant={result.variant} data-seconds={moving ? playback.seconds.toFixed(3) : undefined}>
       {selected ? (
-        <Waveform url={url} label={`${title} variation ${result.variant} waveform`} seek={seekRef} wave="#FF9A5C" progress="#FF6A2B" height={40} />
+        <Waveform url={url} label={`${title} variation ${result.variant} waveform`} seek={seekRef} wave={["#8B5CF6", lanePaint(result.layer).wave]} progress={lanePaint(result.layer).wave} height={40} />
       ) : null}
       <p className="sr-only">{name}</p>
       <div className="mt-2 flex flex-wrap gap-2">

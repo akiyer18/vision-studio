@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { CircleHelp, Library, PenLine, ScanSearch, SlidersHorizontal } from "lucide-react"
 
+import { Logo } from "../Logo.tsx"
+
 import { features } from "../../features.ts"
 import { transport } from "../../playback/transport.ts"
 import type { RecentIdea } from "../../recentIdeas.ts"
@@ -66,7 +68,7 @@ export function Sidebar({ room, onRoom, onReplay }: Props) {
   return (
     <aside className="studio-side" data-tour="sidebar">
       <p className="wordmark flex items-center gap-2" data-tour="welcome">
-        <span aria-hidden="true">VS</span>
+        <Logo />
         <span className="wordmark-copy">Vision Studio</span>
       </p>
       <nav aria-label="Studio" className="side-nav flex flex-col gap-1">
