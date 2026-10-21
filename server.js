@@ -114,6 +114,22 @@ app.post('/api/reveal', (req, res) => {
   execFile('open', ['-R', p], (err) => (err ? res.status(500).json({ error: err.message }) : res.json({ ok: true })));
 });
 
+// Live 10's browser index only scans a Place once (when it is added), so freshly written files are invisible to
+// browser.load_item. We therefore keep fixed "slot" files (ADE Kick.wav, ADE Saw.wav, ...) that get indexed once and
+// overwrite them with the latest sound before each load. Simpler reads the file from disk, so it gets the new audio.
+const SLOT_ROLES = ['kick', 'snare', 'clap', 'hat', 'perc', 'tom', 'rim', 'saw', 'bass', 'pad', 'pluck', 'lead', 'keys', 'melody', 'synth', 'drum'];
+export function slotNameFor(srcPath, hint = '', fallback = 'Drum') {
+  const text = `${String(hint)} ${path.basename(srcPath)}`.toLowerCase();
+  const role = SLOT_ROLES.find((r) => text.includes(r)) || fallback.toLowerCase();
+  return `ADE ${role[0].toUpperCase()}${role.slice(1)}.wav`;
+}
+async function toSlot(srcPath, hint = '', fallback = 'Drum') {
+  if (!srcPath.startsWith(OUT_DIR)) throw new Error('path outside output dir');
+  const dest = path.join(OUT_DIR, slotNameFor(srcPath, hint, fallback));
+  if (dest !== srcPath) await fs.copyFile(srcPath, dest);
+  return dest;
+}
+
 async function sendWithRetry(send, cmd, tries = 6, delayMs = 700) {
   let reply;
   for (let i = 0; i < tries; i++) {
@@ -150,8 +166,7 @@ async function liveClient() {
 
 app.post('/api/live/sample', async (req, res) => {
   try {
-    const p = String(req.body?.path || '');
-    if (!p.startsWith(OUT_DIR)) throw new Error('path outside output dir');
+    const p = await toSlot(String(req.body?.path || ''), req.body?.role || '');
     const send = await liveClient();
     const reply = await sendWithRetry(send, { cmd: 'load_sample', path: p, ...(req.body?.track != null ? { track: req.body.track } : {}) });
     if (!reply?.ok) throw new Error(reply?.error || 'Live rejected load_sample');
@@ -256,13 +271,14 @@ app.post('/api/live/build', async (req, res) => {
     if (bpm) await step('tempo', { cmd: 'set_tempo', bpm });
     if (drums?.pattern?.lanes) {
       const t = await step('create Drums track', { cmd: 'create_midi_track', name: 'Drums', index: -1 });
-      if (drums.samplePath) await step('load drum sample', { cmd: 'load_sample', path: drums.samplePath, track: t.index }, true);
+      if (drums.samplePath) await step('load drum sample', { cmd: 'load_sample', path: await toSlot(drums.samplePath, drums.role || '', 'Drum'), track: t.index }, true);
       await step('drums clip', { cmd: 'create_clip', track: t.index, slot: 0, length: drums.pattern.bars * 4, notes: patternToLiveNotes(drums.pattern, drums.mapping || 'single'), fire: true, name: 'Drums' });
     }
     if (synth?.notes?.length) {
-      const t = await step('create Saw track', { cmd: 'create_midi_track', name: 'Saw', index: -1 });
-      if (synth.samplePath) await step('load saw sample', { cmd: 'load_sample', path: synth.samplePath, track: t.index }, true);
-      await step('saw clip', { cmd: 'create_clip', track: t.index, slot: 0, length: melodyBars(synth.notes, synth.bars) * 4, notes: melodyToLiveNotes(synth.notes), fire: true, name: 'Saw' });
+      const synthName = (synth.role || 'Saw').replace(/^./, (c) => c.toUpperCase());
+      const t = await step(`create ${synthName} track`, { cmd: 'create_midi_track', name: synthName, index: -1 });
+      if (synth.samplePath) await step('load saw sample', { cmd: 'load_sample', path: await toSlot(synth.samplePath, synth.role || '', 'Synth'), track: t.index }, true);
+      await step(`${synthName} clip`, { cmd: 'create_clip', track: t.index, slot: 0, length: melodyBars(synth.notes, synth.bars) * 4, notes: melodyToLiveNotes(synth.notes), fire: true, name: synthName });
     }
     res.json({ ok: true, steps });
   } catch (e) { res.status(500).json({ error: e.message, steps }); }

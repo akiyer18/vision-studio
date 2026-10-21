@@ -255,7 +255,7 @@ function fileCard(f, extra) {
     <div class="path">${f.path}</div>${extra || ''}`;
   div.querySelector('[data-reveal]').onclick = () => fetch('/api/reveal', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ path: f.path }) });
   const lb = div.querySelector('[data-live]');
-  if (lb) lb.onclick = async () => { lb.textContent = '…'; const r = await postJson('/api/live/sample', { path: f.path }); lb.textContent = r.ok ? '✓ in Live' : '→ Live'; if (!r.ok) setStatus('s-status', r.error, true); };
+  if (lb) lb.onclick = async () => { lb.textContent = '…'; const r = await postJson('/api/live/sample', { path: f.path, role: f.name }); lb.textContent = r.ok ? '✓ in Live' : '→ Live'; if (!r.ok) setStatus('s-status', r.error, true); };
   return div;
 }
 
@@ -542,11 +542,11 @@ $('e-go').onclick = async () => {
     await Promise.all(tasks);
 
     const b = stepEl('Building tracks in Live');
-    const body = { bpm: plan.bpm, drums: { pattern, mapping: 'single', samplePath: lastSamplePath } };
-    if (melody) body.synth = { notes: melody.notes, bars: melody.bars, samplePath: sawPath };
+    const body = { bpm: plan.bpm, drums: { pattern, mapping: 'single', samplePath: lastSamplePath, role: plan.drum.name } };
+    if (melody) body.synth = { notes: melody.notes, bars: melody.bars, samplePath: sawPath, role: plan.synth ? plan.synth.name : 'synth' };
     const r = await postJson('/api/live/build', body);
     if (!r.ok) { b.fail(r.error); throw new Error(r.error); }
-    b.ok('Drums' + (melody ? ' + Saw' : '') + ' tracks playing');
+    b.ok('Drums' + (melody ? ' + ' + (plan.synth ? plan.synth.name : 'synth') : '') + ' tracks playing');
     setStatus('e-status', 'Done. Look at Live.');
   } catch (e) { setStatus('e-status', e.message, true); }
   $('e-go').disabled = false;
