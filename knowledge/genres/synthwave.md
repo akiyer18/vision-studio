@@ -49,6 +49,14 @@ Synthwave, 100-112 BPM, straight (swing 0). Drums are 80s drum machines: LinnDru
 ## Common mistakes
 - Swing on the drums, trap hats, no gated snare, static bass (needs 8th/16th pulse), pads without chorus/width, no arpeggio, modern sub-heavy kick, no tom fills/crashes, lead without portamento/vibrato.
 
+## Stable Audio loop prompts
+- loop: synthwave drum loop at {bpm} BPM, gated reverb snare on 2 and 4, punchy LinnDrum style kick, crisp 8th hats, tom fills, 80s retro, no melody
+- loop: retrowave drums at {bpm} BPM, big 80s drum machine kick, huge gated snare, open hat offbeats, hand claps, neon night drive, no melody
+- loop: outrun synthwave drum groove at {bpm} BPM, four on the floor kick, gated snare and clap, 16th hats, tom fill at the end of the bar, no melody
+- texture: lush analog synth pad with arpeggiated plucks and chorus, {bpm} BPM, synthwave, wide, no drums
+- kick: TrackType: SFX, punchy 80s LinnDrum style kick drum, tight knock, 300 ms decay, dry one-shot
+- snare: TrackType: SFX, huge 80s gated reverb snare, bright crack cut off sharply, 350 ms
+
 ## Sources
 - https://futureproofmusicschool.com/blog/dive-into-synthwave-create-your-own-sound-today
 - https://musictech.com/tutorials/tips/how-to-create-authentic-vintage-drum-gated-reverb-for-synthwave-chillwave-music-styles

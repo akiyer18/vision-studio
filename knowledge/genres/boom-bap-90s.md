@@ -1,6 +1,6 @@
 # 90s Boom Bap
 slug: boom-bap-90s
-aliases: boom bap, 90s hip hop, 90s boom bap, golden era hip hop, east coast 90s, dilla, premier, pete rock, dusty hip hop, sp1200, mpc60 beat, classic hip hop
+aliases: boom bap, 90s hip hop, 90s rap, 90s hiphop, nineties hip hop, 90s boom bap, golden era hip hop, east coast 90s, dilla, premier, pete rock, dusty hip hop, sp1200, mpc60 beat, classic hip hop
 tempo: 85-96
 
 ## Summary
@@ -48,6 +48,14 @@ tempo: 85-96
 
 ## Common mistakes
 - Quantized, clean drums; no ghost snares; 808 trap sub; busy 16th hats; block chords on a pad instead of chopped loops; too many layers (3-5 elements is the sound); snare on the grid (it should drag slightly); no vinyl texture; modern wide stereo.
+
+## Stable Audio loop prompts
+- loop: 90s boom bap drum break at {bpm} BPM, dusty sampled kick, cracking snare on 2 and 4, swung 8th hats, vinyl crackle, MPC swing, gritty and raw, no melody
+- loop: New York boom bap drums at {bpm} BPM, hard knocking kick, big snare with a short room, loose hats, chopped break feel, dusty, no melody
+- loop: DJ Premier style boom bap drum loop at {bpm} BPM, punchy kick, snare and rimshot layered on 2 and 4, open hat accents, vinyl noise, no melody
+- texture: dusty soul sample chop bed with vinyl crackle and a filtered Rhodes chord, {bpm} BPM, boom bap, no drums
+- kick: TrackType: SFX, dusty boom bap kick drum sampled from a 70s record, round knock, soft attack, 400 ms decay, vinyl texture, dry one-shot
+- snare: TrackType: SFX, cracking 90s boom bap snare, hard snap with a short room, gritty, 280 ms
 
 ## Sources
 - https://create.routenote.com/blog/?p=12433

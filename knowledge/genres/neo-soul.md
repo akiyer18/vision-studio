@@ -48,6 +48,14 @@ Neo-soul, 70-92 BPM, the "drunk" pocket: kick on the grid, snare 20-40 ms late, 
 ## Common mistakes
 - Quantized drums, triads instead of extended voicings, bass glued to the kick, drum machine sounds, no ghost notes, straight hats, over-busy drums, too much reverb.
 
+## Stable Audio loop prompts
+- loop: neo-soul drum loop at {bpm} BPM, laid back swung drums, soft round kick, snare slightly behind the beat with ghost notes, loose hats, rimshots, live and dusty, no melody
+- loop: D'Angelo style drunken neo-soul groove at {bpm} BPM, kick behind the beat, cracking snare on 2 and 4, swung 16th hats, finger snaps, warm tape, no melody
+- loop: live neo-soul drum groove at {bpm} BPM, brushed snare, soft kick, hats with human timing, shaker, intimate studio, no melody
+- texture: warm Rhodes chord progression with chorus and a soft vinyl bed, {bpm} BPM, neo-soul, no drums
+- kick: TrackType: SFX, soft round neo-soul kick drum, warm low thump, felt attack, 380 ms decay, tape, dry one-shot
+- snare: TrackType: SFX, neo-soul snare drum, cracking but soft, slight room, 260 ms, vintage console
+
 ## Sources
 - https://reverb.com/news/the-low-end-legacy-of-dangelos-voodoo
 - https://nassauweekly.com/the-nass-recommends-voodoo-2000/

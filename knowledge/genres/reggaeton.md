@@ -49,6 +49,14 @@ Reggaeton, 92-96 BPM, straight to slight swing 0.05. The dembow: kick on 1 and 3
 ## Common mistakes
 - Snare on 2 and 4 or kick 4otf (loses the dembow); no rim/snare layering; bass not following the 3-3-2 accents; busy trap hats; major-key happy chords with a straight grid; no pluck riff; no vocal tags/airhorn.
 
+## Stable Audio loop prompts
+- loop: reggaeton drum loop at {bpm} BPM, dembow rhythm, punchy kick, snare on the 3 and the and of 4, timbale and bongo accents, shakers, bright and bouncy, no melody
+- loop: modern latin trap reggaeton drums at {bpm} BPM, 808 kick dembow pattern, clap and snare layered, hi-hats with rolls, punchy, no melody
+- loop: perreo dembow percussion at {bpm} BPM, tight kick, rimshot snares, cowbell, congas, shaker 16ths, energetic, no melody
+- texture: bright marimba pluck and synth pad bed, {bpm} BPM, reggaeton, no drums
+- kick: TrackType: SFX, punchy reggaeton kick drum, tight 808 style knock, 300 ms decay, dry one-shot
+- snare: TrackType: SFX, reggaeton dembow snare, sharp rimshot snap layered with a clap, 200 ms, dry
+
 ## Sources
 - https://violetrecording.com/how-to-make-reggaeton-beats/
 - https://blog.native-instruments.com/reggaeton

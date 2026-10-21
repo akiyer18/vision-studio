@@ -251,13 +251,19 @@ const melodyToLiveNotes = (notes) => notes.map((n) => ({ pitch: n.pitch, start: 
 const melodyBars = (notes, bars) => bars || Math.max(1, Math.ceil(Math.max(0, ...notes.map((n) => n.startBeats + n.durationBeats)) / 4));
 
 // ---- Send straight into Ableton via the ADEHack remote script (ableton/client.js, TCP 9004) ----
+// Live's remote script handles one command at a time on a 100 ms tick; parallel tool calls would flood it, so serialize.
+let liveQueue = Promise.resolve();
 async function liveClient() {
   let sendToLive;
   try { ({ sendToLive } = await import('./ableton/client.js')); }
   catch { throw new Error('ableton/client.js missing - run ableton/install.sh'); }
-  return async (cmd) => {
-    try { return await sendToLive(cmd, { timeoutMs: cmd.cmd === 'load_sample' ? 8000 : 4000 }); }
-    catch (e) { throw new Error(`${e.message} Fix: fully quit and relaunch Live 10, then Preferences > Link/MIDI > Control Surface = "ADEHack".`); }
+  return (cmd) => {
+    const run = liveQueue.then(async () => {
+      try { return await sendToLive(cmd, { timeoutMs: /load_sample|load_to_pad|load_device|describe_set|browse/.test(cmd.cmd) ? 20000 : 12000 }); }
+      catch (e) { throw new Error(`${e.message} Fix: fully quit and relaunch Live 10, then Preferences > Link/MIDI > Control Surface = "ADEHack".`); }
+    });
+    liveQueue = run.catch(() => {});
+    return run;
   };
 }
 
@@ -1162,7 +1168,7 @@ function makeCtx(emit) {
       },
       // ---- hands: devices, mixer, scenes, arrangement (ADEHack v4 protocol) ----
       async loadDevice({ track, name, device }) {
-        name = name || device; const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`);
+        name = name || device; const send = await liveClient(); const t = await ensureTrack(send, track);   // creates the MIDI track if it doesn't exist yet
         const existing = await send({ cmd: 'list_devices', track: t.name, params: true });
         const same = existing?.ok ? (existing.devices || []).find((d) => String(d.name).toLowerCase() === String(name).toLowerCase() || String(d.class_name || '').toLowerCase() === String(name).toLowerCase().replace(/\s+/g, '')) : null;
         if (same) return { ok: true, reused: true, track: t.name, device: { index: same.index, name: same.name, class_name: same.class_name }, params: same.params || [], note: `${same.name} already on ${t.name}; adjusting it instead of adding a second one` };

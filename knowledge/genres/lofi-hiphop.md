@@ -48,6 +48,14 @@ Lo-fi hip hop, 72-88 BPM, swing 0.25-0.4, drums soft and dusty with 2-3 elements
 ## Common mistakes
 - Bright clean drums, 808 sub, four or more drum layers, no swing, chords too plain (triads), no texture bed, no changes for 2 minutes, trap hat rolls, loud hats.
 
+## Stable Audio loop prompts
+- loop: lo-fi hip hop drum loop at {bpm} BPM, dusty soft kick, muffled snare on 2 and 4, lazy swung hats, vinyl crackle, tape saturated and warm, no melody
+- loop: chillhop drum groove at {bpm} BPM, round kick, rimshot snare with ghost notes, loose hats, shaker, cassette texture, no melody
+- loop: late night lofi beat drums at {bpm} BPM, soft kick, snare with a short dark room, hats with uneven velocity, rain ambience, no melody
+- texture: warm lo-fi Rhodes chord bed with vinyl crackle, tape wobble and rain, {bpm} BPM, no drums
+- kick: TrackType: SFX, soft dusty lo-fi kick drum, muffled round thump, 350 ms decay, tape saturation, dry one-shot
+- snare: TrackType: SFX, muffled lo-fi snare, soft papery snap, short dark room, 220 ms, vinyl texture
+
 ## Sources
 - https://modeaudio.com/magazine/lofi-hip-hop-5-production-essentials
 - https://blog.native-instruments.com/lo-fi-hip-hop/

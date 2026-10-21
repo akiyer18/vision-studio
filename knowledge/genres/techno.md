@@ -48,6 +48,14 @@ Techno, 130-136 BPM, straight (swing 0 to 0.05). Drums: 909-style kick w/ rumble
 ## Common mistakes
 - Swing, chords and melodies in front, kick without rumble/sub, EDM build-drop with snare rolls, too many sounds, short 8-bar structures, bright happy stabs, reverb on the kick itself instead of a parallel rumble.
 
+## Stable Audio loop prompts
+- loop: Berlin techno drum loop at {bpm} BPM, 909 kick with a long rumbling sub tail four on the floor, offbeat open hats, 16th closed hats with accents, metallic percussion, dark and hypnotic, no melody
+- loop: Detroit techno drums at {bpm} BPM, tight punchy 909 kick, clap on 2 and 4, open hat offbeats, crisp 16th hats, hand clap double, driving, no melody
+- loop: industrial techno drum loop at {bpm} BPM, distorted kick four on the floor, metallic hits instead of claps, crunchy hats, noise bursts, relentless, no melody
+- texture: dark techno rumble drone with a filtered minor stab and reverb wash, {bpm} BPM, no drums
+- kick: TrackType: SFX, Berlin techno kick drum, 909 style punch with a long distorted sub rumble tail, 60 Hz, 600 ms decay, saturated, dry one-shot
+- snare: TrackType: SFX, 909 clap, sharp, with a big dark reverb tail, 400 ms
+
 ## Sources
 - https://emastered.com/blog/how-to-make-techno
 - https://www.attackmagazine.com/technique/beat-dissected/rolling-techno/

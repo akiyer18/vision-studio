@@ -48,6 +48,14 @@ UK garage, 130-134 BPM, shuffle swing 0.35-0.5 (16ths pushed late), skippy "2-st
 ## Common mistakes
 - Straight hats and shakers; kick on every beat in a 2-step; no vocal chops; bass doubling the kick; a modern clean snare without rim/clap/pitch; triad pads instead of 7th/9th chords; no snare pitch play.
 
+## Stable Audio loop prompts
+- loop: UK garage drum loop at {bpm} BPM, 2-step kick pattern, shuffled swung hats, snare and rim on 2 and 4, skippy percussion, warm and bouncy, no melody
+- loop: speed garage drums at {bpm} BPM, four on the floor kick, swung 16th hats, clap and snare layered, organ stab hints, no melody
+- loop: 2-step garage drum groove at {bpm} BPM, syncopated kick, crisp snare, shuffling hats with triplet feel, vocal chop stutters, no melody
+- texture: warm garage organ chord stab and vocal chop texture, {bpm} BPM, UK garage, no drums
+- kick: TrackType: SFX, punchy UK garage kick drum, tight round thump, 300 ms decay, dry one-shot
+- snare: TrackType: SFX, crisp UK garage snare, snappy with a short bright room, 200 ms
+
 ## Sources
 - https://www.reasonstudios.com/news/post/how-to-make-uk-garage
 - https://orphiq.com/resources/what-is-uk-garage

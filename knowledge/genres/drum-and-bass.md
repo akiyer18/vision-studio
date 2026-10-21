@@ -49,6 +49,14 @@ Drum & bass, 172-175 BPM. Two-step drums: hard kick on 1 and the "and" of 3 (ste
 ## Common mistakes
 - Snare on every beat or on 1 and 3; no ghost notes or break layer (sounds like a fast 4-piece kit); static bass with no filter movement; boomy kick masking the sub; tempo below 168; pads too loud over the drop.
 
+## Stable Audio loop prompts
+- loop: drum and bass drum loop at {bpm} BPM, tight punchy kick, cracking snare on 2 and 4, fast chopped break hi-hats, ghost snares, rolling and energetic, no melody
+- loop: liquid drum and bass drums at {bpm} BPM, clean kick, crisp snare, smooth hats and shakers, light breakbeat ghosts, airy, no melody
+- loop: jungle breakbeat loop at {bpm} BPM, chopped amen break, pitched up snares, hat stutters, raw and gritty, no melody
+- texture: lush liquid drum and bass pad with a filtered reese bass drone, {bpm} BPM, no drums
+- kick: TrackType: SFX, tight drum and bass kick drum, punchy click with a short clean body, 200 ms decay, dry one-shot
+- snare: TrackType: SFX, cracking drum and bass snare, bright sharp snap, tight, 160 ms, dry
+
 ## Sources
 - https://www.edmprod.com/how-to-make-jungle-music/
 - https://mixedinkey.com/captain-plugins/wiki/how-to-make-drum-and-bass-the-complete-guide/

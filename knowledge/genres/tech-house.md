@@ -46,6 +46,14 @@ Tech house, 125-128 BPM, swing 0.1 on hats/shakers. Drums: punchy tight kick (mo
 ## Common mistakes
 - Pads and chords (fills the space the bass needs), bass doubling the kick on the downbeat, no shaker/16th movement, no vocal chop, soft or boomy kick, straight hats at one velocity, forgetting the 8-bar fill.
 
+## Stable Audio loop prompts
+- loop: tech house drum loop at {bpm} BPM, punchy 909 kick four on the floor, tight clap on 2 and 4, crisp offbeat open hats, 16th shaker, rim clicks, groovy and tight, no melody
+- loop: rolling tech house drums at {bpm} BPM, deep kick, snappy clap, swung hats, percussion loop with congas and bongos, driving, no melody
+- loop: minimal tech house groove at {bpm} BPM, dry kick, short clap, clicky hats, rim shots, sparse and funky, no melody
+- texture: filtered synth stab and vocal chop texture, {bpm} BPM, tech house, no drums
+- kick: TrackType: SFX, punchy tech house kick drum, tight 909 punch with a short sub, 350 ms decay, dry one-shot
+- snare: TrackType: SFX, tight tech house clap, snappy layered claps, dry, 180 ms
+
 ## Sources
 - https://www.beatportal.com/articles/692607-step-by-step-guide-to-producing-tech-house-like-fisher-chris-lake-cloonee-and-michael-bibi
 - https://www.edmprod.com/how-to-make-tech-house/

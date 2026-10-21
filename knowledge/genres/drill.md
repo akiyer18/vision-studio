@@ -50,6 +50,14 @@ Drill, 140-146 BPM half-time. Drums: punchy short kick, hard snare/clap on beat 
 ## Common mistakes
 - Straight trap hats (drill skips), snare only on 3 (drill wants the displaced second hit), 808 glued to the kick with no slides or melody, happy/bright melodies, kick with sub fighting the 808, no fills every 4 bars.
 
+## Stable Audio loop prompts
+- loop: UK drill drum loop at {bpm} BPM, hard punchy kick, snare and clap on the 3 and the 4 and, sliding 808, fast hi-hats with triplet rolls, dark and sparse, no melody
+- loop: NY drill drums at {bpm} BPM, kick pattern with syncopated pickups, hard snare, hats with rolls and stutters, 808 glides, menacing, no melody
+- loop: drill percussion at {bpm} BPM, crisp hats in 8ths with 16th rolls, open hat accents, rim clicks, clap layered snare, sparse, no melody
+- texture: dark drill string and piano stab bed with a cold reverb, {bpm} BPM, no drums
+- kick: TrackType: SFX, hard punchy drill kick drum, tight click with a short deep body, 250 ms decay, dry one-shot
+- snare: TrackType: SFX, drill snare layered with a clap, sharp and dry, bright crack, 180 ms
+
 ## Sources
 - https://beatstorapon.com/blog/how-to-make-a-drill-beat/
 - https://emastered.com/blog/how-to-make-a-drill-beat

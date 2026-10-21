@@ -1,6 +1,6 @@
 # 2000s Hip Hop (East Coast, West Coast G-funk, Dirty South/crunk, Timbaland/Neptunes)
 slug: hiphop-2000s
-aliases: 2000s hip hop, 2000s hiphop, 00s hip hop, y2k rap, early 2000s rap, 2000s rap, g-funk, g funk, dr dre 2001, dirty south, crunk, snap music, timbaland, neptunes, pharrell beat, radio rap 2000s, bling era
+aliases: 2000s hip hop, 2000s hiphop, 00s hip hop, y2k rap, early 2000s rap, 2000s rap, g-funk, g funk, dr dre 2001, dirty south, crunk, snap music, timbaland, neptunes, pharrell beat, radio rap 2000s, bling era, rap, rap beat, hip hop, hip-hop, hiphop, hip hop beat
 tempo: 88-100 (East/West), 70-82 crunk (double-time feel), 92-105 Timbaland/Neptunes
 
 ## Summary
@@ -58,6 +58,14 @@ tempo: 88-100 (East/West), 70-82 crunk (double-time feel), 92-105 Timbaland/Nept
 
 ## Common mistakes
 - Boom-bap swing and dusty breaks (that is 90s); hats too busy and bright like 2010s trap; no distinct bass instrument; chords too jazzy; missing the snap/clap/tambourine layer; no hook figure; everything on the grid at the same velocity; kick without the click; snare without a clap; melodic elements filling every gap (2000s beats breathe).
+
+## Stable Audio loop prompts
+- loop: early 2000s hip hop drum loop at {bpm} BPM, fat 808 style kick with a hard knock, big cracking snare layered with a clap on 2 and 4, dry 16th hats, tambourine, programmed and tight, no melody
+- loop: West Coast G-funk drum groove at {bpm} BPM, round punchy kick with a bounce, layered snare and snap on 2 and 4, 8th hats with 16th pickups, hand claps, dry and punchy, no melody
+- loop: Timbaland style 2000s hip hop drums at {bpm} BPM, syncopated kick, gated snare, stuttering hi-hats, beatbox pops, sparse and bouncy, no melody
+- texture: G-funk synth lead and string pad bed with a whistling portamento lead, {bpm} BPM, 2000s hip hop, no drums
+- kick: TrackType: SFX, 2000s hip hop kick drum, round 808 body around 55 Hz with a hard MPC click, 450 ms decay, dry one-shot
+- snare: TrackType: SFX, big cracking 2000s hip hop snare layered with a clap, bright crack, short room, 300 ms
 
 ## Sources
 - https://www.redbull.com/au-en/dr-dre-2001-everything-you-need-to-know

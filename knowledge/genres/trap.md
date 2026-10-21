@@ -51,6 +51,14 @@ Trap, 130-170 BPM in half-time (snare on 3). Drums: clean punchy 808 kick, hard 
 ## Common mistakes
 - Snare on 2 and 4 at 140 (that becomes fast boom-bap); kick with its own sub colliding with the 808; hats at a constant velocity without rolls; 808 not tuned to the melody; melody filling every beat; no risers/transitions; no ad-libs; everything stereo-wide including the 808.
 
+## Stable Audio loop prompts
+- loop: trap drum loop at {bpm} BPM half time, booming 808 kick, sharp clap and snare on beat 3, fast hi-hats with triplet rolls and stutters, dark and hard, no melody
+- loop: Atlanta trap drums at {bpm} BPM half time, 808 kick pattern with slides, snare on 3, hi-hat rolls, open hat accents, rim clicks, menacing, no melody
+- loop: melodic trap drum groove at {bpm} BPM half time, soft 808, snappy clap, crisp hats with 32nd rolls, finger snaps, spacious, no melody
+- texture: dark trap bell and pad bed with a long reverb, {bpm} BPM, no drums
+- kick: TrackType: SFX, booming trap 808 kick drum, deep sub with a hard click, 500 ms decay, saturated, dry one-shot
+- snare: TrackType: SFX, sharp trap snare layered with a clap, bright crack, short and dry, 180 ms
+
 ## Sources
 - https://beatstorapon.com/blog/top-five-types-of-trap-beats/
 - https://futureproofmusicschool.com/blog/how-to-make-a-trap-beat-in-10-minutes

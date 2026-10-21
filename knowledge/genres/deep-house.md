@@ -48,6 +48,14 @@ Deep house, 120-124 BPM, swing 0.1-0.2 on hats. Drums: warm round 909/707-ish ki
 ## Common mistakes
 - Hard clicky EDM kick, no offbeat open hat (the house engine), bass on every kick, triad pads, no swing or shaker, trap-style drops, bright hats, 8-bar structures (house breathes in 16/32).
 
+## Stable Audio loop prompts
+- loop: deep house drum loop at {bpm} BPM, warm round 909 kick four on the floor, soft clap on 2 and 4, shuffled closed hats, open hat offbeats, light shaker, smooth and dusty, no melody
+- loop: classic deep house drums at {bpm} BPM, soft kick, snappy clap with a short room, swung 16th hats, rim click, warm analog, no melody
+- loop: late night deep house groove at {bpm} BPM, deep kick, subtle snare, offbeat open hats, congas, hypnotic, no melody
+- texture: warm detuned chord stab pad with slow filter movement, {bpm} BPM, deep house, dusty, no drums
+- kick: TrackType: SFX, warm round deep house kick drum, 909 style soft punch with a short sub, 400 ms decay, dry one-shot
+- snare: TrackType: SFX, soft deep house clap, warm layered hand claps, short room, 250 ms
+
 ## Sources
 - https://www.edmprod.com/how-to-make-classic-deep-house/
 - https://blog.native-instruments.com/how-to-make-a-deep-house-track/

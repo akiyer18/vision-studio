@@ -50,6 +50,14 @@ Afrobeats, 100-108 BPM, swing 0.15-0.25 (laid-back), perc-led. Drums: soft round
 ## Common mistakes
 - Four-on-the-floor kick; trap hats; no shaker/conga layer; straight grid without the lazy swing; static root bass; EDM-style drops; log drum used as a constant layer without space.
 
+## Stable Audio loop prompts
+- loop: Nigerian afrobeats drum loop at {bpm} BPM, soft round kick on a syncopated pattern, log drum and rim clicks, shakers and congas, offbeat snaps, warm and bouncy, no melody
+- loop: afropop percussion groove at {bpm} BPM, shekere shaker 16ths, conga slaps, woodblock, light kick, clean and sunny, no melody
+- loop: amapiano influenced afrobeats drums at {bpm} BPM, deep log drum bass hits, soft kick, rim shots, shakers, spacious, no melody
+- texture: warm highlife guitar and soft pad bed with shaker air, {bpm} BPM, afrobeats, no drums
+- kick: TrackType: SFX, soft round afrobeats kick drum, warm low thump, gentle attack, 350 ms decay, dry one-shot
+- snare: TrackType: SFX, afrobeats rim click snare, woody snap, short, 120 ms, dry
+
 ## Sources
 - https://violetrecording.com/how-to-make-afrobeats/
 - https://violetrecording.com/how-to-make-afrobeat-beats/

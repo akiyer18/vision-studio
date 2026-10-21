@@ -48,6 +48,14 @@ Dubstep, 140 BPM half-time: kick on 1 (and sync'd spots), snare on beat 3 (step 
 ## Common mistakes
 - Snare on 2 and 4 at 140; busy hats; one bass sound carrying sub and mids (muddy); no space in the drop; wobble at one rate all track; no drop silence/riser; melody over the drop at the same volume as the bass.
 
+## Stable Audio loop prompts
+- loop: dubstep drum loop at {bpm} BPM half time, heavy kick, huge snare on beat 3 with a long reverb, sparse hi-hats, sub drops, dark and spacious, no melody
+- loop: UK bass dubstep drums at {bpm} BPM half time, punchy kick, snare and rim layered on 3, shuffled hats, metallic percussion, deep, no melody
+- loop: brostep drum groove at {bpm} BPM half time, massive kick and snare, crash hits, snare rolls, aggressive, no melody
+- texture: dark dubstep sub drone with a wobbling LFO bass texture and reverb wash, {bpm} BPM, no drums
+- kick: TrackType: SFX, heavy dubstep kick drum, hard click with a deep sub body, 350 ms decay, saturated, dry one-shot
+- snare: TrackType: SFX, huge dubstep snare, bright crack layered with a clap, long reverb tail, 600 ms
+
 ## Sources
 - https://modeaudio.com/magazine/dubstep-5-production-essentials
 - https://emastered.com/blog/how-to-make-dubstep
