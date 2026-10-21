@@ -433,7 +433,12 @@ app.post('/api/tweak', async (req, res) => {
 });
 
 // ================= v3: the producer agent (Claude with tools) =================
-const chat = { history: [], recordings: { refs: [] } };   // attachments persist for the whole session
+const STATE_FILE = path.join(TMP, 'chat-state.json');
+const chat = { history: [], recordings: { refs: [] } };   // attachments persist for the whole session (and across restarts)
+try { Object.assign(chat, JSON.parse(await fs.readFile(STATE_FILE, 'utf8'))); if (chat.samples) lastBuild.samples = chat.samples; } catch {}
+lastBuild.samples ||= {};   // track name (lower) -> { samplePath, slotPath, role }
+async function saveChat() { try { await fs.writeFile(STATE_FILE, JSON.stringify({ history: chat.history.slice(-60), recordings: chat.recordings, samples: lastBuild.samples })); } catch (e) { console.warn('[state]', e.message); } }
+function rememberSound(trackName, samplePath, slotPath, role) { lastBuild.samples[String(trackName).toLowerCase()] = { samplePath, slotPath, role, at: Date.now() }; }
 const uploads = new Map();   // id -> wav path (this process only)
 
 app.post('/api/upload', upload.single('audio'), async (req, res) => {
@@ -519,7 +524,12 @@ function makeCtx(emit) {
     humToNotes: async (p, o) => (await import('./lib/melody.js')).humToNotes(p, o),
     live: {
       setTempo: async (bpm) => { const send = await liveClient(); const r = okOrThrow(await send({ cmd: 'set_tempo', bpm }), 'set_tempo'); lastBuild.bpm = bpm; return r; },
-      listTracks: async () => okOrThrow(await (await liveClient())({ cmd: 'list_tracks' }), 'list_tracks'),
+      listTracks: async () => {
+        const r = okOrThrow(await (await liveClient())({ cmd: 'list_tracks' }), 'list_tracks');
+        r.tracks = r.tracks.map((t) => { const s = lastBuild.samples[t.name.toLowerCase()]; return s ? { ...t, soundPath: s.samplePath, soundRole: s.role } : t; });
+        r.note = 'soundPath = the wav a track plays; pass it to listen / judge_sound';
+        return r;
+      },
       show: async () => { const send = await liveClient(); const r = await send({ cmd: 'show_view', view: 'Session' }); await send({ cmd: 'show_view', view: 'Detail/Clip' }); return r; },
       play: async () => (await liveClient())({ cmd: 'play' }),
       stop: async () => (await liveClient())({ cmd: 'stop' }),
@@ -528,7 +538,7 @@ function makeCtx(emit) {
         const send = await liveClient();
         const t = await ensureTrack(send, name);
         let load = null;
-        if (samplePath) load = await sendWithRetry(send, { cmd: 'load_sample', path: await toSlot(samplePath, instrument || name, 'Snare'), track: t.index });
+        if (samplePath) { const slotPath = await toSlot(samplePath, instrument || name, 'Snare'); load = await sendWithRetry(send, { cmd: 'load_sample', path: slotPath, track: t.index }); if (load?.ok) rememberSound(t.name, samplePath, slotPath, instrument || name); }
         const notes = stepsToNotes(steps, swing);
         const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.index, slot: Number(slot) || 0, length: bars * 4, notes, fire: true, name, show: false }), 'create_clip');
         lastBuild.tracks[instrument || name] = { index: t.index, name: t.name };
@@ -538,7 +548,7 @@ function makeCtx(emit) {
         const send = await liveClient();
         const t = await ensureTrack(send, name);
         let load = null;
-        if (samplePath) load = await sendWithRetry(send, { cmd: 'load_sample', path: await toSlot(samplePath, name, 'Synth'), track: t.index });
+        if (samplePath) { const slotPath = await toSlot(samplePath, name, 'Synth'); load = await sendWithRetry(send, { cmd: 'load_sample', path: slotPath, track: t.index }); if (load?.ok) rememberSound(t.name, samplePath, slotPath, 'synth'); }
         const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.index, slot: Number(slot) || 0, length: melodyBars(notes, bars) * 4, notes: melodyToLiveNotes(notes), fire: true, name, show: false }), 'create_clip');
         lastBuild.tracks[name.toLowerCase()] = { index: t.index, name: t.name };
         return { track: t, notes: notes.length, loadedSample: Boolean(load?.ok), loadError: load && !load.ok ? load.error : undefined, clip: clip.mode };
@@ -554,7 +564,19 @@ function makeCtx(emit) {
       // ---- hands: devices, mixer, scenes, arrangement (ADEHack v4 protocol) ----
       async loadDevice({ track, name, device }) { name = name || device; const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'load_device', track: t.index, name }), `load_device ${name}`); },
       async setParam({ track, device, param, value }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'set_device_param', track: t.index, device, param, value: Number(value) }), 'set_device_param'); },
-      async listDevices(arg) { const { track, params = true } = typeof arg === 'object' && arg ? arg : { track: arg }; const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'list_devices', track: t.index, params: Boolean(params) }), 'list_devices'); },
+      async listDevices(arg) {
+        const { track, params = true } = typeof arg === 'object' && arg ? arg : { track: arg };
+        const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`);
+        const r = okOrThrow(await send({ cmd: 'list_devices', track: t.index, params: Boolean(params) }), 'list_devices');
+        const known = lastBuild.samples[t.name.toLowerCase()];
+        for (const d of r.devices || []) {
+          if (/simpler|sampler/i.test(d.class_name || '')) {
+            const slotFile = path.join(OUT_DIR, `${d.name}.wav`);
+            d.soundPath = known?.samplePath || (await fs.access(slotFile).then(() => slotFile, () => undefined));
+          }
+        }
+        return r;
+      },
       async deleteDevice({ track, device }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); return okOrThrow(await send({ cmd: 'delete_device', track: t.index, device }), 'delete_device'); },
       async setMixer({ track, volume, pan, mute, solo, arm }) { const send = await liveClient(); const t = await trackByName(send, track); if (!t) throw new Error(`no track named ${track}`); const cmd = { cmd: 'set_mixer', track: t.index }; if (volume != null) cmd.volume = clamp(Number(volume), 0, 1); if (pan != null) cmd.pan = clamp(Number(pan), -1, 1); if (mute != null) cmd.mute = Boolean(mute); if (solo != null) cmd.solo = Boolean(solo); if (arm != null) cmd.arm = Boolean(arm); return okOrThrow(await send(cmd), 'set_mixer'); },
       createScene: async ({ name, index = -1 } = {}) => okOrThrow(await (await liveClient())({ cmd: 'create_scene', index, name }), 'create_scene'),
@@ -564,7 +586,9 @@ function makeCtx(emit) {
       async loadSample({ name, samplePath, role }) {
         const send = await liveClient();
         const t = await trackByName(send, name); if (!t) throw new Error(`no track named ${name}`);
-        const r = okOrThrow(await sendWithRetry(send, { cmd: 'load_sample', path: await toSlot(samplePath, role || name, 'Snare'), track: t.index }), 'load_sample');
+        const slotPath = await toSlot(samplePath, role || name, 'Snare');
+        const r = okOrThrow(await sendWithRetry(send, { cmd: 'load_sample', path: slotPath, track: t.index }), 'load_sample');
+        rememberSound(t.name, samplePath, slotPath, role || name);
         return { track: t, replaced: r.replaced, devices: r.devices };
       },
     },
@@ -576,7 +600,7 @@ app.post('/api/chat', async (req, res) => {
   const emit = (e) => res.write(`data: ${JSON.stringify(e)}\n\n`);
   try {
     const { text = '', beatId, humId, refIds = [], reset } = req.body || {};
-    if (reset) { chat.history = []; chat.recordings = { refs: [] }; }
+    if (reset) { chat.history = []; chat.recordings = { refs: [] }; await saveChat(); }
     if (!hasKey(process.env.ANTHROPIC_API_KEY)) throw new Error('ANTHROPIC_API_KEY is not set in .env (the producer agent needs Claude)');
     const { runProducer } = await import('./lib/agent.js');
     const attachedThisTurn = [];
@@ -589,6 +613,7 @@ app.post('/api/chat', async (req, res) => {
     const recordings = { ...chat.recordings, refs: chat.recordings.refs.length ? chat.recordings.refs : undefined, attachedThisTurn };
     const out = await runProducer({ history: chat.history, userText: String(text), recordings, ctx: makeCtx(emit) });
     chat.history = out.history;
+    await saveChat();
     emit({ type: 'text', text: out.text });
     emit({ type: 'done', tracks: lastBuild.tracks });
   } catch (e) {
@@ -597,7 +622,7 @@ app.post('/api/chat', async (req, res) => {
   }
   res.end();
 });
-app.post('/api/chat/reset', (_req, res) => { chat.history = []; res.json({ ok: true }); });
+app.post('/api/chat/reset', async (_req, res) => { chat.history = []; chat.recordings = { refs: [] }; await saveChat(); res.json({ ok: true }); });
 
 app.listen(PORT, () => {
   console.log(`ADE Hack running at http://localhost:${PORT}`);
