@@ -35,6 +35,7 @@ class ADEHack(ControlSurface):
         self._clients = []  # list of [socket, bytes_buffer]
         self._ramp = None
         self._ramp_id = 0
+        self._seq_id = 0
         with self.component_guard():
             try:
                 self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -642,167 +643,78 @@ class ADEHack(ControlSurface):
 
     def _cmd_arrangement_record(self, msg):
         song = self.song()
-        bars = msg.get('bars')
+        self._seq_id += 1          # cancels any running sequence / scheduled stop
+        seq_id = self._seq_id
         if msg.get('stop'):
-            song.record_mode = False
-            song.stop_playing()
+            self._finish_recording('stopped by request')
             return {'ok': True, 'recording': False}
+        scenes = msg.get('scenes')
+        if scenes:
+            all_scenes = list(song.scenes)
+            steps = []
+            for st in scenes:
+                index = int(st.get('index', 0))
+                bars = float(st.get('bars', 8))
+                if index < 0 or index >= len(all_scenes):
+                    return {'ok': False, 'error': 'scene index %d out of range (0..%d)' % (index, len(all_scenes) - 1)}
+                if bars <= 0:
+                    return {'ok': False, 'error': 'bars must be > 0'}
+                steps.append({'index': index, 'bars': bars})
+            total = sum(st['bars'] for st in steps)
+            song.record_mode = True
+            self._run_sequence(seq_id, steps, 0, 0.0)
+            return {'ok': True, 'recording': True, 'mode': 'scenes', 'tempo': float(song.tempo),
+                    'total_bars': total, 'steps_scheduled': len(steps),
+                    'sequence': [dict(st, at_seconds=self._bars_seconds(sum(x['bars'] for x in steps[:i])))
+                                 for i, st in enumerate(steps)],
+                    'stops_in_seconds': self._bars_seconds(total)}
+        bars = msg.get('bars')
         song.record_mode = True
         song.start_playing()
-        reply = {'ok': True, 'recording': True, 'tempo': song.tempo}
+        reply = {'ok': True, 'recording': True, 'mode': 'bars', 'tempo': float(song.tempo)}
         if bars:
-            seconds = float(bars) * 4.0 * 60.0 / float(song.tempo)
-            ticks = max(1, int(round(seconds * 10.0)))  # ~100 ms per tick
-            self.schedule_message(ticks, self._stop_recording)
+            seconds = self._bars_seconds(float(bars))
+            self.schedule_message(max(1, int(round(seconds * 10.0))), lambda: self._seq_stop(seq_id))
             reply['stops_in_seconds'] = seconds
         return reply
 
-    def _stop_recording(self):
-        try:
-            self.song().record_mode = False
-            self.song().stop_playing()
-            self.log_message('ADEHack: arrangement recording stopped')
-        except Exception as e:
-            self.log_message('ADEHack: stop recording failed: %r' % (e,))
+    def _bars_seconds(self, bars):
+        return float(bars) * 4.0 * 60.0 / float(self.song().tempo)
 
-    # --------------------------------------------------------------- v5: clips
-    def _live_enum(self, enum_name, value):
-        """Live's enums are Boost.Python enums: convert an int to Live.Song.<Enum>.values[int]."""
-        try:
-            enum = getattr(Live.Song, enum_name)
-            return enum.values[int(value)]
-        except Exception:
-            return value
-
-    def _cmd_clip_edit(self, msg):
-        track = self._track(msg.get('track', 'selected'))
-        slot_index = int(msg.get('slot', 0))
-        slot = track.clip_slots[slot_index]
-        if not slot.has_clip:
-            return {'ok': False, 'error': 'no clip in %s slot %d' % (track.name, slot_index)}
-        clip = slot.clip
-        done, errors = [], {}
-
-        def op(label, fn):
-            try:
-                fn()
-                done.append(label)
-            except Exception as e:
-                errors[label] = '%s: %s' % (e.__class__.__name__, e)
-                self.log_message('ADEHack: clip_edit %s failed: %r' % (label, e))
-
-        if msg.get('quantize'):
-            q = msg['quantize']
-            grid = self._live_enum('RecordingQuantization', q.get('grid', 5))  # 5 = 1/16
-            amount = max(0.0, min(1.0, float(q.get('amount', 1.0))))
-            op('quantize', lambda: clip.quantize(grid, amount))
-        if msg.get('duplicate_loop'):
-            op('duplicate_loop', clip.duplicate_loop)
-        if msg.get('crop'):
-            op('crop', clip.crop)
-        if msg.get('loop_start') is not None or msg.get('loop_end') is not None:
-            def set_loop():
-                start = float(msg.get('loop_start', clip.loop_start))
-                end = float(msg.get('loop_end', clip.loop_end))
-                for order in (('end_marker', 'loop_end', 'loop_start', 'start_marker'),
-                              ('loop_start', 'start_marker', 'loop_end', 'end_marker')):
-                    try:
-                        for attr in order:
-                            setattr(clip, attr, end if attr in ('end_marker', 'loop_end') else start)
-                        return
-                    except Exception:
-                        continue
-                raise ValueError('could not set loop %r..%r' % (start, end))
-            op('loop', set_loop)
-        if msg.get('color_index') is not None:
-            op('color_index', lambda: setattr(clip, 'color_index', int(msg['color_index'])))
-        if msg.get('name'):
-            op('name', lambda: setattr(clip, 'name', u'%s' % (msg['name'],)))
-        state = {}
-        for attr in ('name', 'length', 'loop_start', 'loop_end', 'color_index', 'is_playing'):
-            try:
-                v = getattr(clip, attr)
-                state[attr] = v if isinstance(v, (int, float, bool)) else u'%s' % (v,)
-            except Exception:
-                pass
-        return {'ok': not errors or bool(done), 'track': track.name, 'slot': slot_index,
-                'done': done, 'errors': errors, 'clip': state}
-
-    # ----------------------------------------------------------- v5: transport
-    def _transport_state(self):
-        song = self.song()
-        state = {'tempo': float(song.tempo), 'is_playing': bool(song.is_playing)}
-        for attr in ('metronome', 'loop', 'loop_start', 'loop_length', 'swing_amount',
-                     'clip_trigger_quantization', 'can_capture_midi'):
-            try:
-                v = getattr(song, attr)
-                state[attr] = v if isinstance(v, (bool, float)) else int(v)
-            except Exception:
-                pass
-        if self._ramp is not None:
-            state['tempo_ramp'] = {'to': self._ramp['to'], 'remaining_ticks': self._ramp['ticks']}
-        return state
-
-    def _cmd_transport_setup(self, msg):
-        song = self.song()
-        done, errors = [], {}
-
-        def op(label, fn):
-            try:
-                fn()
-                done.append(label)
-            except Exception as e:
-                errors[label] = '%s: %s' % (e.__class__.__name__, e)
-                self.log_message('ADEHack: transport_setup %s failed: %r' % (label, e))
-
-        if msg.get('metronome') is not None:
-            op('metronome', lambda: setattr(song, 'metronome', bool(msg['metronome'])))
-        if msg.get('loop_start') is not None:
-            op('loop_start', lambda: setattr(song, 'loop_start', float(msg['loop_start'])))
-        if msg.get('loop_length') is not None:
-            op('loop_length', lambda: setattr(song, 'loop_length', float(msg['loop_length'])))
-        if msg.get('loop') is not None:
-            op('loop', lambda: setattr(song, 'loop', bool(msg['loop'])))
-        if msg.get('launch_quantization') is not None:
-            op('launch_quantization', lambda: setattr(
-                song, 'clip_trigger_quantization',
-                self._live_enum('Quantization', int(msg['launch_quantization']))))
-        if msg.get('swing') is not None:
-            op('swing', lambda: setattr(song, 'swing_amount', max(0.0, min(1.0, float(msg['swing'])))))
-        if msg.get('tempo') is not None and not msg.get('tempo_ramp'):
-            op('tempo', lambda: setattr(song, 'tempo', float(msg['tempo'])))
-        if msg.get('tempo_ramp'):
-            op('tempo_ramp', lambda: self._start_ramp(msg['tempo_ramp']))
-        return {'ok': not errors or bool(done), 'done': done, 'errors': errors,
-                'state': self._transport_state()}
-
-    def _start_ramp(self, spec):
-        song = self.song()
-        to = float(spec['to'])
-        seconds = max(0.1, float(spec.get('seconds', 4.0)))
-        ticks = max(1, int(round(seconds * 10.0)))
-        self._ramp_id += 1  # invalidates any running ramp's scheduled callbacks
-        self._ramp = {'id': self._ramp_id, 'to': to, 'ticks': ticks,
-                      'step': (to - float(song.tempo)) / float(ticks)}
-        self.schedule_message(1, lambda: self._ramp_tick(self._ramp_id))
-
-    def _ramp_tick(self, ramp_id):
-        ramp = self._ramp
-        if ramp is None or ramp['id'] != ramp_id:
-            return  # cancelled / replaced
+    def _run_sequence(self, seq_id, steps, i, elapsed_bars):
+        """Fire steps[i] now, schedule the next fire slightly EARLY so Live's launch
+        quantization snaps it onto the bar, and the final stop slightly late."""
+        if seq_id != self._seq_id:
+            return  # replaced by a newer call
         try:
             song = self.song()
-            ramp['ticks'] -= 1
-            if ramp['ticks'] <= 0:
-                song.tempo = ramp['to']
-                self._ramp = None
-                self.log_message('ADEHack: tempo ramp done at %.2f' % ramp['to'])
-                return
-            song.tempo = float(song.tempo) + ramp['step']
-            self.schedule_message(1, lambda: self._ramp_tick(ramp_id))
+            st = steps[i]
+            list(song.scenes)[st['index']].fire()
+            self.log_message('ADEHack: sequence step %d -> scene %d for %s bars' % (i, st['index'], st['bars']))
+            ticks = max(1, int(round(self._bars_seconds(st['bars']) * 10.0)))
+            if i + 1 < len(steps):
+                self.schedule_message(max(1, ticks - 2),
+                                      lambda: self._run_sequence(seq_id, steps, i + 1, elapsed_bars + st['bars']))
+            else:
+                self.schedule_message(ticks + 1, lambda: self._seq_stop(seq_id))
         except Exception as e:
-            self.log_message('ADEHack: tempo ramp error: %r' % (e,))
-            self._ramp = None
+            self.log_message('ADEHack: sequence error: %r' % (e,))
+            self._finish_recording('sequence error %r' % (e,))
+
+    def _seq_stop(self, seq_id):
+        if seq_id != self._seq_id:
+            return
+        self._finish_recording('done')
+
+    def _finish_recording(self, why):
+        try:
+            song = self.song()
+            song.record_mode = False
+            song.stop_playing()
+            self._show_view('Arranger')
+            self.log_message('ADEHack: arrangement recording finished (%s)' % (why,))
+        except Exception as e:
+            self.log_message('ADEHack: stop recording failed: %r' % (e,))
 
     def _show_view(self, name):
         try:
