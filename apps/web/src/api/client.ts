@@ -6,6 +6,7 @@ import type { TurnResponse } from "../types/turn_response.ts"
 
 export type RenderRequest = {
   session_id: string
+  prompts?: { layer: string; prompt: string; negative: string }[]
 }
 
 export type RegenerateRequest = {

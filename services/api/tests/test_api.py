@@ -13,6 +13,43 @@ from api.main import create_app
 from api.renderer import MockRenderer
 
 
+def test_render_uses_edited_prompt_text(tmp_path: Path) -> None:
+    app = create_app(tmp_path / "data")
+    seen: list[tuple[str, str, str]] = []
+    inner = app.state.renderer
+
+    class Recording:
+        def render(self, job: RenderJob, chords: list[str]):
+            seen.append((job.layer, job.prompt, job.negative))
+            return inner.render(job, chords)
+
+    app.state.renderer = Recording()
+    with TestClient(app) as client:
+        turn = client.post(
+            "/turn",
+            json={
+                "session_id": "edited",
+                "text": "I feel sad in the rain",
+                "output": ["drums"],
+                "overrides": {"key": "D minor", "style": "a piano ballad"},
+            },
+        )
+        assert turn.status_code == 200
+        assert turn.json()["status"] == "ready"
+        rendered = client.post(
+            "/render",
+            json={
+                "session_id": "edited",
+                "prompts": [{"layer": "drums", "prompt": "edited drums prompt", "negative": "no hats"}],
+            },
+        )
+    assert rendered.status_code == 200
+    drums = [item for item in seen if item[0] == "drums"]
+    assert drums
+    assert {item[1] for item in drums} == {"edited drums prompt"}
+    assert {item[2] for item in drums} == {"no hats"}
+
+
 def test_turn_render_and_export_match_the_bar_length(tmp_path: Path) -> None:
     data = tmp_path / "data"
     with TestClient(create_app(data)) as client:

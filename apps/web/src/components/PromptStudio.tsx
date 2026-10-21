@@ -1,24 +1,79 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 
+import { ApiError, render } from "../api/client.ts"
+import { postTurn } from "../conversation/postTurn.ts"
+import { barsFromStructure, bpmFromPrompt, clipLength } from "../studio/output.ts"
 import { useStudio } from "../state/studio.ts"
+import type { OutputChoice } from "../types/output_choice.ts"
+import { Button } from "./Button.tsx"
+import { OutputPicker } from "./OutputPicker.tsx"
+import { PromptCard } from "./PromptCard.tsx"
 
 export function PromptStudio() {
   const turn = useStudio((state) => state.turn)
+  const edits = useStudio((state) => state.promptEdits)
+  const editPrompt = useStudio((state) => state.editPrompt)
+  const resetPrompt = useStudio((state) => state.resetPrompt)
+  const setRenders = useStudio((state) => state.setRenders)
+  const setStatus = useStudio((state) => state.setStatus)
   const heading = useRef<HTMLHeadingElement>(null)
   const moved = useRef<typeof turn>(null)
+  const busy = useRef(false)
+  const [error, setError] = useState<string | null>(null)
+  const ready = turn?.status === "ready"
+  const prompts = ready ? (turn.prompts ?? []) : []
 
   useEffect(() => {
-    if (turn?.status !== "ready" || moved.current === turn) return
+    if (!ready || moved.current === turn) return
     moved.current = turn
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches
     heading.current?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "nearest" })
     heading.current?.focus()
-  }, [turn])
+  }, [ready, turn])
 
-  const prompts = turn?.status === "ready" ? (turn.prompts ?? []) : []
+  function choose(choice: OutputChoice) {
+    if (busy.current) return
+    busy.current = true
+    setError(null)
+    void postTurn({ output: [choice] })
+      .catch((err: unknown) => {
+        const message = err instanceof ApiError ? err.message : "That did not go through. Try again."
+        setError(message.trim().length < 160 ? message : "That did not go through. Try again.")
+      })
+      .finally(() => {
+        busy.current = false
+      })
+  }
+
+  async function send() {
+    if (busy.current || prompts.length === 0) return
+    busy.current = true
+    setError(null)
+    setStatus("working")
+    try {
+      const sessionId = useStudio.getState().sessionId
+      const current = useStudio.getState().promptEdits
+      const results = await render({
+        session_id: sessionId,
+        prompts: prompts.map((item) => ({
+          layer: item.layer,
+          prompt: current[item.layer]?.prompt ?? item.prompt,
+          negative: current[item.layer]?.negative ?? item.negative,
+        })),
+      })
+      setRenders(results)
+      setStatus("ready")
+    } catch (err) {
+      setStatus("error")
+      const message = err instanceof ApiError ? err.message : "That did not go through. Try again."
+      setError(message.trim().length < 160 ? message : "That did not go through. Try again.")
+    } finally {
+      busy.current = false
+    }
+  }
 
   return (
-    <section>
+    <section className="flex flex-col gap-3">
       <h2
         id="prompt-studio"
         ref={heading}
@@ -28,17 +83,51 @@ export function PromptStudio() {
         Prompt studio
       </h2>
       {prompts.length === 0 ? (
-        <p className="mt-2 text-sm text-dust">Prompts land here when the brief is ready.</p>
+        <p className="text-sm text-dust">Prompts land here when the brief is ready.</p>
       ) : (
-        <ul className="mt-3 flex flex-col gap-3">
-          {prompts.map((prompt) => (
-            <li key={prompt.layer}>
-              <p className="font-serif text-lg capitalize">{prompt.layer}</p>
-              <p className="text-sm text-dust">{prompt.prompt}</p>
-            </li>
-          ))}
-        </ul>
+        <>
+          <OutputPicker value={turn?.brief.output ?? []} onChange={choose} />
+          <p className="text-sm text-signal-violet">{theoryLine(turn)}</p>
+          <div className="flex flex-col gap-3">
+            {prompts.map((item) => {
+              const edit = edits[item.layer]
+              return (
+                <PromptCard
+                  key={item.layer}
+                  original={item}
+                  prompt={edit?.prompt ?? item.prompt}
+                  negative={edit?.negative ?? item.negative}
+                  onPrompt={(value) => editPrompt(item.layer, "prompt", value)}
+                  onNegative={(value) => editPrompt(item.layer, "negative", value)}
+                  onReset={() => resetPrompt(item.layer)}
+                />
+              )
+            })}
+          </div>
+          {error ? (
+            <p role="alert" className="text-sm text-clip-red">
+              {error}
+            </p>
+          ) : null}
+          <Button className="w-full text-base" onClick={() => void send()}>
+            Send to Stable Audio
+          </Button>
+        </>
       )}
     </section>
   )
+}
+
+function theoryLine(turn: NonNullable<ReturnType<typeof useStudio.getState>["turn"]> | null): string {
+  const progression = turn?.progression
+  const key = turn?.brief.slots.key?.value
+  const bars = barsFromStructure(turn?.brief.slots.structure?.value)
+  const bpm = bpmFromPrompt(turn?.prompts?.[0]?.prompt ?? "")
+  const parts = [
+    progression?.roman.join(" "),
+    progression?.chords.join(" "),
+    key,
+    bpm ? clipLength(bars, bpm) : null,
+  ].filter((part): part is string => Boolean(part))
+  return parts.join(" · ")
 }

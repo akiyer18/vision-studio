@@ -37,8 +37,15 @@ _BARS = re.compile(r"(\d+)")
 _BPM = re.compile(r"(\d+)\s+BPM")
 
 
+class PromptText(BaseModel):
+    layer: str
+    prompt: str
+    negative: str
+
+
 class RenderBody(BaseModel):
     session_id: str
+    prompts: list[PromptText] | None = None
 
 
 class RegenerateBody(BaseModel):
@@ -126,6 +133,8 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     @app.post("/render", response_model=list[RenderResult])
     def render(body: RenderBody, request: Request) -> list[RenderResult]:
         record = _ready(request, body.session_id)
+        if body.prompts:
+            record.prompts = _apply_prompt_text(record.prompts, body.prompts)
         _write_midi(request.app.state.data_root, body.session_id, record)
         rendered: list[RenderResult] = []
         for prompt in record.prompts:
@@ -213,6 +222,18 @@ def _record(response: TurnResponse) -> SessionRecord:
         world=slots.world.value,
         key=slots.key.value,
     )
+
+
+def _apply_prompt_text(prompts: list[LayerPrompt], edits: list[PromptText]) -> list[LayerPrompt]:
+    by_layer = {item.layer: item for item in edits}
+    updated: list[LayerPrompt] = []
+    for prompt in prompts:
+        edit = by_layer.get(prompt.layer)
+        if edit is None:
+            updated.append(prompt)
+            continue
+        updated.append(prompt.model_copy(update={"prompt": edit.prompt, "negative": edit.negative}))
+    return updated
 
 
 def _ready(request: Request, session_id: str) -> SessionRecord:

@@ -31,7 +31,7 @@ export function Shell() {
           </div>
         </div>
       </header>
-      <main className="grid flex-1 gap-4 p-4 desk:grid-cols-[22rem_minmax(0,1fr)_20rem]">
+      <main className="grid flex-1 gap-4 p-4 desk:grid-cols-[22rem_minmax(0,1fr)_minmax(20rem,28rem)]">
         <GlassPanel className="min-w-0">
           <InputPanel />
         </GlassPanel>
