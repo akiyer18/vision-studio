@@ -160,6 +160,30 @@
     </div>
     <div class="chips" id="c-refs"></div>
   </section>
+  <details class="wide" id="lab"><summary>Prompt Lab: pick a genre, edit the Stability prompt and parameters, generate, get a strict authenticity score, use it as a kit</summary>
+  <section class="wide">
+    <div class="row3">
+      <div><label>Genre blueprint</label><select id="l-genre"></select></div>
+      <div><label>Model</label><select id="l-model"><option value="stable-audio-3">Stable Audio 3 (async, best for loops)</option><option value="stable-audio-2.5">Stable Audio 2.5 (fast)</option></select></div>
+      <div><label>Kind</label><select id="l-kind"><option value="drums">Drum loop (TrackType: Instrument)</option><option value="texture">Texture (Instrument)</option><option value="music">Full mix (TrackType: Music)</option></select></div>
+    </div>
+    <label>Prompt body (the server adds the TrackType tag; {bpm} is replaced)</label>
+    <textarea id="l-prompt" style="min-height:64px"></textarea>
+    <div class="chips" id="l-presets"></div>
+    <div class="row3">
+      <div><label>BPM</label><input type="text" id="l-bpm" value="122" /></div>
+      <div><label>Bars</label><input type="text" id="l-bars" value="2" /></div>
+      <div><label>Steps (2.5: 4–8 · 3: 4–8)</label><input type="text" id="l-steps" value="8" /></div>
+    </div>
+    <div class="row3">
+      <div><label>CFG scale (1–25, default 1)</label><input type="text" id="l-cfg" value="1" /></div>
+      <div><label>Seed (0 = random)</label><input type="text" id="l-seed" value="0" /></div>
+      <div><label>&nbsp;</label><button class="primary" id="l-go" style="width:100%">Generate + score</button></div>
+    </div>
+    <div class="status" id="l-status"></div>
+    <div class="results" id="l-results"></div>
+  </section>
+  </details>
   <details class="wide" id="quick"><summary>One-button build (no conversation): describe or record, press once)</summary>
   <section class="wide easy">
     <h2>What's in your head?</h2>
@@ -876,6 +900,40 @@ async function recoverLastTurn(tools, body) {
   }
   return false;
 }
+// ---------- Prompt Lab ----------
+(async () => {
+  try {
+    const k = await (await fetch('/api/knowledge')).json();
+    for (const g of k.genres) { const o = document.createElement('option'); o.value = g.slug; o.textContent = g.title.slice(0, 48); $('l-genre').appendChild(o); }
+    $('l-genre').value = k.genres.find(g => g.slug === 'deep-house') ? 'deep-house' : k.genres[0].slug;
+    await loadLabGenre();
+  } catch (e) { $('l-status').textContent = 'knowledge base not available: ' + e.message; }
+})();
+async function loadLabGenre() {
+  const bp = await (await fetch('/api/knowledge/' + $('l-genre').value)).json();
+  const tempo = (bp.tempo || '').match(/\d+/); if (tempo) $('l-bpm').value = tempo[0];
+  $('l-presets').innerHTML = '';
+  const bodies = bp.prompts ? [...bp.prompts.loops, bp.prompts.texture].filter(Boolean) : [];
+  bodies.forEach((b, i) => { const c = document.createElement('span'); c.className = 'chip'; c.textContent = (i < 3 ? `loop ${i + 1}: ` : 'texture: ') + b.slice(0, 70) + '…'; c.title = b; c.onclick = () => { $('l-prompt').value = b; $('l-kind').value = i < 3 ? 'drums' : 'texture'; }; $('l-presets').appendChild(c); });
+  if (bodies[0]) $('l-prompt').value = bodies[0];
+}
+$('l-genre').onchange = loadLabGenre;
+$('l-go').onclick = async () => {
+  $('l-go').disabled = true; setStatus('l-status', 'Generating with Stability, then Gemini scores it against the blueprint… (20–60 s)');
+  const body = { prompt: $('l-prompt').value, model: $('l-model').value, kind: $('l-kind').value, bpm: Number($('l-bpm').value), bars: Number($('l-bars').value), steps: Number($('l-steps').value) || undefined, cfgScale: Number($('l-cfg').value) || undefined, seed: Number($('l-seed').value) || undefined, genre: $('l-genre').value };
+  const r = await postJson('/api/lab/generate', body);
+  $('l-go').disabled = false;
+  if (!r.ok) return setStatus('l-status', r.error, true);
+  const sc = r.score || {};
+  const dims = sc.dimensions ? Object.entries(sc.dimensions).map(([k, v]) => `${k} ${v}`).join(' · ') : '';
+  setStatus('l-status', sc.overall != null ? `Authenticity ${sc.overall}/10 · ${sc.verdict}` : (sc.error ? 'score failed: ' + sc.error : 'generated'));
+  const card = fileCard({ name: r.url.split('/').pop(), url: r.url, path: r.path, kind: 'loop' }, `<div class="path" style="white-space:pre-wrap">${dims}\n${sc.why || ''}${(sc.markersMissing || []).length ? '\nmissing: ' + sc.markersMissing.join('; ') : ''}${sc.fixPrompt ? '\nsuggested prompt: ' + sc.fixPrompt : ''}\nseed ${r.seed} · ${r.prompt}</div>`);
+  const use = document.createElement('button'); use.textContent = '→ Live as kit'; use.title = 'slice this loop into a Drum Rack and play its groove';
+  use.onclick = async () => { use.disabled = true; use.textContent = 'building…'; const u = await postJson('/api/lab/use-kit', { path: r.path, bpm: body.bpm, bars: body.bars }); use.textContent = u.ok ? '✓ in Live' : '→ Live as kit'; if (!u.ok) setStatus('l-status', u.error, true); use.disabled = false; };
+  const tryFix = document.createElement('button'); tryFix.textContent = 'use suggested prompt'; tryFix.style.display = sc.fixPrompt ? '' : 'none'; tryFix.onclick = () => { $('l-prompt').value = sc.fixPrompt; };
+  card.querySelector('.top span:last-child').append(use, tryFix);
+  $('l-results').prepend(card);
+};
 addBot('Hi. Tell me what you hear, or beatbox a beat and hum a melody, and I\'ll build it in Live layer by layer. I\'ll tell you what I did and what to try next.');
 </script>
 </body>

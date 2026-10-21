@@ -793,9 +793,8 @@ function makeCtx(emit) {
           const loop = await this.generateLoop({ prompt: body, bpm, bars, kind: 'drums' });
           let judged = { verdict: null, score: null, why: 'ears unavailable' };
           try {
-            const c = await ears.critiqueMix(loop.loop.path, undefined, { genreTarget: target });
-            const score = c.styleAccuracy?.verdict === 'on target' ? 9 : c.styleAccuracy?.verdict === 'close' ? 6 : c.styleAccuracy?.verdict === 'off' ? 3 : null;
-            judged = { verdict: c.styleAccuracy?.verdict || null, score, why: c.styleAccuracy?.why || c.styleRead || '', drums: c.drums };
+            const sc = await ears.scoreGenre(loop.loop.path, { genreTarget: target });
+            judged = { verdict: sc.verdict, score: sc.overall, why: sc.why, dimensions: sc.dimensions, markersMissing: sc.markersMissing, fixPrompt: sc.fixPrompt };
           } catch (e) { judged.why = `ears: ${e.message.slice(0, 120)}`; }
           cands.push({ path: loop.loop.path, url: loop.loop.url, prompt: body, kit: loop.kit, ...judged });
           if (judged.score >= 9) break;
@@ -853,7 +852,7 @@ function makeCtx(emit) {
         const res = await textToAudio({ prompt: full, duration: seconds, model: LOOP_MODEL });
         const f = await publish(res.buffer, `${(bp?.slug || genre || 'track').replace(/[^a-z0-9]+/gi, '-')}-track`, '.wav', 'loop');
         let judged = { verdict: null, score: null, why: 'ears unavailable' };
-        if (target) { stage('Gemini judging authenticity'); try { const c = await ears.critiqueMix(f.path, undefined, { genreTarget: target }); judged = { verdict: c.styleAccuracy?.verdict || null, score: c.styleAccuracy?.verdict === 'on target' ? 9 : c.styleAccuracy?.verdict === 'close' ? 6 : c.styleAccuracy?.verdict === 'off' ? 3 : null, why: c.styleAccuracy?.why || c.styleRead || '', styleRead: c.styleRead }; } catch (e) { judged.why = `ears: ${e.message.slice(0, 100)}`; } }
+        if (target) { stage('Gemini judging authenticity (strict rubric)'); try { const sc = await ears.scoreGenre(f.path, { genreTarget: target }); judged = { verdict: sc.verdict, score: sc.overall, why: sc.why, dimensions: sc.dimensions, markersMissing: sc.markersMissing, fixPrompt: sc.fixPrompt }; } catch (e) { judged.why = `ears: ${e.message.slice(0, 100)}`; } }
         cands.push({ path: f.path, url: f.url, prompt: full, ...judged });
         if (judged.verdict !== 'off') break;
       }
@@ -1342,6 +1341,45 @@ app.post('/api/refine', async (req, res) => {
 app.get('/api/settings', (_req, res) => res.json(chat.settings));
 app.post('/api/settings', async (req, res) => { chat.settings = { ...chat.settings, ...(req.body || {}) }; await saveChat(); res.json(chat.settings); });
 app.get('/api/explanations', (_req, res) => res.json(lastBuild.explanations || {}));
+// ---- Prompt Lab: pick a genre, edit the Stability prompt + parameters, generate, get a strict rubric score, use as kit ----
+app.get('/api/knowledge', async (_req, res) => {
+  try { const k = await import('./lib/knowledge.js'); res.json({ genres: k.listGenres().map((slug) => { const bp = k.getBlueprint(slug); return { slug, title: bp.title, tempo: bp.tempo || null }; }) }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/knowledge/:slug', async (req, res) => {
+  try { const k = await import('./lib/knowledge.js'); const bp = k.getBlueprint(req.params.slug); const lp = k.getLoopPrompts ? k.getLoopPrompts(req.params.slug) : null; res.json({ ...bp, prompts: lp ? { loops: lp.loops, texture: lp.texture, oneshots: lp.oneshots } : null, presets: k.getPresets ? k.getPresets(req.params.slug) : null }); }
+  catch (e) { res.status(404).json({ error: e.message }); }
+});
+app.post('/api/lab/generate', async (req, res) => {
+  try {
+    const { prompt, model = LOOP_MODEL, bpm = 120, bars = 2, steps, cfgScale, seed, genre, kind = 'drums' } = req.body || {};
+    if (!prompt) throw new Error('prompt required');
+    const seconds = clamp(Math.ceil(clamp(Number(bars), 1, 16) * 4 * 60 / clamp(Number(bpm), 40, 300)) + 1, 6, 180);
+    const body = String(prompt).replace(/\{bpm\}/g, String(Math.round(bpm))).replace(/^(TrackType|Genre|Format):[^,]+,\s*/i, '');
+    const full = `TrackType: ${kind === 'music' ? 'Music' : 'Instrument'}, ${body}`;
+    const result = await textToAudio({ prompt: full, duration: seconds, model, ...(steps ? { steps: Number(steps) } : {}), ...(cfgScale ? { cfg_scale: Number(cfgScale) } : {}), ...(seed ? { seed: Number(seed) } : {}) });
+    const f = await publish(result.buffer, `lab-${(genre || kind).replace(/[^a-z0-9]+/gi, '-')}`, '.wav', 'loop');
+    let score = null;
+    if (genre) { try { const k = await import('./lib/knowledge.js'); const slug = k.matchGenre(genre) || genre; const bp = k.getBlueprint(slug); const markers = (bp.markdown.match(/^- .*$/gm) || []).filter((l) => /kick|snare|hat|bass|swing|clap|perc|chord/i.test(l)).slice(0, 10).map((l) => l.replace(/^- /, '').slice(0, 90)); score = await (await import('./lib/ears.js')).scoreGenre(f.path, { genreTarget: `${bp.title}: ${bp.summary}`, markers }); } catch (e) { score = { error: e.message }; } }
+    res.json({ path: f.path, url: f.url, prompt: full, seed: result.seed, seconds, model, score });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/score', async (req, res) => {
+  try { const { path: p, genre } = req.body || {}; if (!audioPathOk(p)) throw new Error('path outside project audio'); const k = await import('./lib/knowledge.js'); const slug = k.matchGenre(genre || '') || genre; const bp = slug ? k.getBlueprint(slug) : null; res.json(await (await import('./lib/ears.js')).scoreGenre(p, { genreTarget: bp ? `${bp.title}: ${bp.summary}` : genre })); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/lab/use-kit', async (req, res) => {
+  try {
+    const { path: p, bpm = lastBuild.bpm || 120, bars = 2, name = 'Drums' } = req.body || {};
+    const ctx = makeCtx(() => {});
+    const kit = await ctx.sliceKitFromAudio(p, { name: 'lab' });
+    const r = await ctx.loopToPattern(p, { bpm, bars });
+    ctx.setGroove(r.groove);
+    lastBuild.bpm = Number(bpm);
+    const built = await ctx.live.buildKit({ name, kit: kit.kit.filter((k) => !k.alt), pattern: r.pattern, bars, slot: 0 });
+    res.json({ kit: kit.kit.map((k) => k.kind), pattern: r.pattern.lanes.map((l) => `${l.instrument}:${l.steps.length}`), built });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.post('/api/loop-pattern', async (req, res) => {   // Stability loop (or any drum audio) -> MIDI pattern + groove
   try { const ctx = makeCtx(() => {}); res.json(await ctx.loopToPattern(String(req.body?.path || ''), { bpm: Number(req.body?.bpm) || lastBuild.bpm || 120, bars: Number(req.body?.bars) || 2 })); }
   catch (e) { res.status(500).json({ error: e.message }); }
