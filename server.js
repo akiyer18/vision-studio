@@ -1498,7 +1498,7 @@ async function runChatTurn(req, res, emit0) {
   const beat = setInterval(() => { try { res.write(': keepalive\n\n'); } catch {} }, 15000);   // SSE comment, keeps proxies/browsers from idling the stream
   try {
     const { text = '', beatId, humId, refIds = [], reset } = req.body || {};
-    if (reset) { chat.history = []; chat.recordings = { refs: [] }; lastBuild.samples = {}; lastBuild.tracks = {}; await saveChat(); }
+    if (reset) { resetSession(); await saveChat(); }
     if (!hasKey(process.env.ANTHROPIC_API_KEY)) throw new Error('ANTHROPIC_API_KEY is not set in .env (the producer agent needs Claude)');
     const { runProducer } = await import('./lib/agent.js');
     await reconcileHistory();
@@ -1557,7 +1557,12 @@ async function runChatTurn(req, res, emit0) {
   res.end();
 }
 app.get('/api/chat/last', (_req, res) => res.json(turns.last ? { ...turns.last, events: turns.last.events.slice(-200) } : { status: 'none' }));
-app.post('/api/chat/reset', async (_req, res) => { chat.history = []; chat.recordings = { refs: [] }; lastBuild.samples = {}; lastBuild.tracks = {}; await saveChat(); res.json({ ok: true }); });
+function resetSession() {   // a true fresh start: nothing remembered about the previous set, sounds, style or project
+  chat.history = []; chat.recordings = { refs: [] };
+  for (const k of ['samples', 'tracks', 'clips', 'soundHistory']) lastBuild[k] = {};
+  for (const k of ['groove', 'melody', 'project', 'reference', 'genreTarget', 'lastCapture', 'lastRender', 'bpm']) lastBuild[k] = null;
+}
+app.post('/api/chat/reset', async (_req, res) => { resetSession(); await saveChat(); res.json({ ok: true }); });
 
 app.use((err, req, res, _next) => {   // multer limits, bad JSON, anything thrown synchronously -> JSON, not HTML
   console.error('[http]', err.message);
