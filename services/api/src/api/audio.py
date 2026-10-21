@@ -14,7 +14,7 @@ SR = 44100
 UPLOAD_LIMIT = 50 * 1024 * 1024
 SECTION = "verse"
 _SESSION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
-_CONVERT = {".webm", ".opus", ".ogg", ".weba"}
+_CONVERT = {".webm", ".opus", ".ogg", ".weba", ".mp3", ".m4a", ".mp4", ".aac"}
 _MAJOR = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
 _MINOR = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
 _NAMES = ("C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B")
@@ -80,7 +80,7 @@ def needs_conversion(filename: str, content_type: str | None) -> bool:
     if Path(filename).suffix.lower() in _CONVERT:
         return True
     kind = (content_type or "").lower()
-    return any(token in kind for token in ("webm", "opus", "ogg"))
+    return any(token in kind for token in ("webm", "opus", "ogg", "mpeg", "mp3", "mp4", "m4a"))
 
 
 def convert_to_wav(source: Path, dest: Path) -> None:

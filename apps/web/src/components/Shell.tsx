@@ -1,4 +1,5 @@
 import { GlassPanel } from "./GlassPanel.tsx"
+import { InputPanel } from "./InputPanel.tsx"
 import { SessionMark } from "./SessionMark.tsx"
 import { useStudio } from "../state/studio.ts"
 
@@ -27,10 +28,9 @@ export function Shell() {
           </div>
         </div>
       </header>
-      <main className="grid flex-1 gap-4 p-4 desk:grid-cols-[16rem_minmax(0,1fr)_20rem]">
+      <main className="grid flex-1 gap-4 p-4 desk:grid-cols-[22rem_minmax(0,1fr)_20rem]">
         <GlassPanel className="min-w-0">
-          <h2 className="font-serif text-xl">Input</h2>
-          <p className="mt-2 text-sm text-dust">A lyric, a hum, or a track.</p>
+          <InputPanel />
         </GlassPanel>
         <GlassPanel className="min-w-0">
           <h2 className="font-serif text-xl">Conversation</h2>

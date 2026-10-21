@@ -11,7 +11,7 @@ from pathlib import Path
 from agent.prompts import seeds_for
 from agent.theory import bass_midi, chords_midi
 from agent.turn import run_turn
-from contracts import LayerPrompt, RenderJob, RenderResult, TurnRequest, TurnResponse
+from contracts import AudioFeatures, LayerPrompt, RenderJob, RenderResult, TurnRequest, TurnResponse
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -105,6 +105,8 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         folder.mkdir(parents=True, exist_ok=True)
         original = folder / safe_filename(file.filename or "upload")
         original.write_bytes(payload)
+        if input_type == "midi" or original.suffix.lower() in {".mid", ".midi"}:
+            return AudioFeatures(input_type="midi", confidence=0.8)
         target = original
         if needs_conversion(original.name, file.content_type):
             target = original.with_suffix(".wav")

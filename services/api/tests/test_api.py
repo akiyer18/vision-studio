@@ -140,6 +140,20 @@ def test_cors_allows_the_web_app(tmp_path: Path) -> None:
         assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
 
 
+def test_midi_upload_skips_audio_analysis(tmp_path: Path) -> None:
+    with TestClient(create_app(tmp_path / "data")) as client:
+        response = client.post(
+            "/upload",
+            data={"session_id": "phase4", "input_type": "midi"},
+            files={"file": ("idea.mid", b"MThd", "audio/midi")},
+        )
+    assert response.status_code == 200
+    features = response.json()
+    assert features["input_type"] == "midi"
+    assert features["confidence"] == 0.8
+    assert (tmp_path / "data" / "sessions" / "phase4" / "audio" / "idea.mid").is_file()
+
+
 def test_upload_converts_opus_and_returns_features(tmp_path: Path) -> None:
     source = tmp_path / "phrase.wav"
     _write_tone(source)
