@@ -178,45 +178,51 @@ bass as roots around C2, velocity 80 to 100. Detected audio keys replace the pre
 
 ## 7. Design
 
-The studio is a liquid-glass dashboard. A left sidebar, a conversational canvas, and a right rail sit on a deep violet ground. Colour marks a layer. Chrome stays quiet. The sidebar is 240px and the rail is 320px. Canvas content sits in a centred column no wider than 760px. The empty home fits at 1280×800 and 1440×900 without page scrolling. After a conversation starts, only the thread scrolls.
+The studio is a music instrument, not a chat window. A transport bar runs across the top. A left rail holds the rooms and recent ideas. Create is a large input, then the session as numbered steps on a vertical hairline. The right panel is the song brief and the layer pads. The empty Create screen fits at 1280×800 and 1440×900 without page scrolling. After a session starts, only the step list scrolls.
+
+There is no purple gradient, no glass, no backdrop blur, no gradient text, no hero greeting, no chat bubbles, no confidence meters, and no decorative icons.
 
 | token | value | use |
 | --- | --- | --- |
-| Background | #0B0A1A | ground, with two soft radial gradients, violet #5B3FD6 and blue #2B4FD8, at low opacity, plus a very subtle noise texture |
-| Glass | rgba(255,255,255,0.06) | sidebar, composer, brief, reasoning, layers, and the tour popover. Border rgba(255,255,255,0.12), a 1px top highlight rgba(255,255,255,0.18), blur 20px, saturate 140%. At most six glass surfaces on screen at once |
-| Ink | #F4F2FF | primary text. On the violet accent, text is #0B0A1A so contrast stays at least 4.5 to 1 |
-| Secondary | #B8B3D9 | supporting text |
-| Muted | #8A84B3 | labels and quiet controls |
-| Accent | #8B6CFF | primary actions and the focus ring. A soft glow on hover only |
-| Success | #4FD1C5 | ready status |
-| Warning | #F5B971 | caution |
-| Error | #FF8A8A | errors |
+| Background | #0F0F10 | the ground |
+| Panel | #161617 | rails, the brief, the tour |
+| Raised | #1E1E20 | pads, inputs, and other controls |
+| Hairline | #2A2A2D | 1px rules between regions and around controls |
+| Ink | #EDEDED | primary text. On the signal colour, text is #0F0F10. Every text pair is at least 4.5 to 1 |
+| Secondary | #9A9A9F | labels and supporting text |
+| Signal | #FF5A1F | the primary action, the active step, focus, and the playhead. Nowhere else |
 
-Lane hues fill that layer's card and its chip. Ink on a lane card is #0B0A1A. Full mix has no sixth hue: a dark card with a double light rule.
+Lane colours are muted and appear only on audio and layer pads. The pad itself stays dark. The colour is its edge and its waveform. Full mix has no sixth hue.
 
 | lane | hex |
 | --- | --- |
-| Drums | #FF6B57 |
-| Chords | #F5C451 |
-| Bass | #3FD0A8 |
-| Melody | #6C8CFF |
-| Texture | #B07CFF |
+| Drums | #E0533D |
+| Chords | #E3B341 |
+| Bass | #2FA37C |
+| Melody | #4C7DFF |
+| Texture | #9B6BFF |
 
-Radius: 24px for large cards, 16px for inner cards, 12px for inputs, full round for chips and pills. Geist Sans for the interface. Geist Mono for BPM, key, seeds, and file names. The greeting is 56px semibold at 1440px and wider, 44px on smaller screens, letter-spacing −0.03em, with a vertical gradient from #F4F2FF to #C9C2FF. Section titles are 15px semibold. Body is 15px with line-height 1.5. Secondary copy is 13px. Tempo and key are 28px semibold with tabular numbers. Spacing uses an 8px grid. Sentence case. No all caps.
+General Sans is the interface. Martian Mono is every readout: tempo, key, bars, step numbers, file names, and the trace. Both are self hosted, General Sans from Fontshare and Martian Mono from Fontsource, so the app works offline. Sentence case. No all caps. Tabular numbers. Sizes are 13, 15, 20, and 32px. 56px is only the tempo and key readouts in the transport.
 
-Focus is a 2px accent outline, offset 2px. Motion is short: the greeting leaves as the thread arrives, messages arrive, brief rows fill, and layer cards appear. Reduced motion switches those to instant changes.
+Radius is 6px on controls and 10px on panels. Spacing stays on a 4px grid.
 
-Before any input the canvas centres one group: "What are you feeling today?" with a short subline, then a glass composer, then the quick start chips, then three how-it-works cards. The greeting sits 24px above the composer. The other parts sit 16px apart. The composer is two lines tall when empty and grows to six as the idea is typed. Attach and the microphone, when record is on, sit inside on the left. The round violet send button sits inside on the right. Its accessible name is "Send the idea". Quick start chips: Rainy night drive, Summer festival, Calm morning, and Try the demo when the demo flag is on. The how-it-works cards are 88px tall, in one row, and are not glass: Describe it, Answer or skip, Hear your layers.
+Focus is a 1px signal outline. Motion is 120 to 180ms and mechanical: steps snap in, controls change state, and there is no float and no blur. While the agent is thinking, a small LED blinks. Reduced motion makes the steps instant and holds the LED steady.
 
-After sending, the greeting and those cards leave. The user's idea is a bubble. The agent's question is one message, with option chips, a "{n} of up to {max}" pill, and You decide, Skip this, and Skip all and build as quiet buttons. The composer stays docked for a follow-up answer. Enter sends. While a reading waits for confirmation, Confirm this reading is the button, and the reading stays on screen.
+The transport spans the window: the Vision Studio wordmark, the session name, then tempo, key, bars, and the status readout (idle, thinking, building, ready, or error). Build sits at the right in signal orange. It is disabled, with a tooltip, until there is a prompt.
 
-Before any input the rail shows one Getting started card, with the same three steps as the how-it-works cards, and the Layers card. When the first turn returns, Getting started leaves and Song brief and Agent reasoning animate in. Song brief shows tempo and key at 28px in Geist Mono, then each filled slot as a row with its value, a source badge (You, Detected, Default, or Reference), and a thin confidence bar. Unset slots are hidden. Values stay click-to-edit. Agent reasoning lists the live trace as "{step}: {detail}", the newest step arriving with a small icon, and the list can collapse. Layers holds chips for drums, chords, bass, melody, and texture, plus All layers and Full mix when that flag is on, on at most two rows. An unselected chip is a neutral outline. A selected chip fills with a 20 percent tint of its lane colour and a solid lane-colour dot. The helper reads "Pick layers, then build." Build is the single primary action, disabled with a tooltip until there is an idea. The choice defaults to all layers separately until the user changes it.
+The left rail lists rooms as numbered items: 01 Create, 02 Genres, 03 Analyse, 04 Tweak. Analyse and Tweak say Soon and are not clickable while those flags are off. Recent ideas sit below.
 
-After Build the thread shows Your layers. Each layer is a card in its lane colour, with a waveform, play, tabs for variations 1 to 3, Pick, and Another take. Every variation stays in the document. A slim player at the bottom of the canvas offers Play together and Export to Logic, then the export folder. Variation 1 is used for any layer that was not picked. Start a new idea clears the session.
+Create's centre starts with the input. "A full idea" and "One sound" are a segmented switch. Attach and Record, when record is on, are small square buttons. Send stays inside the field. Its accessible name is "Send the idea". The field is two lines tall when empty and grows to six. One signal ring appears on the whole field when focus is inside it. The text area has no outline of its own. Quick starts stay under the field: Rainy night drive, Summer festival, Calm morning, and Try the demo when the demo flag is on.
 
-An empty card has one sentence and one button. An error sits in the card it belongs to, with Try again.
+The session below the input is numbered steps on a vertical hairline. 01 is the idea as plain text. Each question is the next step: the question, option pads, and You decide, Skip this, and Skip all and build. The chosen answer is highlighted. The current step has a thin signal edge. "{n} of up to {max}" is a mono readout. While a turn or a render is in flight, Send, Enter, the answer pads, and those three actions wait. Thinking is a step with a blinking LED and the latest trace line, or "Thinking" when the trace is empty. A failure brings the controls back and offers Try again. While a reading waits for confirmation, Confirm this reading is the button, and the reading stays on screen. Enter sends.
 
-The first visit opens a glass tour after 800 ms. It says what Vision Studio is and that it takes about 60 seconds, then highlights the sidebar, the composer, the brief card, and the Build button. Next, Back, and close. Finishing or closing stores that it was seen. Help, in the sidebar, holds Replay tour and Shortcuts. The tour does not mention a feature that is switched off.
+The right panel is the brief as a two-column parameter grid. Each cell has a small label, a Martian Mono value, and a tiny source tag: you, detected, default, or reference. Filled slots stay click-to-edit. Facets sit under their layer. The trace is a mono list under the grid and can collapse. A trace line can still mark the matching parameter. Layer pads follow, in the lane colours, for drums, chords, bass, melody, and texture, plus All layers and Full mix when that flag is on. The choice defaults to all layers separately until the user changes it. The rail chip for that choice reads "All layers".
+
+After Build, each layer is a horizontal lane on the dark ground. The waveform uses the lane colour. The playhead is signal orange. Each lane has play, three take buttons, Pick, and Another take. Every variation stays in the document. A player under the session offers Play together and Export to Logic, then the export folder. Variation 1 is used for any layer that was not picked. Start a new idea clears the session.
+
+An error sits in the panel it belongs to, with Try again.
+
+The first visit opens a tour after 800 ms. It says what Vision Studio is and that it takes about 60 seconds, then highlights the rail, the input, the brief, and Build. Next, Back, and close. Finishing or closing stores that it was seen. Help, in the left rail, holds Replay tour and Shortcuts. The tour does not mention a feature that is switched off.
 
 Flags live in `apps/web/src/features.ts`: record, soloMute, fullMix, styleguideLink, demo, create, genre, analyser, edits, and soundcharts. Create and Genre deep dive are on. Analyser and edits are off, so Analyse and Tweak show a Soon pill and are not clickable. Soundcharts is off. Solo and mute are local when the flag is on. Mute drops that layer from playback and from the next full build. Solo keeps only that layer. The buttons use `aria-pressed`. Recent ideas are kept in localStorage, up to 20, newest first. The first turn of a session saves the title, date, brief, prompts, selected layers, and any render paths. Opening one restores that session on screen without another agent turn. If a render file is gone, that layer says Build again. Rename and delete sit on the row.
 
@@ -226,7 +232,7 @@ The layer cards and the player load lazily, so wavesurfer loads with them. One s
 
 Keyboard. Enter sends. S skips a question, or solos a focused lane when solo and mute are on. Shift+S skips all and builds. M mutes the focused lane when that flag is on. Space plays or stops, and does nothing while typing. ? opens the shortcuts.
 
-The composer has one focus ring, on the whole field when focus is inside it. The text area has no outline of its own. While a turn or a render is in flight, Send, Enter, the answer chips, and You decide, Skip this, and Skip all and build wait. The thread shows a thinking line with a small pulse and the latest trace step, or "Thinking" when there is no trace yet. A failure brings the controls back and offers Try again. Every turn sends a new request id. A repeat of that id returns the same response.
+The composer has one focus ring, on the whole field when focus is inside it. The text area has no outline of its own. While a turn or a render is in flight, Send, Enter, the answer pads, and You decide, Skip this, and Skip all and build wait. Thinking is a numbered step with a blinking LED and the latest trace line, or "Thinking" when there is no trace yet. A failure brings the controls back and offers Try again. Every turn sends a new request id. A repeat of that id returns the same response.
 
 Copy the demos click stays plain: "Send the idea", "Confirm this reading", "Skip this", "Skip all and build", "You decide", "Build", "Another take", "Pick", "Play together", "Export to Logic", "Try again", and "Start a new idea".
 

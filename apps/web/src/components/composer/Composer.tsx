@@ -1,4 +1,3 @@
-import { ArrowUp, Headphones, ListChecks, Mic, Paperclip, Sparkles, Square } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
 import { ApiError, upload } from "../../api/client.ts"
@@ -436,7 +435,7 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
     <div className={`canvas-column flex flex-col gap-4 ${started ? "pb-4" : ""}`}>
       <form
         data-tour="composer"
-        className={`composer-shell glass flex flex-col gap-2 p-2 ${dragging ? "outline outline-2 outline-accent" : ""}`}
+        className={`composer-shell flex flex-col gap-2 p-2 ${dragging ? "outline outline-1 outline-accent" : ""}`}
         onSubmit={(event) => {
           event.preventDefault()
           void submit()
@@ -467,23 +466,12 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
                 if (file) acceptFile(file, "drop")
               }}
             />
-            <button
-              type="button"
-              aria-label="Attach a sound"
-              className="inline-flex size-8 items-center justify-center rounded-full text-secondary"
-              onClick={() => fileInput.current?.click()}
-            >
-              <Paperclip size={16} aria-hidden />
+            <button type="button" aria-label="Attach a sound" className="square-btn" onClick={() => fileInput.current?.click()}>
+              Attach
             </button>
             {flags.record ? (
-              <button
-                type="button"
-                aria-label="Record"
-                className="inline-flex size-8 items-center justify-center rounded-full text-secondary disabled:opacity-40"
-                onClick={() => void startRecording()}
-                disabled={busy || recording}
-              >
-                <Mic size={16} aria-hidden />
+              <button type="button" aria-label="Record" className="square-btn" onClick={() => void startRecording()} disabled={busy || recording}>
+                Record
               </button>
             ) : null}
           </div>
@@ -520,13 +508,7 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
                 Try again
               </Button>
             ) : (
-              <button
-                type="submit"
-                aria-label="Send the idea"
-                disabled={busy || recording || working}
-                className="btn-primary inline-flex size-8 items-center justify-center rounded-full bg-accent text-canvas disabled:opacity-40"
-              >
-                <ArrowUp size={16} aria-hidden />
+              <button type="submit" aria-label="Send the idea" disabled={busy || recording || working} className="send-btn">
                 <span className="sr-only">Send the idea</span>
               </button>
             )}
@@ -551,22 +533,12 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
           </p>
         ) : null}
         {recording ? (
-          <div className="flex items-center gap-3 px-2">
-            <div
-              className="h-2 flex-1 overflow-hidden rounded-full bg-white/10"
-              role="meter"
-              aria-label="Input level"
-              aria-valuemin={0}
-              aria-valuemax={1}
-              aria-valuenow={level}
-            >
-              <div className="h-full bg-accent" style={{ width: `${Math.round(level * 100)}%` }} />
-            </div>
-            <p className="text-sm text-ink tabular-nums" aria-live="polite">
+          <div className="flex items-center gap-2 px-2">
+            <span className="rec-led" style={{ opacity: 0.25 + level * 0.75 }} aria-hidden />
+            <p className="mono text-[13px] text-ink" aria-live="polite">
               {formatElapsed(elapsed)}
             </p>
-            <button type="button" className="inline-flex items-center gap-2 text-ink" onClick={stopRecording}>
-              <Square size={14} aria-hidden />
+            <button type="button" className="text-[13px] text-ink" onClick={stopRecording}>
               Stop
             </button>
           </div>
@@ -584,7 +556,7 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
               <button
                 key={item.label}
                 type="button"
-                className="rounded-full border border-white/15 px-3 py-1.5 text-sm text-secondary"
+                className="pad"
                 onClick={() => void quick(item.text)}
                 disabled={demoBusy || busy || recording}
               >
@@ -594,7 +566,7 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
             {flags.demo ? (
               <button
                 type="button"
-                className="rounded-full border border-white/15 px-3 py-1.5 text-sm text-secondary disabled:opacity-40"
+                className="pad disabled:opacity-40"
                 onClick={() => void runDemo()}
                 disabled={demoBusy || busy || recording}
               >
@@ -607,25 +579,8 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
               {demoError}
             </p>
           ) : null}
-          <div className="grid grid-cols-3 gap-2">
-            <HowCard icon={Sparkles} title="Describe it" text="Write a feeling, or bring a sound." />
-            <HowCard icon={ListChecks} title="Answer or skip" text="A few questions, or skip them all." />
-            <HowCard icon={Headphones} title="Hear your layers" text="Build, listen, and pick a take." />
-          </div>
         </>
       )}
-    </div>
-  )
-}
-
-function HowCard({ icon: Icon, title, text }: { icon: typeof Sparkles; title: string; text: string }) {
-  return (
-    <div className="how-card flex flex-col justify-center gap-1 rounded-2xl border border-white/10 bg-white/3 px-2">
-      <div className="flex items-center gap-2">
-        <Icon size={16} aria-hidden className="shrink-0 text-accent" />
-        <p className="font-semibold whitespace-nowrap">{title}</p>
-      </div>
-      <p className="text-sm whitespace-nowrap text-secondary">{text}</p>
     </div>
   )
 }
@@ -648,21 +603,11 @@ function IdeaMode() {
   const mode = useStudio((state) => state.mode)
   const setMode = useStudio((state) => state.setMode)
   return (
-    <div className="flex gap-1 px-1" role="group" aria-label="Idea shape">
-      <button
-        type="button"
-        aria-pressed={mode === "full"}
-        className={`rounded-full px-2 py-0.5 text-sm ${mode === "full" ? "bg-white/8 text-ink" : "text-secondary"}`}
-        onClick={() => setMode("full")}
-      >
+    <div className="segment" role="group" aria-label="Idea shape">
+      <button type="button" aria-pressed={mode === "full"} onClick={() => setMode("full")}>
         A full idea
       </button>
-      <button
-        type="button"
-        aria-pressed={mode === "one_sound"}
-        className={`rounded-full px-2 py-0.5 text-sm ${mode === "one_sound" ? "bg-white/8 text-ink" : "text-secondary"}`}
-        onClick={() => setMode("one_sound")}
-      >
+      <button type="button" aria-pressed={mode === "one_sound"} onClick={() => setMode("one_sound")}>
         One sound
       </button>
     </div>

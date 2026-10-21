@@ -1,4 +1,3 @@
-import { motion, useReducedMotion } from "framer-motion"
 import { useEffect, useState } from "react"
 
 import type { AnswerAction } from "../../types/answer_action.ts"
@@ -15,7 +14,6 @@ type Props = {
 export function QuestionMessage({ question, locked = false, onAnswer }: Props) {
   const [draft, setDraft] = useState("")
   const [key, setKey] = useState(questionKey(question))
-  const reduce = useReducedMotion()
   const nextKey = questionKey(question)
   if (key !== nextKey) {
     setKey(nextKey)
@@ -53,14 +51,8 @@ export function QuestionMessage({ question, locked = false, onAnswer }: Props) {
   }
 
   return (
-    <motion.article
-      aria-live="polite"
-      className="max-w-xl rounded-2xl border border-white/10 px-4 py-3"
-      initial={reduce ? false : { opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: reduce ? 0 : 0.25 }}
-    >
-      <p className="inline-flex rounded-full border border-white/15 px-2 py-0.5 text-xs text-secondary">
+    <article aria-live="polite">
+      <p className="mono text-[13px] text-secondary">
         {question.index} of up to {question.max}
       </p>
       <p className="mt-3 text-ink">{question.text}</p>
@@ -89,7 +81,7 @@ export function QuestionMessage({ question, locked = false, onAnswer }: Props) {
           onChange={(event) => setDraft(event.target.value)}
           placeholder="Or write your own"
           disabled={locked}
-          className="w-full rounded-xl border border-white/15 bg-transparent px-3 py-2 text-sm text-ink outline-none placeholder:text-muted disabled:opacity-40"
+          className="w-full rounded-[6px] border border-[var(--line)] bg-raised px-2 py-1 text-[15px] text-ink outline-none placeholder:text-muted disabled:opacity-40"
         />
       </form>
       <div className="mt-3 flex flex-wrap gap-2">
@@ -103,7 +95,7 @@ export function QuestionMessage({ question, locked = false, onAnswer }: Props) {
           Skip all and build
         </Button>
       </div>
-    </motion.article>
+    </article>
   )
 }
 

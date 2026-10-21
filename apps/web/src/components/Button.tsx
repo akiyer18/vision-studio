@@ -1,8 +1,8 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react"
 
 const tones = {
-  primary: "btn-primary bg-accent text-canvas",
-  secondary: "border border-white/15 bg-transparent text-ink",
+  primary: "bg-accent text-canvas",
+  secondary: "border border-[var(--line)] bg-raised text-ink",
   ghost: "bg-transparent text-secondary",
 } as const
 
@@ -15,7 +15,7 @@ export function Button({ tone = "primary", className = "", type = "button", chil
   return (
     <button
       type={type}
-      className={`inline-flex min-h-11 max-w-full shrink-0 items-center justify-center rounded-xl px-4 py-2 text-sm font-medium transition-shadow focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40 ${tones[tone]} ${className}`}
+      className={`inline-flex min-h-8 max-w-full shrink-0 items-center justify-center rounded-[6px] px-3 py-1 text-[13px] font-medium transition-colors duration-150 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40 ${tones[tone]} ${className}`}
       {...props}
     >
       {children}

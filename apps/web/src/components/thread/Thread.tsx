@@ -1,5 +1,4 @@
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
-import { Suspense, lazy, useCallback, useRef, useState } from "react"
+import { Suspense, lazy, useCallback, useRef, useState, type ReactNode } from "react"
 
 import { ApiError } from "../../api/client.ts"
 import { inFlight } from "../../conversation/flight.ts"
@@ -21,14 +20,13 @@ const LayersView = lazy(() => import("../layers/stage.tsx").then((module) => ({ 
 export type Bubble = RecentMessage
 
 type Props = {
-  started: boolean
   bubbles: Bubble[]
   onExchange: (question: string, answer: string) => void
   showLayers: boolean
   showDemo: boolean
 }
 
-export function Thread({ started, bubbles, onExchange, showLayers, showDemo }: Props) {
+export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
   const question = useStudio((state) => (state.turn?.status === "question" ? (state.turn.question ?? null) : null))
   const turnStatus = useStudio((state) => state.turn?.status ?? null)
   const summary = useStudio((state) => (state.turn?.status === "ready" ? state.turn.summary : undefined))
@@ -36,7 +34,6 @@ export function Thread({ started, bubbles, onExchange, showLayers, showDemo }: P
   const status = useStudio((state) => state.status)
   const trace = useStudio((state) => state.turn?.trace)
   const reading = useStudio((state) => state.reading)
-  const reduce = useReducedMotion()
   const [error, setError] = useState<string | null>(null)
   const [last, setLast] = useState<{ action: AnswerAction; value?: string } | null>(null)
   const busy = useRef(false)
@@ -88,97 +85,106 @@ export function Thread({ started, bubbles, onExchange, showLayers, showDemo }: P
     }
   }, [])
 
+  const working = status === "working"
+  const steps: { key: string; current: boolean; node: ReactNode }[] = [
+    ...earlier.map((bubble) => ({ key: String(bubble.id), current: false, node: <Line bubble={bubble} /> })),
+    ...(reading ? [{ key: "reading", current: false, node: <ReadingMessage /> }] : []),
+    ...later.map((bubble) => ({ key: String(bubble.id), current: false, node: <Line bubble={bubble} /> })),
+  ]
+  if (question) {
+    steps.push({
+      key: "question",
+      current: !working,
+      node: <QuestionMessage question={question} locked={working} onAnswer={(action, value) => void send(action, value)} />,
+    })
+  } else if (turnStatus === "question") {
+    steps.push({
+      key: "empty-question",
+      current: !working,
+      node: (
+        <div>
+          <p>Nothing to ask.</p>
+          <p className="mt-1 text-secondary">Skip all and build from what is already known.</p>
+          <Button tone="ghost" className="mt-2" disabled={working} onClick={() => void send("skip_all")}>
+            Skip all and build
+          </Button>
+        </div>
+      ),
+    })
+  }
+  if (working) {
+    steps.push({
+      key: "thinking",
+      current: true,
+      node: <Thinking latest={trace?.length ? traceSentence(trace[trace.length - 1]) : "Thinking"} />,
+    })
+  }
+  if ((prompts?.length ?? 0) > 0) {
+    steps.push({
+      key: "ready",
+      current: false,
+      node: (
+        <div>
+          <p className="text-ink">{summary || "Ready to build."}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button tone="secondary" disabled={working} onClick={() => void goDeeper()}>
+              Go deeper
+            </Button>
+            <Button disabled={working} onClick={() => void renderCurrent()}>
+              Build now
+            </Button>
+          </div>
+        </div>
+      ),
+    })
+  }
+
   return (
-    <div className={`studio-thread ${started ? "px-0 py-4" : ""}`}>
+    <div className="studio-thread">
       {showDemo ? <DemoMenu /> : null}
-      <AnimatePresence>
-        {started ? (
-          <motion.div
-            key="thread"
-            className="canvas-column flex flex-col gap-4"
-            initial={reduce ? false : { opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={reduce ? undefined : { opacity: 0, y: -8 }}
-            transition={{ duration: reduce ? 0 : 0.28 }}
-          >
-            <h1 className="sr-only">Your song</h1>
-            {earlier.map((bubble) => (
-              <Line key={bubble.id} bubble={bubble} reduce={reduce === true} />
-            ))}
-            {reading ? <ReadingMessage /> : null}
-            {later.map((bubble) => (
-              <Line key={bubble.id} bubble={bubble} reduce={reduce === true} />
-            ))}
-            {question ? (
-              <QuestionMessage
-                question={question}
-                locked={status === "working"}
-                onAnswer={(action, value) => void send(action, value)}
-              />
-            ) : turnStatus === "question" ? (
-              <div className="rounded-2xl border border-white/10 px-4 py-3">
-                <p>Nothing to ask.</p>
-                <p className="mt-1 text-secondary">Skip all and build from what is already known.</p>
-                <Button tone="ghost" className="mt-3" disabled={status === "working"} onClick={() => void send("skip_all")}>
-                  Skip all and build
-                </Button>
-              </div>
+      <h1 className="sr-only">Your song</h1>
+      <ol className="session-steps">
+        {steps.map((item, index) => (
+          <Step key={item.key} index={index + 1} current={item.current}>
+            {item.node}
+          </Step>
+        ))}
+        {error ? (
+          <li className="step" role="alert">
+            <p className="text-danger">{error}</p>
+            {last ? (
+              <Button tone="secondary" className="mt-2" onClick={() => void send(last.action, last.value)}>
+                Try again
+              </Button>
             ) : null}
-            {status === "working" ? <Thinking latest={trace?.length ? traceSentence(trace[trace.length - 1]) : "Thinking"} /> : null}
-            {(prompts?.length ?? 0) > 0 ? (
-              <article className="max-w-xl rounded-2xl border border-white/10 px-4 py-3">
-                <p className="text-ink">{summary || "Ready to build."}</p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button tone="secondary" disabled={status === "working"} onClick={() => void goDeeper()}>
-                    Go deeper
-                  </Button>
-                  <Button disabled={status === "working"} onClick={() => void renderCurrent()}>
-                    Build now
-                  </Button>
-                </div>
-              </article>
-            ) : null}
-            {error ? (
-              <div role="alert" className="text-danger">
-                <p>{error}</p>
-                {last ? (
-                  <Button tone="secondary" className="mt-2" onClick={() => void send(last.action, last.value)}>
-                    Try again
-                  </Button>
-                ) : null}
-              </div>
-            ) : null}
-            {showLayers ? (
-              <Suspense fallback={<p className="text-secondary">Opening the takes.</p>}>
-                <LayersView />
-              </Suspense>
-            ) : null}
-          </motion.div>
-        ) : (
-          <motion.div
-            key="home"
-            className="canvas-column text-center"
-            initial={reduce ? false : { opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={reduce ? undefined : { opacity: 0, y: -10 }}
-            transition={{ duration: reduce ? 0 : 0.28 }}
-          >
-            <h1 className="greeting" data-tour="welcome">
-              What are you feeling today?
-            </h1>
-            <p className="mt-4 text-secondary">Turn it into layers you can edit.</p>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </li>
+        ) : null}
+        {showLayers ? (
+          <li className="step">
+            <Suspense fallback={<p className="text-secondary">Opening the takes.</p>}>
+              <LayersView />
+            </Suspense>
+          </li>
+        ) : null}
+      </ol>
     </div>
+  )
+}
+
+function Step({ index, current = false, children }: { index: number; current?: boolean; children: ReactNode }) {
+  return (
+    <li className={`step ${current ? "is-current" : ""}`}>
+      <span className="step-index">{String(index).padStart(2, "0")}</span>
+      {children}
+    </li>
   )
 }
 
 function Thinking({ latest }: { latest: string }) {
   return (
-    <div className="flex max-w-xl items-center gap-3 rounded-2xl border border-white/10 px-4 py-3 text-secondary" role="status">
-      <span className="thinking-mark" aria-hidden="true" />
-      <p>{latest}</p>
+    <div className="flex items-center gap-2 text-secondary" role="status">
+      <span className="led" aria-hidden="true" />
+      <p className="mono text-[13px]">{latest}</p>
     </div>
   )
 }
@@ -190,34 +196,23 @@ function answerLabel(action: AnswerAction, value?: string): string {
   return value?.trim() || "Answered"
 }
 
-function Line({ bubble, reduce }: { bubble: Bubble; reduce: boolean }) {
+function Line({ bubble }: { bubble: Bubble }) {
   if (bubble.prompt) {
     return (
-      <p className="max-w-xl text-sm">
-        <span className="text-secondary">{bubble.prompt}</span> <span className="text-ink">{bubble.text}</span>
-      </p>
+      <div>
+        <p className="text-secondary">{bubble.prompt}</p>
+        <p className="answer-pad">{bubble.text}</p>
+      </div>
     )
   }
-  if (bubble.role === "agent") {
-    return <p className="max-w-xl rounded-2xl border border-white/10 px-4 py-3 text-ink">{bubble.text}</p>
-  }
-  return (
-    <motion.p
-      className="ml-auto max-w-md rounded-2xl bg-white/8 px-4 py-3 text-ink"
-      initial={reduce ? false : { opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: reduce ? 0 : 0.22 }}
-    >
-      {bubble.text}
-    </motion.p>
-  )
+  return <p className="text-ink">{bubble.text}</p>
 }
 
 function ReadingMessage() {
   const reading = useStudio((state) => state.reading)
   if (!reading) return null
   return (
-    <article className="max-w-xl rounded-2xl border border-white/10 px-4 py-3">
+    <article>
       <p className="text-ink">{reading.text}</p>
       {reading.unsure ? (
         <div className="mt-3 flex flex-col gap-3">
@@ -230,7 +225,7 @@ function ReadingMessage() {
                 id="fix-key"
                 value={reading.key}
                 onChange={(event) => revise({ key: event.target.value })}
-                className="mono rounded-xl border border-white/15 bg-transparent px-3 py-2 text-ink outline-none"
+                className="mono w-full rounded-[6px] border border-[var(--line)] bg-raised px-2 py-1 text-[15px] text-ink outline-none"
               />
               <label className="text-sm text-muted" htmlFor="fix-tempo">
                 Tempo
@@ -240,7 +235,7 @@ function ReadingMessage() {
                 inputMode="decimal"
                 value={reading.tempo}
                 onChange={(event) => revise({ tempo: event.target.value })}
-                className="mono rounded-xl border border-white/15 bg-transparent px-3 py-2 text-ink outline-none"
+                className="mono w-full rounded-[6px] border border-[var(--line)] bg-raised px-2 py-1 text-[15px] text-ink outline-none"
               />
             </div>
           ) : null}

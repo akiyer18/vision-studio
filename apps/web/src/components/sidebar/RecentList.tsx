@@ -1,4 +1,3 @@
-import { MoreHorizontal } from "lucide-react"
 import { useEffect, useState } from "react"
 
 import { deleteRecent, readRecent, relativeDate, renameRecent, type RecentIdea } from "../../recentIdeas.ts"
@@ -62,7 +61,7 @@ export function RecentList({ onOpen }: Props) {
                       setRenaming(null)
                     }
                   }}
-                  className="w-full rounded-xl border border-white/15 bg-transparent px-2 py-1.5 text-sm text-ink outline-none"
+                  className="w-full rounded-[6px] border border-[var(--line)] bg-transparent px-2 py-1 text-[13px] text-ink outline-none"
                 />
               ) : (
                 <button
@@ -76,8 +75,7 @@ export function RecentList({ onOpen }: Props) {
                 </button>
               )}
               {renaming === idea.id ? null : (
-                <div role="menu" aria-label={`Options for ${idea.title}`} className="absolute top-1 right-1 z-10 hidden items-center gap-1 rounded-full border border-white/10 bg-canvas px-1 group-hover:flex group-focus-within:flex">
-                  <MoreHorizontal size={12} aria-hidden className="text-muted" />
+                <div role="menu" aria-label={`Options for ${idea.title}`} className="absolute top-1 right-1 z-10 hidden items-center gap-1 rounded-[6px] border border-[var(--line)] bg-panel px-1 group-hover:flex group-focus-within:flex">
                   <button type="button" role="menuitem" className="px-1 py-0.5 text-sm text-secondary" onClick={() => startRename(idea)}>
                     Rename
                   </button>

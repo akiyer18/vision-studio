@@ -73,7 +73,7 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
             left: box.left - 6,
             width: box.width + 12,
             height: box.height + 12,
-            boxShadow: "0 0 0 2px #8B6CFF, 0 0 24px rgba(139, 108, 255, 0.55), 0 0 0 9999px rgba(11, 10, 26, 0.72)",
+            boxShadow: "0 0 0 1px #FF5A1F, 0 0 0 9999px rgba(15, 15, 16, 0.72)",
           }}
         />
       ) : null}
@@ -83,7 +83,7 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
         aria-modal="true"
         aria-labelledby="tour-title"
         tabIndex={-1}
-        className="glass fixed z-50 w-[min(20rem,calc(100vw-1.5rem))] p-4 text-ink outline-none"
+        className="panel fixed z-50 w-[min(20rem,calc(100vw-1.5rem))] p-4 text-ink outline-none"
         style={{ top: Math.max(12, cardTop), left: cardLeft }}
         onKeyDown={(event) => {
           if (event.key !== "Escape") return
@@ -107,7 +107,7 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
           </button>
           <button
             type="button"
-            className="btn-primary min-h-11 rounded-xl bg-accent px-4 text-canvas"
+            className="min-h-8 rounded-[6px] bg-accent px-3 text-[13px] text-canvas"
             onClick={() => {
               if (last || visible.length === 0) onClose()
               else setIndex((value) => value + 1)

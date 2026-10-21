@@ -13,11 +13,11 @@ import type { OutputChoice } from "../../types/output_choice.ts"
 import { Button } from "../Button.tsx"
 
 const chipHue: Partial<Record<OutputChoice, string>> = {
-  drums: LANE_PAINT.drums.fill,
-  chords: LANE_PAINT.chords.fill,
-  bass: LANE_PAINT.bass.fill,
-  melody: LANE_PAINT.melody.fill,
-  texture: LANE_PAINT.texture.fill,
+  drums: LANE_PAINT.drums.wave,
+  chords: LANE_PAINT.chords.wave,
+  bass: LANE_PAINT.bass.wave,
+  melody: LANE_PAINT.melody.wave,
+  texture: LANE_PAINT.texture.wave,
 }
 
 export function LayersCard() {
@@ -39,8 +39,6 @@ export function LayersCard() {
   const failure = Object.values(failures)[0]?.message
   const buildFailed = status === "error" && cards.length > 0 && !error
   const problem = error ?? (buildFailed ? (failure ?? "The build did not finish.") : null)
-  const canBuild = cards.length > 0 && status !== "working" && !problem
-
   function choose(next: OutputChoice) {
     if (inFlight() || useStudio.getState().status === "working") return
     choice.current = next
@@ -61,7 +59,7 @@ export function LayersCard() {
   const rows = [options.slice(0, 4), options.slice(4)]
 
   return (
-    <section className="glass panel-layers flex flex-col gap-4 px-2 py-4" aria-label="Layers">
+    <section className="panel-layers flex flex-col gap-3 px-2 py-3" aria-label="Layers">
       <h2 className="section-title">Layers</h2>
       {mode === "one_sound" ? (
         <p className="text-sm text-secondary">One sound, three variations.</p>
@@ -102,7 +100,7 @@ export function LayersCard() {
                     rows={3}
                     value={prompt}
                     onChange={(event) => editPrompt(item.layer, "prompt", event.target.value)}
-                    className="rounded-xl border border-white/15 bg-transparent px-3 py-2 text-ink outline-none"
+                    className="rounded-[6px] border border-[var(--line)] bg-raised px-2 py-1 text-ink outline-none"
                   />
                   <label className="text-muted" htmlFor={`${item.layer}-negative`}>
                     Leave out
@@ -112,7 +110,7 @@ export function LayersCard() {
                     rows={2}
                     value={negative}
                     onChange={(event) => editPrompt(item.layer, "negative", event.target.value)}
-                    className="rounded-xl border border-white/15 bg-transparent px-3 py-2 text-ink outline-none"
+                    className="rounded-[6px] border border-[var(--line)] bg-raised px-2 py-1 text-ink outline-none"
                   />
                   {note ? <p>{note}</p> : null}
                   {edited ? (
@@ -141,11 +139,7 @@ export function LayersCard() {
             Try again
           </Button>
         </div>
-      ) : (
-        <Button data-tour="build" className="w-full" disabled={!canBuild} title={cards.length === 0 ? "Send an idea first." : undefined} onClick={() => void build()}>
-          Build
-        </Button>
-      )}
+      ) : null}
     </section>
   )
 }
@@ -161,16 +155,17 @@ function LayerChip({
   selected: boolean
   onClick: () => void
 }) {
-  const ink = hue ?? "#8B6CFF"
   return (
     <button
       type="button"
       aria-pressed={selected}
       onClick={onClick}
-      className={`inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-full border px-2 text-[13px] leading-none whitespace-nowrap ${selected ? "text-ink" : "border-white/15 text-secondary"}`}
-      style={selected ? { background: `${ink}33`, borderColor: `${ink}66` } : undefined}
+      className={`pad shrink-0 whitespace-nowrap ${selected ? "text-ink" : ""}`}
+      style={{
+        borderColor: hue ?? (selected ? "#EDEDED" : undefined),
+        boxShadow: selected ? `inset 0 0 0 1px ${hue ?? "#EDEDED"}` : undefined,
+      }}
     >
-      {selected ? <span className="size-1.5 shrink-0 rounded-full" style={{ background: ink }} /> : null}
       <span>{label}</span>
     </button>
   )

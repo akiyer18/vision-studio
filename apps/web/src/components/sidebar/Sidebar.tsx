@@ -1,26 +1,10 @@
-import { AudioWaveform, Keyboard, Library, Menu, Music, SlidersHorizontal, X } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
 import { features } from "../../features.ts"
 import { transport } from "../../playback/transport.ts"
 import type { RecentIdea } from "../../recentIdeas.ts"
-import type { UiStatus } from "../../state/studio.ts"
 import { useStudio } from "../../state/studio.ts"
 import { RecentList } from "./RecentList.tsx"
-
-const statusLabel: Record<UiStatus, string> = {
-  idle: "Waiting",
-  working: "Working",
-  ready: "Ready",
-  error: "Error",
-}
-
-const statusTone: Record<UiStatus, string> = {
-  idle: "text-muted",
-  working: "text-accent",
-  ready: "text-success",
-  error: "text-danger",
-}
 
 type Room = "create" | "genre"
 
@@ -33,7 +17,6 @@ type Props = {
 }
 
 export function Sidebar({ open, room, onRoom, onClose, onReplay }: Props) {
-  const status = useStudio((state) => state.status)
   const restoreSession = useStudio((state) => state.restoreSession)
   const [menu, setMenu] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
@@ -82,19 +65,15 @@ export function Sidebar({ open, room, onRoom, onClose, onReplay }: Props) {
   }
 
   return (
-    <aside className="studio-side glass flex h-full min-h-0 flex-col gap-6 p-4" data-open={open ? "true" : "false"} data-tour="sidebar">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <AudioWaveform aria-hidden className="text-accent" size={18} />
-          <p className="section-title">Vision Studio</p>
-        </div>
-        <button type="button" className="studio-menu-close text-secondary min-[768px]:hidden" aria-label="Close the menu" onClick={onClose}>
-          <X size={18} />
+    <aside className="studio-side flex h-full min-h-0 flex-col gap-4 p-3" data-open={open ? "true" : "false"} data-tour="sidebar">
+      <div className="flex items-center justify-end">
+        <button type="button" className="text-secondary min-[768px]:hidden" aria-label="Close the menu" onClick={onClose}>
+          Close
         </button>
       </div>
       <nav aria-label="Studio" className="flex flex-col gap-1">
         <RoomButton
-          icon={Music}
+          index="01"
           label="Create"
           live={features.create}
           current={room === "create"}
@@ -105,8 +84,8 @@ export function Sidebar({ open, room, onRoom, onClose, onReplay }: Props) {
           }}
         />
         <RoomButton
-          icon={Library}
-          label="Genre deep dive"
+          index="02"
+          label="Genres"
           live={features.genre}
           current={room === "genre"}
           onClick={() => {
@@ -114,8 +93,8 @@ export function Sidebar({ open, room, onRoom, onClose, onReplay }: Props) {
             onClose()
           }}
         />
-        <SoonItem icon={AudioWaveform} label="Analyse" soon={!features.analyser} />
-        <SoonItem icon={SlidersHorizontal} label="Tweak" soon={!features.edits} />
+        <SoonItem index="03" label="Analyse" soon={!features.analyser} />
+        <SoonItem index="04" label="Tweak" soon={!features.edits} />
       </nav>
       <RecentList onOpen={openRecent} />
       <div className="relative flex flex-col gap-3">
@@ -124,10 +103,9 @@ export function Sidebar({ open, room, onRoom, onClose, onReplay }: Props) {
           type="button"
           aria-expanded={menu}
           aria-haspopup="menu"
-          className="inline-flex items-center gap-2 text-left text-secondary"
+          className="text-left text-[13px] text-secondary"
           onClick={() => setMenu((value) => !value)}
         >
-          <Menu size={16} aria-hidden />
           Help
         </button>
         {menu ? (
@@ -178,61 +156,57 @@ export function Sidebar({ open, room, onRoom, onClose, onReplay }: Props) {
               <Shortcut keys="Space" action="Play and stop" />
               <Shortcut keys="?" action="Open or close these shortcuts" />
             </ul>
-            <button type="button" className="mt-3 text-sm text-secondary" onClick={() => setShortcutsOpen(false)}>
+            <button type="button" className="mt-3 text-[13px] text-secondary" onClick={() => setShortcutsOpen(false)}>
               Close
             </button>
           </div>
         ) : null}
-        <p className={`inline-flex w-fit items-center gap-2 rounded-full border border-white/15 px-3 py-1 text-sm ${statusTone[status]}`}>
-          <Keyboard size={14} aria-hidden />
-          {statusLabel[status]}
-        </p>
       </div>
     </aside>
   )
 }
 
 function RoomButton({
-  icon: Icon,
+  index,
   label,
   live,
   current,
   onClick,
 }: {
-  icon: typeof Music
+  index: string
   label: string
   live: boolean
   current: boolean
   onClick: () => void
 }) {
-  if (!live) return <SoonItem icon={Icon} label={label} soon />
+  if (!live) return <SoonItem index={index} label={label} soon />
   return (
     <button
       type="button"
       aria-current={current ? "page" : undefined}
-      className={`flex h-10 items-center gap-2 rounded-xl px-2 text-left ${current ? "bg-white/8 text-ink" : "text-secondary"}`}
+      className={`flex h-8 items-center gap-2 rounded-[6px] px-2 text-left text-[15px] ${current ? "text-ink shadow-[inset_0_0_0_1px_var(--accent)]" : "text-secondary"}`}
       onClick={onClick}
     >
-      <Icon size={18} aria-hidden />
+      <span className="mono w-6 text-[13px]">{index}</span>
       <span className="truncate">{label}</span>
     </button>
   )
 }
 
-function SoonItem({ icon: Icon, label, soon }: { icon: typeof Music; label: string; soon: boolean }) {
+function SoonItem({ index, label, soon }: { index: string; label: string; soon: boolean }) {
   if (!soon) {
     return (
-      <button type="button" className="flex h-10 items-center gap-2 rounded-xl px-2 text-left text-secondary">
-        <Icon size={18} aria-hidden />
+      <button type="button" className="flex h-8 items-center gap-2 rounded-[6px] px-2 text-left text-[15px] text-secondary">
+        <span className="mono w-6 text-[13px]">{index}</span>
         {label}
       </button>
     )
   }
   return (
-    <div className="flex h-10 items-center gap-2 rounded-xl px-2 text-muted" aria-disabled="true">
-      <Icon size={18} aria-hidden />
+    <div className="flex h-8 items-center gap-2 rounded-[6px] px-2 text-[15px] text-secondary" aria-disabled="true">
+      <span className="mono w-6 text-[13px]">{index}</span>
       <span className="truncate">{label}</span>
-      <span className="ml-auto rounded-full border border-white/10 px-1.5 py-px text-[11px] leading-none text-muted">Soon</span>
+      <span className="ml-auto text-[13px]">Soon</span>
     </div>
   )
 }

@@ -1,4 +1,3 @@
-import { Menu } from "lucide-react"
 import { lazy, Suspense, useEffect, useRef, useState } from "react"
 
 import { inputBridge } from "../../input/bridge.ts"
@@ -13,7 +12,7 @@ import { ReasoningCard } from "../reasoning/ReasoningCard.tsx"
 import { Sidebar } from "../sidebar/Sidebar.tsx"
 import { Thread, type Bubble } from "../thread/Thread.tsx"
 import { Tour } from "../tour/Tour.tsx"
-import { GettingStarted } from "./GettingStarted.tsx"
+import { Transport } from "./Transport.tsx"
 import { GenreRoom, type GenreDetail } from "../genre/GenreRoom.tsx"
 
 const PlayerBar = lazy(() => import("../layers/stage.tsx").then((module) => ({ default: module.PlayerBar })))
@@ -108,54 +107,48 @@ export function Dashboard() {
     }
   }
 
+  const sessionName = bubbles.find((item) => item.role === "you" && !item.prompt)?.text || "New session"
+
   return (
     <div className="studio-root">
-      <button type="button" className="studio-menu size-11 items-center justify-center rounded-full border border-white/15 bg-canvas text-ink" aria-label="Open the menu" onClick={() => setOpen(true)}>
-        <Menu size={18} aria-hidden />
+      <button type="button" className="studio-menu pad" aria-label="Open the menu" onClick={() => setOpen(true)}>
+        Menu
       </button>
       {open ? (
         <button type="button" className="fixed inset-0 z-40 bg-black/50 min-[768px]:hidden" aria-label="Close the menu" onClick={() => setOpen(false)} />
       ) : null}
-      <div className={`studio-shell ${showLayers ? "has-player" : ""} ${started ? "" : "is-home"}`}>
+      <div className={`studio-shell ${showLayers ? "has-player" : ""}`}>
+        <Transport sessionName={sessionName} />
         <Sidebar open={open} room={room} onRoom={setRoom} onClose={() => setOpen(false)} onReplay={tour.replay} />
         {room === "genre" ? (
           <GenreRoom onUse={useGenre} />
         ) : (
           <>
         <div className="studio-canvas">
-          <Thread started={started} bubbles={bubbles} onExchange={addExchange} showLayers={showLayers} showDemo={demoQuery} />
           <div className="studio-composer">
             <Composer started={started} onBegin={() => setTalking(true)} onBubble={addBubble} onExchange={addExchange} />
           </div>
+          <Thread bubbles={bubbles} onExchange={addExchange} showLayers={showLayers} showDemo={demoQuery} />
         </div>
         <div className="studio-rail px-2 py-4" role="radiogroup" aria-label="Song details">
           <input id="rail-brief" className="sr-only" type="radio" name="rail" defaultChecked />
           <input id="rail-reasoning" className="sr-only" type="radio" name="rail" />
           <input id="rail-layers" className="sr-only" type="radio" name="rail" />
-          <div className="rail-tabs mb-3 gap-2">
-            <label htmlFor="rail-brief" className="rounded-full border border-white/15 px-3 py-1 text-sm text-secondary">
+          <div className="rail-tabs mb-2 gap-1">
+            <label htmlFor="rail-brief" className="pad">
               Brief
             </label>
-            <label htmlFor="rail-reasoning" className="rounded-full border border-white/15 px-3 py-1 text-sm text-secondary">
-              Reasoning
+            <label htmlFor="rail-reasoning" className="pad">
+              Trace
             </label>
-            <label htmlFor="rail-layers" className="rounded-full border border-white/15 px-3 py-1 text-sm text-secondary">
+            <label htmlFor="rail-layers" className="pad">
               Layers
             </label>
           </div>
           <div className="rail-stack flex flex-col gap-4">
-            {turn ? (
-              <>
-                <BriefCard mark={mark} onDescribe={describe} />
-                <ReasoningCard mark={mark} onMark={setMark} onDescribe={describe} />
-                <LayersCard />
-              </>
-            ) : (
-              <>
-                <GettingStarted />
-                <LayersCard />
-              </>
-            )}
+            <BriefCard mark={mark} onDescribe={describe} />
+            {turn ? <ReasoningCard mark={mark} onMark={setMark} onDescribe={describe} /> : null}
+            <LayersCard />
           </div>
         </div>
         {showLayers ? (

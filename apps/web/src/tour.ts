@@ -21,7 +21,7 @@ export function tourSteps(): TourStep[] {
     {
       id: "sidebar",
       title: "Sidebar",
-      body: "Create is where you start. Genre deep dive sits beside it, and recent ideas stay on this side.",
+      body: "Create is where you start. Genres sits beside it, and recent ideas stay on this side.",
     },
     {
       id: "composer",
@@ -33,7 +33,7 @@ export function tourSteps(): TourStep[] {
     {
       id: "brief",
       title: "Song brief",
-      body: "Tempo and key sit large. Each filled slot shows where it came from.",
+      body: "Each parameter shows its value and where it came from.",
     },
     {
       id: "build",

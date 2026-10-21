@@ -110,19 +110,14 @@ const LayerCard = memo(function LayerCard({ layer, reduce }: { layer: string; re
         if (next instanceof Node && event.currentTarget.contains(next)) return
         if (useStudio.getState().focusedLane === layer) setFocusedLane(null)
       }}
-      className="flex flex-col gap-3 p-4 outline-none"
-      style={{
-        background: paint.fill,
-        color: paint.ink,
-        borderRadius: 16,
-        boxShadow: layer === "full_mix" ? "0 0 0 1px rgba(255,255,255,0.35), 0 0 0 3px rgba(255,255,255,0.18)" : undefined,
-      }}
-      initial={reduce ? false : { opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: reduce ? 0 : 0.28 }}
+      className="lane outline-none"
+      style={{ borderLeftColor: paint.wave, color: paint.ink }}
+      initial={reduce ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: reduce ? 0 : 0.15 }}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="text-lg font-medium">{title}</h3>
+        <h3 className="text-[20px] font-medium">{title}</h3>
         {features.soloMute ? (
           <>
             <Button tone="secondary" aria-pressed={solo === layer} aria-label={`Solo ${title}`} onClick={() => toggleSolo(layer)}>
@@ -172,8 +167,8 @@ const LayerCard = memo(function LayerCard({ layer, reduce }: { layer: string; re
               type="button"
               role="tab"
               aria-selected={tab === item.variant}
-              className="rounded-full border px-3 py-1 text-sm"
-              style={{ borderColor: paint.ink, background: tab === item.variant ? paint.ink : "transparent", color: tab === item.variant ? paint.fill : paint.ink }}
+              className={`pad ${tab === item.variant ? "is-on" : ""}`}
+              style={{ borderColor: tab === item.variant ? paint.wave : undefined, color: paint.ink }}
               onClick={() => setTab(item.variant)}
             >
               {item.variant}

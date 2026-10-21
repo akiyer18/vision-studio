@@ -1,23 +1,21 @@
 ---
-description: Vision Studio liquid-glass visual system for the web app
+description: Vision Studio instrument visual system for the web app
 globs: apps/web/**/*
 alwaysApply: false
 ---
 
 # Design
 
-The studio is a dashboard on `#0B0A1A`. Two soft radial gradients, violet `#5B3FD6` and blue `#2B4FD8`, sit at low opacity, with a very subtle noise texture. Glass is `rgba(255,255,255,0.06)`, border `rgba(255,255,255,0.12)`, a 1px top highlight `rgba(255,255,255,0.18)`, blur 20px, saturate 140%. Use glass on at most six surfaces at once: the sidebar, the composer, the brief, the reasoning, the layers, and the tour popover.
+Vision Studio looks like a music instrument. The ground is `#0F0F10`. Panels are `#161617`. Raised controls are `#1E1E20`. Hairlines are `#2A2A2D` at 1px. Primary text is `#EDEDED`. Secondary text is `#9A9A9F`. Every text pair is at least 4.5 to 1. On the signal colour, text is `#0F0F10`.
 
-Ink `#F4F2FF` is primary text. Secondary `#B8B3D9`. Muted `#8A84B3`. All text meets 4.5 to 1. On the accent `#8B6CFF`, text is `#0B0A1A`. The accent is for primary actions and the focus ring, with a soft glow on hover only. Success `#4FD1C5`, warning `#F5B971`, error `#FF8A8A`.
+One signal colour, orange `#FF5A1F`, is used only for the primary action, the active step, focus, and the playhead. Lane colours are muted and appear only on audio and layer pads: drums `#E0533D`, chords `#E3B341`, bass `#2FA37C`, melody `#4C7DFF`, texture `#9B6BFF`. The pad stays dark. The colour is its edge and its waveform. Full mix has no sixth hue.
 
-Geist Sans is the interface. Geist Mono is for BPM, key, seeds, and file names. The greeting is 56px semibold at 1440px and wider, 44px below that, with a subtle vertical gradient from `#F4F2FF` to `#C9C2FF`. Section titles are 15px semibold. Body is 15px. Secondary copy is 13px. Tempo and key are 28px semibold. Spacing stays on an 8px grid.
+Do not use purple gradients, glass, backdrop blur, gradient text, a hero greeting, chat bubbles, confidence meters, or decorative icons.
 
-Lane hues are Drums `#FF6B57`, Chords `#F5C451`, Bass `#3FD0A8`, Melody `#6C8CFF`, and Texture `#B07CFF`. They fill that layer's card and chip. Ink on a lane is `#0B0A1A`. Full mix has no sixth hue.
+General Sans is the interface. Martian Mono is every readout: tempo, key, bars, step numbers, file names, and the trace. Both are self hosted, General Sans from Fontshare and Martian Mono from Fontsource. Sentence case. No all caps. Tabular numbers. Sizes are 13, 15, 20, and 32px. 56px is only the tempo and key readouts.
 
-Radius is 24px for large cards, 16px for inner cards, 12px for inputs, and full round for chips and pills. Sentence case. No all caps.
+Radius is 6px on controls and 10px on panels. Spacing stays on a 4px grid. Focus is a 1px signal outline. Motion is 120 to 180ms and mechanical. Steps snap in. A small LED blinks while thinking. Reduced motion makes those instant and holds the LED steady.
 
-Focus is a 2px accent outline, offset 2px. Motion is the greeting leaving, messages arriving, brief rows filling, and layer cards appearing. Reduced motion makes those instant.
+The transport spans the top: wordmark, session name, tempo, key, bars, status (idle, thinking, building, ready, or error), and Build in signal orange. The left rail is 01 Create, 02 Genres, 03 Analyse, 04 Tweak, then recent ideas. Analyse and Tweak say Soon when those flags are off. Create is a large input with a segmented "A full idea" / "One sound" switch and square Attach and Record buttons, then numbered steps on a vertical hairline. The right panel is a two-column parameter grid (label, mono value, source tag: you, detected, default, or reference), facets under their layer, the trace, then layer pads. Results are horizontal lanes with waveforms in the lane colour on the dark ground, play, three take buttons, Pick, and Another take.
 
-At 1440×900 the sidebar is 240px and the rail is 320px. Canvas content sits in a centred column at most 760px wide. The sidebar names Vision Studio and lists Create, Genre deep dive, Analyse, and Tweak. Analyse and Tweak show a Soon pill when those flags are off. Recent ideas, the latest 20, come from localStorage and can be restored, renamed, or deleted. Help and the session pill sit at the bottom. Before any input the canvas centres the greeting, the composer, the quick start chips, and three how-it-works cards, and the rail shows Getting started plus Layers. After the first turn, the canvas is a thread, the composer stays docked, and the rail shows the brief, the trace, and Build. After Build, layer cards sit in the thread and a player offers Play together and Export to Logic. The home view fits at 1280×800 and 1440×900 without page scrolling.
-
-Under 1200px the rail is a tabbed panel above the composer. Under 768px the sidebar is a drawer. Record, solo and mute, full mix, the styleguide link, the demo chip, and the Soon items follow `apps/web/src/features.ts`. Layer cards and the player load lazily.
+The empty Create screen fits at 1280×800 and 1440×900 without page scrolling. Under 1200px the right panel becomes tabs. Under 768px the left rail is a drawer. Record, solo and mute, full mix, the styleguide link, the demo control, and the Soon items follow `apps/web/src/features.ts`.

@@ -61,7 +61,7 @@ export function GenreRoom({ onUse }: Props) {
               <button
                 type="button"
                 aria-current={genre.id === selected ? "true" : undefined}
-                className={`w-full rounded-xl px-2 py-2 text-left text-sm ${genre.id === selected ? "bg-white/8 text-ink" : "text-secondary"}`}
+                className={`w-full rounded-[6px] px-2 py-2 text-left text-[13px] ${genre.id === selected ? "text-ink shadow-[inset_0_0_0_1px_var(--accent)]" : "text-secondary"}`}
                 onClick={() => setSelected(genre.id)}
               >
                 {genre.title}
@@ -73,7 +73,7 @@ export function GenreRoom({ onUse }: Props) {
       <div className="genre-detail px-4 py-4">
         {problem ? <p role="alert" className="text-danger">{problem}</p> : null}
         {detail && detail.id === selected ? (
-          <article className="glass flex flex-col gap-4 p-4">
+          <article className="panel flex flex-col gap-4 p-4">
             <header className="flex flex-wrap items-center justify-between gap-3">
               <h1 className="section-title">{detail.title}</h1>
               <Button onClick={() => onUse(detail)}>Use in Create</Button>

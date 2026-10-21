@@ -1,4 +1,3 @@
-import { Copy, Play, Square } from "lucide-react"
 import { useEffect, useRef, useState, useSyncExternalStore } from "react"
 
 import { fileName } from "../../api/client.ts"
@@ -87,7 +86,7 @@ export function PlayerBar({ onStartOver }: { onStartOver: () => void }) {
   }
 
   return (
-    <div className="studio-player border-t border-white/10 bg-canvas/90 px-4 py-3">
+    <div className="studio-player px-4 py-3">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
           {problem || exportError ? (
@@ -101,7 +100,6 @@ export function PlayerBar({ onStartOver }: { onStartOver: () => void }) {
             </Button>
           ) : (
             <Button aria-label={playing ? "Stop the layers" : "Play together"} onClick={() => void (playing ? transport.stop() : startTogether())}>
-              {playing ? <Square size={16} aria-hidden /> : <Play size={16} aria-hidden />}
               {playing ? "Stop" : "Play together"}
             </Button>
           )}
@@ -121,8 +119,7 @@ export function PlayerBar({ onStartOver }: { onStartOver: () => void }) {
             {listing.defaults ? <p className="text-sm text-secondary">Nothing was picked, so variation 1 of each layer was exported.</p> : null}
             <p className="break-all text-sm text-ink">{listing.folder}</p>
             <div className="flex flex-wrap items-center gap-2">
-              <button type="button" className="inline-flex items-center gap-2 text-sm text-secondary" onClick={() => void copy()}>
-                <Copy size={14} aria-hidden />
+              <button type="button" className="text-[13px] text-secondary" onClick={() => void copy()}>
                 Copy path
               </button>
               {copied ? <span className="text-sm text-secondary">Copied.</span> : null}
