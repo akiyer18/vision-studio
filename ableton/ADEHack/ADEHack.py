@@ -3,6 +3,7 @@
 # everything runs on Live's main thread via the ControlSurface timer.
 from __future__ import print_function, absolute_import
 import errno
+import math
 import json
 import os
 import socket
@@ -10,7 +11,7 @@ import socket
 import Live
 from _Framework.ControlSurface import ControlSurface
 
-VERSION = '5.4'
+VERSION = '5.5'
 HOST = '127.0.0.1'
 PORT = 9004
 GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 42,
@@ -18,7 +19,7 @@ GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 4
                  'crash': 49, 'perc': 54}
 WOULD_BLOCK = (errno.EAGAIN, errno.EWOULDBLOCK, errno.EINPROGRESS)
 PENDING = object()  # returned by a command that will reply later via schedule_message
-COMMANDS = ['arrangement_record', 'browse', 'capture_midi', 'clip_edit', 'create_clip', 'create_midi_track', 'create_scene', 'delete_device', 'delete_track', 'describe_set', 'duplicate_clip', 'duplicate_scene', 'duplicate_track', 'fire_scene', 'focus_clip', 'get_clip_notes', 'list_devices', 'list_scenes', 'list_tracks', 'load_device', 'load_sample', 'ping', 'play', 'play_for', 'play_scene_for', 'rename_scene', 'rename_track', 'sample_info', 'select_track', 'set_device_param', 'set_mixer', 'set_send', 'set_simpler', 'set_tempo', 'set_track_color', 'show_view', 'stop', 'stop_clip', 'transport_setup', 'version']
+COMMANDS = ['arrangement_info', 'arrangement_record', 'browse', 'capture_midi', 'clip_edit', 'create_clip', 'create_midi_track', 'create_scene', 'delete_device', 'delete_track', 'describe_set', 'duplicate_clip', 'duplicate_scene', 'duplicate_track', 'fire_scene', 'focus_clip', 'get_clip_notes', 'list_devices', 'list_scenes', 'list_tracks', 'load_device', 'load_sample', 'ping', 'play', 'play_for', 'play_scene_for', 'rename_scene', 'rename_track', 'sample_info', 'select_track', 'set_device_param', 'set_mixer', 'set_send', 'set_simpler', 'set_tempo', 'set_track_color', 'show_view', 'stop', 'stop_clip', 'transport_setup', 'version']
 LOAD_RETRY_TICKS = 3   # ~0.3 s between browser re-scans
 LOAD_RETRY_MAX = 8     # ~2.4 s total before replying not found
 
@@ -37,6 +38,7 @@ class ADEHack(ControlSurface):
         self._ramp_id = 0
         self._seq_id = 0
         self._play_id = 0
+        self._record_start = 0.0
         with self.component_guard():
             try:
                 self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -153,6 +155,8 @@ class ADEHack(ControlSurface):
                 return self._cmd_load_device(msg)
             if cmd == 'set_send':
                 return self._cmd_set_send(msg)
+            if cmd == 'arrangement_info':
+                return dict(self._arrangement_info(), ok=True)
             if cmd == 'describe_set':
                 return self._cmd_describe_set(msg)
             if cmd == 'get_clip_notes':
@@ -714,6 +718,12 @@ class ADEHack(ControlSurface):
         if msg.get('stop'):
             self._finish_recording('stopped by request')
             return {'ok': True, 'recording': False}
+        at_beats, from_bar = self._position_for_record(msg.get('at'))
+        self._record_start = at_beats
+        try:
+            song.loop = False   # a loop brace would wrap the recording back over itself
+        except Exception as e:
+            self.log_message('ADEHack: loop off failed: %r' % (e,))
         scenes = msg.get('scenes')
         if scenes:
             all_scenes = list(song.scenes)
@@ -730,6 +740,7 @@ class ADEHack(ControlSurface):
             song.record_mode = True
             self._run_sequence(seq_id, steps, 0, 0.0)
             return {'ok': True, 'recording': True, 'mode': 'scenes', 'tempo': float(song.tempo),
+                    'at_beats': at_beats, 'from_bar': from_bar,
                     'total_bars': total, 'steps_scheduled': len(steps),
                     'sequence': [dict(st, at_seconds=self._bars_seconds(sum(x['bars'] for x in steps[:i])))
                                  for i, st in enumerate(steps)],
@@ -737,12 +748,62 @@ class ADEHack(ControlSurface):
         bars = msg.get('bars')
         song.record_mode = True
         song.start_playing()
-        reply = {'ok': True, 'recording': True, 'mode': 'bars', 'tempo': float(song.tempo)}
+        reply = {'ok': True, 'recording': True, 'mode': 'bars', 'tempo': float(song.tempo),
+                 'at_beats': at_beats, 'from_bar': from_bar}
         if bars:
             seconds = self._bars_seconds(float(bars))
             self.schedule_message(max(1, int(round(seconds * 10.0))), lambda: self._seq_stop(seq_id))
             reply['stops_in_seconds'] = seconds
         return reply
+
+    def _beats_per_bar(self):
+        song = self.song()
+        try:
+            return 4.0 * float(song.signature_numerator) / float(song.signature_denominator)
+        except Exception:
+            return 4.0
+
+    def _arrangement_info(self):
+        song = self.song()
+        bpb = self._beats_per_bar()
+        info = {'beats_per_bar': bpb}
+        try:
+            last = float(song.last_event_time)
+        except Exception:
+            last = 0.0
+        info['last_event_time'] = last
+        info['bars'] = int(math.ceil(last / bpb - 1e-9)) if last > 0 else 0
+        try:
+            info['current_song_time'] = float(song.current_song_time)
+        except Exception:
+            pass
+        try:
+            info['loop'] = {'on': bool(song.loop), 'start': float(song.loop_start), 'length': float(song.loop_length)}
+        except Exception:
+            pass
+        info['is_playing'] = bool(song.is_playing)
+        return info
+
+    def _position_for_record(self, at):
+        """'end' = next bar boundary after the last arrangement event (0 if empty),
+        'start' = 0, number = beats, None = leave the playhead where it is."""
+        song = self.song()
+        bpb = self._beats_per_bar()
+        if at is None or at == '' or at == 'current':
+            try:
+                beats = float(song.current_song_time)
+            except Exception:
+                beats = 0.0
+        elif at == 'start':
+            beats = 0.0
+        elif at == 'end':
+            last = float(getattr(song, 'last_event_time', 0.0) or 0.0)
+            beats = 0.0 if last <= 0 else math.ceil(last / bpb - 1e-9) * bpb
+        else:
+            beats = max(0.0, float(at))
+        if at is not None and at != '' and at != 'current':
+            song.current_song_time = beats
+        return beats, int(beats // bpb) + 1
 
     def _bars_seconds(self, bars):
         return float(bars) * 4.0 * 60.0 / float(self.song().tempo)
@@ -777,6 +838,14 @@ class ADEHack(ControlSurface):
             song = self.song()
             song.record_mode = False
             song.stop_playing()
+            # leave the playhead parked at the end of what was just recorded, Arranger visible
+            try:
+                last = float(getattr(song, 'last_event_time', 0.0) or 0.0)
+                if last > 0:
+                    bpb = self._beats_per_bar()
+                    song.current_song_time = math.ceil(last / bpb - 1e-9) * bpb
+            except Exception as e:
+                self.log_message('ADEHack: park playhead failed: %r' % (e,))
             self._show_view('Arranger')
             self.log_message('ADEHack: arrangement recording finished (%s)' % (why,))
         except Exception as e:
