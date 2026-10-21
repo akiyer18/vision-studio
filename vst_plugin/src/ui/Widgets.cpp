@@ -101,7 +101,7 @@ KeyField::KeyField (const String& labelText, const String& initialValue)
     addAndMakeVisible (labelLabel);
 
     editor.setText (initialValue, dontSendNotification);
-    editor.setPasswordCharacter ('•');
+    editor.setPasswordCharacter ('*');
     editor.setReadOnly (false);
     editor.setMultiLine (false);
     editor.setReturnKeyStartsNewLine (false);
@@ -110,7 +110,7 @@ KeyField::KeyField (const String& labelText, const String& initialValue)
 
     revealButton.setButtonText ("show");
     revealButton.setClickingTogglesState (true);
-    revealButton.onClick = [this] { editor.setPasswordCharacter (revealButton.getToggleState() ? 0 : '•'); };
+    revealButton.onClick = [this] { editor.setPasswordCharacter (revealButton.getToggleState() ? 0 : '*'); };
     addAndMakeVisible (revealButton);
 
     setSize (400, 44);
