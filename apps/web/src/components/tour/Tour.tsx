@@ -107,7 +107,7 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
           </button>
           <button
             type="button"
-            className="min-h-8 rounded-[6px] bg-accent px-3 text-[13px] text-canvas"
+            className="min-h-8 rounded-[6px] bg-accent px-3 text-xs text-canvas"
             onClick={() => {
               if (last || visible.length === 0) onClose()
               else setIndex((value) => value + 1)

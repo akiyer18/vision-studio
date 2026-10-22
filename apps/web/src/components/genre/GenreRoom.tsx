@@ -68,7 +68,7 @@ export function GenreRoom({ onUse }: Props) {
               <button
                 type="button"
                 aria-current={genre.id === selected ? "true" : undefined}
-                className={`w-full rounded-[6px] px-2 py-2 text-left text-[13px] ${genre.id === selected ? "text-ink shadow-[inset_0_0_0_1px_var(--accent)]" : "text-secondary"}`}
+                className={`w-full rounded-[6px] px-2 py-2 text-left text-xs ${genre.id === selected ? "text-ink shadow-[inset_0_0_0_1px_var(--accent)]" : "text-secondary"}`}
                 onClick={() => setSelected(genre.id)}
               >
                 {genre.title}

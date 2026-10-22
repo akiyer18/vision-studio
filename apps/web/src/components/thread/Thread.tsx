@@ -247,7 +247,7 @@ function DebugPanel() {
   }, [enabled, sessionId, turnStatus, renders])
   if (!enabled) return null
   return (
-    <pre className="mono mt-3 overflow-auto text-[13px] text-secondary" aria-label="Renderer debug">
+    <pre className="mono mt-3 overflow-auto text-xs text-secondary" aria-label="Renderer debug">
       {body}
     </pre>
   )
@@ -261,7 +261,7 @@ function Thinking({ latest }: { latest: string }) {
         <i />
         <i />
       </span>
-      <p className="text-[13px]">{latest}</p>
+      <p className="text-xs">{latest}</p>
     </div>
   )
 }
@@ -290,7 +290,7 @@ function ReadingMessage() {
                 id="fix-key"
                 value={reading.key}
                 onChange={(event) => revise({ key: event.target.value })}
-                className="mono w-full rounded-[6px] border border-[var(--line)] bg-raised px-2 py-1 text-[15px] text-ink outline-none"
+                className="mono w-full rounded-[6px] border border-[var(--line)] bg-raised px-2 py-1 text-base text-ink outline-none"
               />
               <label className="text-sm text-muted" htmlFor="fix-tempo">
                 Tempo
@@ -300,7 +300,7 @@ function ReadingMessage() {
                 inputMode="decimal"
                 value={reading.tempo}
                 onChange={(event) => revise({ tempo: event.target.value })}
-                className="mono w-full rounded-[6px] border border-[var(--line)] bg-raised px-2 py-1 text-[15px] text-ink outline-none"
+                className="mono w-full rounded-[6px] border border-[var(--line)] bg-raised px-2 py-1 text-base text-ink outline-none"
               />
             </div>
           ) : null}

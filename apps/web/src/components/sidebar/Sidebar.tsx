@@ -69,10 +69,10 @@ export function Sidebar({ page, onReplay }: Props) {
 
   return (
     <aside className="studio-side" data-tour="sidebar">
-      <p className="wordmark flex items-center gap-2" data-tour="welcome">
+      <button type="button" className="wordmark flex items-center gap-2" data-tour="welcome" aria-label="Vision Studio home" onClick={() => go("/")}>
         <Logo />
         <span className="wordmark-copy">Vision Studio</span>
-      </p>
+      </button>
       <nav aria-label="Studio" className="side-nav flex flex-col gap-1">
         <RoomButton
           icon={<House aria-hidden="true" size={16} />}
@@ -184,7 +184,7 @@ export function Sidebar({ page, onReplay }: Props) {
               <Shortcut keys="Space" action="Play and stop" />
               <Shortcut keys="?" action="Open or close these shortcuts" />
             </ul>
-            <button type="button" className="mt-3 text-[13px] text-secondary" onClick={() => setShortcutsOpen(false)}>
+            <button type="button" className="mt-3 text-xs text-secondary" onClick={() => setShortcutsOpen(false)}>
               Close
             </button>
           </div>
@@ -229,7 +229,7 @@ function SoonItem({ icon, label, soon }: { icon: ReactNode; label: string; soon:
     <div className="flex items-center gap-2 px-2 py-1.5 text-secondary" title={`${label}, soon`} aria-disabled="true">
       {icon}
       <span className="side-label truncate">{label}</span>
-      <span className="side-copy ml-auto rounded-full border border-[var(--line)] px-2 py-0.5 text-[12px]">Soon</span>
+      <span className="side-copy ml-auto rounded-full border border-[var(--line)] px-2 py-0.5 text-xs">Soon</span>
     </div>
   )
 }

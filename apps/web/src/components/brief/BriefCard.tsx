@@ -55,7 +55,7 @@ export function BriefCard({ mark, hot = false }: Props) {
           if (withOutput.length === 0) return null
           return (
             <div key={name} className="flex flex-col gap-2">
-              <p className="text-[12px] font-medium text-secondary">{GROUP_LABEL[name]}</p>
+              <p className="text-xs font-medium text-secondary">{GROUP_LABEL[name]}</p>
               {withOutput.map((row) => (
                 <Cell
                   key={row.slot}
@@ -269,7 +269,7 @@ function Editable({
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(text)
-  const face = "mono text-left text-[15px] text-ink"
+  const face = "mono text-left text-base text-ink"
 
   if (!editing) {
     return (

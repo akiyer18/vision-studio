@@ -119,7 +119,7 @@ export function PlayerBar({ onStartOver }: { onStartOver: () => void }) {
             {listing.defaults ? <p className="text-sm text-secondary">Nothing was picked, so variation 1 of each layer was exported.</p> : null}
             <p className="break-all text-sm text-ink">{listing.folder}</p>
             <div className="flex flex-wrap items-center gap-2">
-              <button type="button" className="text-[13px] text-secondary" onClick={() => void copy()}>
+              <button type="button" className="text-xs text-secondary" onClick={() => void copy()}>
                 Copy path
               </button>
               {copied ? <span className="text-sm text-secondary">Copied.</span> : null}

@@ -10,10 +10,10 @@ import { Logo } from "../Logo.tsx"
 import { PreviewCard } from "./PreviewCard.tsx"
 
 const lines = [
-  "Learn the groove behind a house beat",
-  "Hear why this progression feels sad",
-  "Make dark industrial drums at 94 BPM",
-  "Find out why my chorus feels small",
+  "A house groove",
+  "Why this feels sad",
+  "Dark drums at 94 BPM",
+  "A small chorus",
 ]
 
 const steps = [
@@ -76,7 +76,7 @@ export function Home({ composerHost }: Props) {
   return (
     <div className="home-screen">
       <header className="home-bar">
-        <button type="button" className="wordmark flex items-center gap-2" onClick={() => go("/")}>
+        <button type="button" className="wordmark flex items-center gap-2" aria-label="Vision Studio home" onClick={() => go("/")}>
           <Logo />
           <span className="wordmark-copy">Vision Studio</span>
         </button>
@@ -199,8 +199,10 @@ function Typed() {
   const shown = reduce ? lines[0] : (lines[line] ?? "").slice(0, count)
   return (
       <h1 className="home-headline">
-        {shown}
-        {reduce ? null : <span className="home-caret" aria-hidden="true" />}
+        <span className="home-headline-text">
+          {shown}
+          {reduce ? null : <span className="home-caret" aria-hidden="true" />}
+        </span>
       </h1>
   )
 }

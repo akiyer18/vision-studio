@@ -9,8 +9,8 @@ const swatches = [
   ["Panel", "#12121C"],
   ["Raised", "#1A1A27"],
   ["Ink", "#EEEDF7"],
-  ["Secondary", "#A6A3BF"],
-  ["Muted", "#7E7A9C"],
+  ["Secondary", "#B4B1CC"],
+  ["Muted", "#B4B1CC"],
   ["Violet", "#8B5CF6"],
   ["Light violet", "#A78BFA"],
   ["Cyan", "#5EEAD4"],
@@ -27,7 +27,7 @@ export function Styleguide() {
       <div className="relative z-1 mx-auto flex w-full max-w-3xl flex-col gap-8 p-6">
         <header className="flex items-end justify-between gap-3">
           <div>
-            <h1 className="text-[32px]">Styleguide</h1>
+            <h1 className="page-title">Styleguide</h1>
             <p className="mt-2 text-secondary">Tokens, buttons, pads, and source tags.</p>
           </div>
           <a href="/" className="text-secondary underline-offset-4 hover:underline">

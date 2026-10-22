@@ -62,7 +62,7 @@ export function RecentList({ onOpen }: Props) {
                       setRenaming(null)
                     }
                   }}
-                  className="w-full rounded-[6px] border border-[var(--line)] bg-transparent px-2 py-1 text-[13px] text-ink outline-none"
+                  className="w-full rounded-[6px] border border-[var(--line)] bg-transparent px-2 py-1 text-xs text-ink outline-none"
                 />
               ) : (
                 <button

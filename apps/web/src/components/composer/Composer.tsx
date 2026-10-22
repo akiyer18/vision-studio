@@ -580,10 +580,10 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
         {recording ? (
           <div className="flex items-center gap-2 px-2">
             <span className="rec-led" style={{ opacity: 0.25 + level * 0.75 }} aria-hidden />
-            <p className="mono text-[13px] text-ink" aria-live="polite">
+            <p className="mono text-xs text-ink" aria-live="polite">
               {formatElapsed(elapsed)}
             </p>
-            <button type="button" className="text-[13px] text-ink" onClick={stopRecording}>
+            <button type="button" className="text-xs text-ink" onClick={stopRecording}>
               Stop
             </button>
           </div>
