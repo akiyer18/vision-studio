@@ -21,8 +21,10 @@ private:
 
     Label       promptLabel;
     TextEditor  promptEditor;
+    Label       promptHint;
     Label       refLabel;
     TextEditor  refPathEditor;
+    Label       refHint;
 
     // Mic / initiate controls
     Label       micLabel;
@@ -31,14 +33,17 @@ private:
     Label       bpmLabel;
     TextEditor  bpmEditor;
     ToggleButton  melodicToggle;
+    Label       bpmHint;
 
     Label       strengthLabel;
     Slider      strengthSlider;
     Label       durationLabel;
     TextEditor  durationEditor;
+    Label       durationHint;
 
     TextButton  generateButton;
     TextButton  playButton;
+    TextButton  sendButton;
     ResultBox   resultBox;
     StatusBar   statusBar;
 

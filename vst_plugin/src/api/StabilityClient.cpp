@@ -12,22 +12,19 @@ StabilityClient::StabilityClient (const String& apiKey) : apiKey (apiKey.trim())
 {
 }
 
-String StabilityClient::submit (const URL& url)
+String StabilityClient::submit (const HttpResponse& r)
 {
-    StringPairArray h;
-    h.set ("Authorization", "Bearer " + apiKey);
-    h.set ("Accept", "audio/*");
-
-    auto r = Http::request (url, h, 120000);
-
     if (r.status == 202)
     {
         auto json = JSON::parse (r.body);
-        return json.getProperty ("id", {}).toString();
+        auto id = json.getProperty ("id", {}).toString();
+        if (id.isEmpty())
+            throw std::runtime_error ("Stability submit returned no generation id");
+        return id;
     }
 
     if (r.status == 200)
-        return {}; // synchronous result (older API behaviour)
+        return {};
 
     throw std::runtime_error (("Stability submit failed [" + String (r.status) + "]: " + r.body.substring (0, 400)).toRawUTF8());
 }
@@ -72,23 +69,24 @@ StabilityResult StabilityClient::textToAudio (const String& prompt, int duration
 {
     StabilityResult result;
 
-    URL url (String (kBase) + "/stable-audio/text-to-audio");
-    url = url.withParameter ("prompt", prompt);
-    url = url.withParameter ("duration", String (durationSec));
-    url = url.withParameter ("output_format", outputFormat);
-    url = url.withParameter ("seed", "0");   // random
+    StringPairArray fields;
+    fields.set ("prompt", prompt);
+    fields.set ("duration", String (durationSec));
+    fields.set ("output_format", outputFormat);
+    fields.set ("seed", "0");
+
+    StringPairArray h;
+    h.set ("Authorization", "Bearer " + apiKey);
+    h.set ("Accept", "audio/*");
 
     try
     {
-        auto id = submit (url);
+        auto r = Http::postMultipart (String (kBase) + "/stable-audio/text-to-audio",
+                                      fields, {}, {}, {}, {}, h, 120000);
+        auto id = submit (r);
         if (id.isNotEmpty())
             return fetchResult (id);
 
-        // Synchronous fallback: re-issue and read bytes directly.
-        StringPairArray h;
-        h.set ("Authorization", "Bearer " + apiKey);
-        h.set ("Accept", "audio/*");
-        auto r = Http::request (url, h, 120000);
         result.ok    = r.ok();
         result.audio = r.raw;
         result.error = r.ok() ? "" : r.body;
@@ -110,25 +108,27 @@ StabilityResult StabilityClient::audioToAudio (const MemoryBlock& audioWav,
 {
     StabilityResult result;
 
-    URL url (String (kBase) + "/stable-audio/audio-to-audio");
-    url = url.withParameter ("prompt", prompt);
-    url = url.withParameter ("strength", String (strength, 3));
-    url = url.withParameter ("duration", String (durationSec));
-    url = url.withParameter ("output_format", outputFormat);
-    url = url.withParameter ("seed", "0");
-    url = url.withDataToUpload ("audio", sourceFilename.isNotEmpty() ? sourceFilename : "input.wav",
-                                audioWav, "audio/wav");
+    StringPairArray fields;
+    fields.set ("prompt", prompt);
+    fields.set ("strength", String (strength, 3));
+    fields.set ("duration", String (durationSec));
+    fields.set ("output_format", outputFormat);
+    fields.set ("seed", "0");
+
+    StringPairArray h;
+    h.set ("Authorization", "Bearer " + apiKey);
+    h.set ("Accept", "audio/*");
 
     try
     {
-        auto id = submit (url);
+        auto r = Http::postMultipart (String (kBase) + "/stable-audio/audio-to-audio",
+                                      fields, "audio",
+                                      sourceFilename.isNotEmpty() ? sourceFilename : "input.wav",
+                                      audioWav, "audio/wav", h, 120000);
+        auto id = submit (r);
         if (id.isNotEmpty())
             return fetchResult (id);
 
-        StringPairArray h;
-        h.set ("Authorization", "Bearer " + apiKey);
-        h.set ("Accept", "audio/*");
-        auto r = Http::request (url, h, 120000);
         result.ok    = r.ok();
         result.audio = r.raw;
         result.error = r.ok() ? "" : r.body;

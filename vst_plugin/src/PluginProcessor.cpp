@@ -9,7 +9,9 @@
 
 namespace app {
 
-PluginProcessor::PluginProcessor() : AudioProcessor()
+PluginProcessor::PluginProcessor() : AudioProcessor (BusesProperties()
+    .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
+    .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
 }
 
@@ -29,6 +31,13 @@ AudioProcessorEditor* PluginProcessor::createEditor()
 void PluginProcessor::prepareToPlay (double sampleRate, int)
 {
     captureRate = sampleRate;
+    const int maxSamples = jmax (1, (int) (30.0 * sampleRate));
+
+    const SpinLock::ScopedLockType lock (captureLock);
+    captureBuffer.setSize (2, maxSamples, false, true, true);
+    captureBuffer.clear();
+    captureWrite = 0;
+    captureMaxSamples = maxSamples;
 }
 
 void PluginProcessor::releaseResources()
@@ -78,14 +87,25 @@ void PluginProcessor::setKeys (const ApiKeys& keys)
 
 GeneratedAudio* PluginProcessor::getSelected() const
 {
+    const SpinLock::ScopedLockType lock (generatedLock);
+
     if (selectedIndex >= 0 && selectedIndex < generated.size())
         return generated[selectedIndex];
     return nullptr;
 }
 
+int PluginProcessor::getNumGenerated() const
+{
+    const SpinLock::ScopedLockType lock (generatedLock);
+    return generated.size();
+}
+
 void PluginProcessor::setSelectedIndex (int index)
 {
-    selectedIndex = index;
+    {
+        const SpinLock::ScopedLockType lock (generatedLock);
+        selectedIndex = index;
+    }
     sendChangeMessage();
 }
 
@@ -168,8 +188,11 @@ void PluginProcessor::addGenerated (const StabilityResult& result, const String&
     g->generationId = result.generationId;
     g->variationIndex = variationIndex;
 
-    generated.add (g);
-    selectedIndex = generated.size() - 1;
+    {
+        const SpinLock::ScopedLockType lock (generatedLock);
+        generated.add (g);
+        selectedIndex = generated.size() - 1;
+    }
     sendChangeMessage();
 }
 
@@ -248,18 +271,15 @@ void PluginProcessor::recordMicAndInitiate (double strength, int bpm, bool isMel
             throw std::runtime_error ("Mic capture did not complete in time.");
         }
 
-        if (captureWrite == 0)
+        auto trimmed = copyCapturedAudio();
+        if (trimmed.getNumSamples() == 0)
             throw std::runtime_error ("No audio captured from mic.");
 
         String style = isMelodic ? "melodic" : "rhythmic";
         String prompt = "A " + style + " lo-fi hip-hop beat at " + String (bpm) +
                         " BPM with ambiente and chillhop vibe, warm and nostalgic.";
 
-        const int len = jmin (captureWrite, captureBuffer.getNumSamples());
-        AudioBuffer<float> trimmed (captureBuffer.getNumChannels(), len);
-        for (int ch = 0; ch < captureBuffer.getNumChannels(); ++ch)
-            trimmed.copyFrom (ch, 0, captureBuffer, ch, 0, len);
-
+        const int len = trimmed.getNumSamples();
         auto wav = audioIO.encodeWav (trimmed, captureRate);
 
         StabilityClient client (keys.stability);
@@ -288,9 +308,16 @@ void PluginProcessor::recordMicAndInitiate (double strength, int bpm, bool isMel
 //==============================================================================
 void PluginProcessor::analyseTrack (const String& path, bool advancedBreakdown)
 {
-    runJob (advancedBreakdown ? "Advanced breakdown..." : "Analysing track...", [this, path, advancedBreakdown]()
+    const File fallback = lastCaptureFile;
+
+    runJob (advancedBreakdown ? "Advanced breakdown..." : "Analysing track...",
+            [this, path, advancedBreakdown, fallback]()
     {
-        auto decoded = audioIO.read (File (path));
+        File file = path.isNotEmpty() ? File (path) : fallback;
+        if (! file.existsAsFile())
+            throw std::runtime_error ("Load a track or capture from the DAW first.");
+
+        auto decoded = audioIO.read (file);
         if (! decoded.ok)         throw std::runtime_error (decoded.error.toRawUTF8());
 
         auto wav = audioIO.encodeWav (decoded.buffer, decoded.sampleRate);
@@ -315,11 +342,11 @@ void PluginProcessor::analyseTrack (const String& path, bool advancedBreakdown)
         if (text.isEmpty())
             throw std::runtime_error (err.isNotEmpty() ? err.toRawUTF8() : "Analysis returned no text");
 
-        MessageManager::callAsync ([this, text, path, decoded]()
+        MessageManager::callAsync ([this, text, file, decoded]()
         {
             analysisText = text;
-            analysisPath = path;
-            analysedFile = File (path);
+            analysisPath = file.getFullPathName();
+            analysedFile = file;
             analysedAudio = decoded;
             sendChangeMessage();
         });
@@ -606,12 +633,20 @@ void PluginProcessor::startCapture()
 {
     double rate = getSampleRate() > 0 ? getSampleRate() : 44100.0;
     captureRate = rate;
-    captureMaxSamples = (int) (30.0 * rate);
+    const int maxSamples = jmax (1, (int) (30.0 * rate));
 
-    captureBuffer = AudioBuffer<float> (2, captureMaxSamples);
-    captureBuffer.clear();
-    captureWrite = 0;
-    capturing = true;
+    {
+        const SpinLock::ScopedLockType lock (captureLock);
+
+        if (captureBuffer.getNumChannels() != 2 || captureBuffer.getNumSamples() < maxSamples)
+            captureBuffer.setSize (2, maxSamples, false, true, true);
+
+        captureBuffer.clear();
+        captureWrite = 0;
+        captureMaxSamples = jmin (maxSamples, captureBuffer.getNumSamples());
+        capturing = true;
+    }
+
     sendChangeMessage();
 }
 
@@ -621,16 +656,30 @@ void PluginProcessor::stopCapture()
     sendChangeMessage();
 }
 
+File PluginProcessor::stopCaptureAndSave()
+{
+    capturing = false;
+    return saveCaptureToDisk();
+}
+
 void PluginProcessor::captureMicForSeconds (int seconds)
 {
     double rate = getSampleRate() > 0 ? getSampleRate() : 44100.0;
     captureRate = rate;
-    captureMaxSamples = jmax (1, seconds) * (int) rate;
+    const int maxSamples = jmax (1, seconds) * (int) rate;
 
-    captureBuffer = AudioBuffer<float> (2, captureMaxSamples);
-    captureBuffer.clear();
-    captureWrite = 0;
-    capturing = true;
+    {
+        const SpinLock::ScopedLockType lock (captureLock);
+
+        if (captureBuffer.getNumChannels() != 2 || captureBuffer.getNumSamples() < maxSamples)
+            captureBuffer.setSize (2, maxSamples, false, true, true);
+
+        captureBuffer.clear();
+        captureWrite = 0;
+        captureMaxSamples = jmin (maxSamples, captureBuffer.getNumSamples());
+        capturing = true;
+    }
+
     sendChangeMessage();
 }
 
@@ -639,28 +688,47 @@ String PluginProcessor::getMicCaptureStatus() const
     if (! capturing)
         return "Idle";
 
-    double secs = captureRate > 0 ? (double) captureWrite / captureRate : 0.0;
-    double total = captureRate > 0 ? (double) captureMaxSamples / captureRate : 0.0;
+    double secs = captureRate > 0 ? (double) captureWrite.load() / captureRate : 0.0;
+    double total = captureRate > 0 ? (double) captureMaxSamples.load() / captureRate : 0.0;
     return String ("Capturing mic: ") + String (secs, 1) + "s / " + String (total, 0) + "s";
+}
+
+AudioBuffer<float> PluginProcessor::copyCapturedAudio() const
+{
+    const SpinLock::ScopedLockType lock (captureLock);
+
+    const int len = jmin (captureWrite.load(), captureBuffer.getNumSamples());
+    if (len <= 0)
+        return {};
+
+    AudioBuffer<float> copy (captureBuffer.getNumChannels(), len);
+    for (int ch = 0; ch < captureBuffer.getNumChannels(); ++ch)
+        copy.copyFrom (ch, 0, captureBuffer, ch, 0, len);
+
+    return copy;
 }
 
 File PluginProcessor::saveCaptureToDisk()
 {
+    capturing = false;
+
+    auto trimmed = copyCapturedAudio();
+    if (trimmed.getNumSamples() <= 0)
+    {
+        sendChangeMessage();
+        return {};
+    }
+
     File dir = File::getSpecialLocation (File::userApplicationDataDirectory)
                  .getChildFile ("ADE Hack").getChildFile ("captures");
     dir.createDirectory();
 
     File f = dir.getChildFile ("daw-capture-" + Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S") + ".wav");
 
-    const int len = jmin (captureWrite, captureBuffer.getNumSamples());
-    AudioBuffer<float> trimmed (captureBuffer.getNumChannels(), len);
-    for (int ch = 0; ch < captureBuffer.getNumChannels(); ++ch)
-        trimmed.copyFrom (ch, 0, captureBuffer, ch, 0, len);
-
     auto wav = audioIO.encodeWav (trimmed, captureRate);
     f.replaceWithData (wav.getData(), wav.getSize());
+    lastCaptureFile = f;
 
-    capturing = false;
     sendChangeMessage();
     return f;
 }
@@ -673,43 +741,85 @@ void PluginProcessor::processBlock (AudioBuffer<float>& audio, MidiBuffer& midi)
     const int numSamples = audio.getNumSamples();
 
     // Capture DAW input
-    if (capturing && captureBuffer.getNumSamples() > 0)
+    if (capturing.load (std::memory_order_relaxed))
     {
-        for (int ch = 0; ch < audio.getNumChannels(); ++ch)
-        {
-            if (captureWrite < captureBuffer.getNumSamples())
-            {
-                int toCopy = jmin (numSamples, captureBuffer.getNumSamples() - captureWrite);
-                captureBuffer.copyFrom (ch, captureWrite, audio, ch, 0, toCopy);
-            }
-        }
-        captureWrite += numSamples;
+        auto input = getBusBuffer (audio, true, 0);
+        const int numInputChannels = input.getNumChannels();
 
-        if (captureWrite >= captureMaxSamples)
+        if (numInputChannels > 0)
         {
-            capturing = false;
-            sendChangeMessage();
+            bool finished = false;
+
+            {
+                const SpinLock::ScopedTryLockType lock (captureLock);
+
+                if (lock.isLocked() && captureBuffer.getNumSamples() > 0)
+                {
+                    const int target = captureMaxSamples.load (std::memory_order_relaxed);
+                    const int written = captureWrite.load (std::memory_order_relaxed);
+                    const int toCopy = jmin (numSamples, target - written);
+
+                    if (toCopy > 0)
+                    {
+                        for (int ch = 0; ch < captureBuffer.getNumChannels(); ++ch)
+                            captureBuffer.copyFrom (ch, written, input,
+                                                    jmin (ch, numInputChannels - 1), 0, toCopy);
+
+                        captureWrite.store (written + toCopy, std::memory_order_relaxed);
+                    }
+
+                    if (captureWrite.load (std::memory_order_relaxed) >= target)
+                    {
+                        capturing = false;
+                        finished = true;
+                    }
+                }
+            }
+
+            if (finished)
+                sendChangeMessage();
         }
     }
 
+    auto output = getBusBuffer (audio, false, 0);
+    output.clear();
+
     // Playback the selected generated audio
-    if (playing && selectedIndex >= 0 && selectedIndex < generated.size())
     {
-        auto* g = generated[selectedIndex];
-        if (g != nullptr && g->buffer.getNumSamples() > 0)
+        const SpinLock::ScopedTryLockType lock (generatedLock);
+
+        if (lock.isLocked() && playing
+            && selectedIndex >= 0 && selectedIndex < generated.size())
         {
-            for (int ch = 0; ch < audio.getNumChannels(); ++ch)
+            auto* g = generated[selectedIndex];
+
+            if (g != nullptr && g->buffer.getNumSamples() > 0)
             {
-                int srcCh = jmin (ch, g->buffer.getNumChannels() - 1);
-                int remaining = g->buffer.getNumSamples() - playPosition;
-                int toCopy = jmin (numSamples, jmax (0, remaining));
+                const int total = g->buffer.getNumSamples();
 
-                if (toCopy > 0)
-                    audio.copyFrom (ch, 0, g->buffer, srcCh, playPosition, toCopy);
+                if (playPosition < 0 || playPosition >= total)
+                    playPosition = 0;
 
-                playPosition += toCopy;
-                if (playPosition >= g->buffer.getNumSamples())
-                    playPosition = 0;   // loop
+                int pos = playPosition;
+                int written = 0;
+
+                while (written < numSamples)
+                {
+                    const int chunk = jmin (numSamples - written, total - pos);
+
+                    for (int ch = 0; ch < output.getNumChannels(); ++ch)
+                    {
+                        const int srcCh = jmin (ch, g->buffer.getNumChannels() - 1);
+                        output.copyFrom (ch, written, g->buffer, srcCh, pos, chunk);
+                    }
+
+                    written += chunk;
+                    pos += chunk;
+                    if (pos >= total)
+                        pos = 0;   // seamless loop
+                }
+
+                playPosition = pos;
             }
         }
     }

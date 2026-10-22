@@ -21,11 +21,14 @@ private:
     Label       sampleLabel;
     TextEditor  samplePathEditor;
     Label       samplePathLabel;
+    Label       samplePathHint;
 
     TextEditor  promptEditor;
     Label       promptLabel;
+    Label       promptHint;
 
     Label       strengthLabel;
+    Label       strengthHint;
     Slider      strengthSlider;
 
     TextButton  tweakButton;

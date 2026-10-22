@@ -19,6 +19,10 @@ GenAltRow::GenAltRow (PluginProcessor& p, int idx)
     compareButton.onClick = [this]() { processor.compareAlternative (index); };
     addAndMakeVisible (compareButton);
 
+    sendButton.setButtonText ("Send to DAW");
+    sendButton.onClick = [this]() { processor.sendToDaw (index, true); };
+    addAndMakeVisible (sendButton);
+
     addAndMakeVisible (compareResult);
 
     setSize (520, 150);
@@ -33,9 +37,12 @@ void GenAltRow::paint (Graphics& g)
 void GenAltRow::resized()
 {
     auto b = getLocalBounds().reduced (8);
-    nameLabel.setBounds (b.removeFromLeft (180));
-    playButton.setBounds (b.removeFromLeft (70));
-    compareButton.setBounds (b.removeFromLeft (150));
+    auto top = b.removeFromTop (26);
+    nameLabel.setBounds (top.removeFromLeft (170));
+    playButton.setBounds (top.removeFromLeft (60));
+    compareButton.setBounds (top.removeFromLeft (150));
+    sendButton.setBounds (top.removeFromLeft (110));
+    b.removeFromTop (6);
     compareResult.setBounds (b);
 }
 
@@ -55,6 +62,7 @@ GenerateAlternativesTab::GenerateAlternativesTab (PluginProcessor& p) : processo
     addAndMakeVisible (generateButton);
 
     addAndMakeVisible (analysisResult);
+    addAndMakeVisible (statusBar);
 
     setSize (640, 700);
 
@@ -82,12 +90,27 @@ void GenerateAlternativesTab::rebuildAltRows ()
         altRows.add (std::move (rowComp));
     }
 
-    resized();
+    layoutAltRows();
+}
+
+void GenerateAlternativesTab::layoutAltRows ()
+{
+    auto area = altContainer.getLocalBounds();
+
+    for (auto& row : altRows)
+    {
+        if (row == nullptr)
+            continue;
+
+        row->setBounds (area.removeFromTop (150));
+        area.removeFromTop (6);
+    }
 }
 
 void GenerateAlternativesTab::updateStatus ()
 {
     auto& js = processor.getJobState();
+    statusBar.setState (js);
     generateButton.setEnabled (! js.running);
 
     if (processor.hasAnalysedAudio())
@@ -122,8 +145,10 @@ void GenerateAlternativesTab::resized()
     analysisResult.setBounds (b.removeFromTop (120));
 
     b.removeFromTop (8);
+    statusBar.setBounds (b.removeFromBottom (80));
+    b.removeFromBottom (6);
     altContainer.setBounds (b);
-    rebuildAltRows ();
+    layoutAltRows ();
 }
 
 void GenerateAlternativesTab::changeListenerCallback (ChangeBroadcaster*)

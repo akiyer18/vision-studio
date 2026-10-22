@@ -5,25 +5,22 @@ namespace app {
 TweakSampleTab::TweakSampleTab (PluginProcessor& p) : processor (p)
 {
     // --- Sample source ---
-    sampleLabel.setText ("No sample loaded", dontSendNotification);
-    sampleLabel.setFont (Font (13.0f, Font::bold));
-    sampleLabel.setJustificationType (Justification::left);
-    sampleLabel.setColour (Label::textColourId, Colours::lightgrey);
+    styleFieldHint (sampleLabel, "No sample loaded");
     addAndMakeVisible (sampleLabel);
 
-    samplePathLabel.setText ("Sample path", dontSendNotification);
-    samplePathLabel.setFont (Font (12.0f));
-    samplePathLabel.setJustificationType (Justification::left);
+    styleFieldTitle (samplePathLabel, "Sample path");
     addAndMakeVisible (samplePathLabel);
 
     samplePathEditor.setMultiLine (false);
     samplePathEditor.setText ("", dontSendNotification);
+    samplePathEditor.setColour (TextEditor::textColourId, Colours::white);
     addAndMakeVisible (samplePathEditor);
 
+    styleFieldHint (samplePathHint, "Absolute path to the audio file you want to restyle.");
+    addAndMakeVisible (samplePathHint);
+
     // --- Prompt ---
-    promptLabel.setText ("Tweak prompt", dontSendNotification);
-    promptLabel.setFont (Font (14.0f, Font::bold));
-    promptLabel.setJustificationType (Justification::left);
+    styleFieldTitle (promptLabel, "Tweak prompt");
     addAndMakeVisible (promptLabel);
 
     promptEditor.setMultiLine (true);
@@ -34,10 +31,11 @@ TweakSampleTab::TweakSampleTab (PluginProcessor& p) : processor (p)
                           dontSendNotification);
     addAndMakeVisible (promptEditor);
 
+    styleFieldHint (promptHint, "Describe the change you want: tone, texture, rhythm feel.");
+    addAndMakeVisible (promptHint);
+
     // --- Strength ---
-    strengthLabel.setText ("Noise / variation strength", dontSendNotification);
-    strengthLabel.setFont (Font (12.0f));
-    strengthLabel.setJustificationType (Justification::left);
+    styleFieldTitle (strengthLabel, "Noise / variation strength");
     addAndMakeVisible (strengthLabel);
 
     strengthSlider.setRange (0.0, 1.0, 0.05);
@@ -45,6 +43,9 @@ TweakSampleTab::TweakSampleTab (PluginProcessor& p) : processor (p)
     strengthSlider.setSliderStyle (Slider::LinearHorizontal);
     strengthSlider.setTextBoxStyle (Slider::TextBoxRight, false, 60, 20);
     addAndMakeVisible (strengthSlider);
+
+    styleFieldHint (strengthHint, "0 = close to the original sample, 1 = very different.");
+    addAndMakeVisible (strengthHint);
 
     // --- Actions ---
     tweakButton.setButtonText ("Tweak sample");
@@ -111,17 +112,20 @@ void TweakSampleTab::resized()
 {
     auto b = getLocalBounds().reduced (10);
 
-    sampleLabel.setBounds (b.removeFromTop (22));
-    samplePathLabel.setBounds (b.removeFromTop (20));
+    sampleLabel.setBounds (b.removeFromTop (20));
+    samplePathLabel.setBounds (b.removeFromTop (18));
     samplePathEditor.setBounds (b.removeFromTop (26));
+    samplePathHint.setBounds (b.removeFromTop (16));
 
     b.removeFromTop (8);
-    promptLabel.setBounds (b.removeFromTop (20));
-    promptEditor.setBounds (b.removeFromTop (100));
+    promptLabel.setBounds (b.removeFromTop (18));
+    promptEditor.setBounds (b.removeFromTop (90));
+    promptHint.setBounds (b.removeFromTop (16));
 
     b.removeFromTop (10);
     strengthLabel.setBounds (b.removeFromTop (18));
     strengthSlider.setBounds (b.removeFromTop (24));
+    strengthHint.setBounds (b.removeFromTop (16));
 
     b.removeFromTop (14);
     auto btnRow = b.removeFromTop (34);

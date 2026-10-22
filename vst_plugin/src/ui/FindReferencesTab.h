@@ -21,6 +21,7 @@ private:
 
     Label       queryLabel;
     TextEditor  queryEditor;
+    Label       queryHint;
     TextButton  findButton;
     ResultBox   resultBox;
     StatusBar   statusBar;

@@ -18,13 +18,20 @@ private:
     PluginProcessor& processor;
 
     KeyField stabilityKey;
+    Label    stabilityHint;
     KeyField geminiKey;
-    ComboBox   modelCombo;
+    Label    geminiHint;
+    Label    modelLabel;
+    ComboBox modelCombo;
+    Label    modelHint;
     KeyField hfKey;
+    Label    hfHint;
     KeyField soundchartsKey;
+    Label    soundchartsHint;
 
     Label       folderLabel;
     TextEditor  exportPathEditor;
+    Label       exportHint;
     TextButton  saveButton;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SettingsTab)

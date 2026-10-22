@@ -6,6 +6,9 @@
 
 namespace app {
 
+void styleFieldTitle (Label& label, const String& text);
+void styleFieldHint  (Label& label, const String& text);
+
 // A titled box that holds a single child component.
 class Section : public Component
 {

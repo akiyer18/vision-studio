@@ -54,6 +54,47 @@ public:
         return readStream (u, buildHeaderString (all), timeoutMs);
     }
 
+    static HttpResponse postMultipart (const String& url,
+                                       const StringPairArray& fields,
+                                       const String& fileField = {},
+                                       const String& fileName = {},
+                                       const MemoryBlock& fileData = {},
+                                       const String& fileMimeType = "application/octet-stream",
+                                       const StringPairArray& headers = {},
+                                       int timeoutMs = 60000)
+    {
+        const auto boundary = "----ADEHack" + String::toHexString (Random::getSystemRandom().nextInt64());
+
+        MemoryOutputStream body;
+        for (auto& key : fields.getAllKeys())
+        {
+            body << "--" << boundary << "\r\n";
+            body << "Content-Disposition: form-data; name=\"" << key << "\"\r\n\r\n";
+            body << fields[key] << "\r\n";
+        }
+
+        if (fileField.isNotEmpty() && fileData.getSize() > 0)
+        {
+            body << "--" << boundary << "\r\n";
+            body << "Content-Disposition: form-data; name=\"" << fileField
+                 << "\"; filename=\"" << fileName << "\"\r\n";
+            body << "Content-Type: " << fileMimeType << "\r\n\r\n";
+            body.write (fileData.getData(), fileData.getSize());
+            body << "\r\n";
+        }
+
+        body << "--" << boundary << "--\r\n";
+
+        MemoryBlock payload (body.getData(), body.getDataSize());
+
+        auto all = headers;
+        all.set ("Content-Type", "multipart/form-data; boundary=" + boundary);
+
+        URL u (url);
+        u = u.withPOSTData (payload);
+        return readStream (u, buildHeaderString (all), timeoutMs);
+    }
+
 private:
     static String buildHeaderString (const StringPairArray& headers)
     {

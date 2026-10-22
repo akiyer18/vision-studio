@@ -20,8 +20,11 @@ private:
     PluginProcessor& processor;
 
     Label       fileLabel;
+    Label       pathLabel;
     TextEditor  trackPathEditor;
-    TextButton  captureButton;   // toggle: capture from DAW input
+    Label       pathHint;
+    TextButton  captureButton;
+    Label       captureHint;
     bool        capturingUI { false };
 
     ToggleButton advancedButton; // "Advanced tech breakdown?" → Flamingo

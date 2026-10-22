@@ -4,6 +4,8 @@
 
 namespace app {
 
+struct HttpResponse;
+
 // Result of a Stability generation.
 struct StabilityResult
 {
@@ -39,7 +41,7 @@ public:
     StabilityResult fetchResult (const String& generationId);
 
 private:
-    String submit (const URL& url);
+    String submit (const HttpResponse& response);
     String apiKey;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StabilityClient)

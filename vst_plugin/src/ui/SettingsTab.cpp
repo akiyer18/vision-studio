@@ -11,27 +11,41 @@ SettingsTab::SettingsTab (PluginProcessor& p)
 {
     // --- Keys ---
     addAndMakeVisible (stabilityKey);
-    addAndMakeVisible (geminiKey);
+    styleFieldHint (stabilityHint, "Used to generate audio. Get a key at platform.stability.ai.");
+    addAndMakeVisible (stabilityHint);
 
+    addAndMakeVisible (geminiKey);
+    styleFieldHint (geminiHint, "Used for analysis, comparisons and references. Get a key at aistudio.google.com.");
+    addAndMakeVisible (geminiHint);
+
+    styleFieldTitle (modelLabel, "Gemini model");
+    addAndMakeVisible (modelLabel);
     addAndMakeVisible (modelCombo);
     modelCombo.addItemList (geminiModelChoices(), 1);
     const ApiKeys& keys = p.getKeys();
     modelCombo.setSelectedItemIndex (geminiModelChoices().indexOf (keys.geminiModel), dontSendNotification);
     modelCombo.setEditableText (true);
+    styleFieldHint (modelHint, "Model used for all Gemini analysis requests.");
+    addAndMakeVisible (modelHint);
 
     addAndMakeVisible (hfKey);
+    styleFieldHint (hfHint, "Optional. Enables Music Flamingo advanced breakdowns.");
+    addAndMakeVisible (hfHint);
+
     addAndMakeVisible (soundchartsKey);
+    styleFieldHint (soundchartsHint, "Optional. Enables artist and reference lookup.");
+    addAndMakeVisible (soundchartsHint);
 
     // --- Export folder ---
-    folderLabel.setText ("Export folder path", dontSendNotification);
-    folderLabel.setFont (Font (12.0f));
-    folderLabel.setJustificationType (Justification::left);
-    folderLabel.setColour (Label::textColourId, Colours::lightgrey);
+    styleFieldTitle (folderLabel, "Export folder path");
     addAndMakeVisible (folderLabel);
 
     exportPathEditor.setMultiLine (false);
     exportPathEditor.setText (processor.getSettings().getExportFolder().getFullPathName(), dontSendNotification);
     addAndMakeVisible (exportPathEditor);
+
+    styleFieldHint (exportHint, "Folder where Send to DAW writes .wav and .mid files.");
+    addAndMakeVisible (exportHint);
 
     saveButton.setButtonText ("Save settings");
     saveButton.onClick = [this]()
@@ -65,15 +79,25 @@ void SettingsTab::paint (Graphics&)
 void SettingsTab::resized()
 {
     auto b = getLocalBounds().reduced (10);
+
     stabilityKey.setBounds (b.removeFromTop (44));
-    geminiKey.setBounds  (b.removeFromTop (44));
-    modelCombo.setBounds (b.removeFromTop (28));
-    hfKey.setBounds      (b.removeFromTop (44));
+    stabilityHint.setBounds (b.removeFromTop (16));
+    geminiKey.setBounds (b.removeFromTop (44));
+    geminiHint.setBounds (b.removeFromTop (16));
+
+    modelLabel.setBounds (b.removeFromTop (18));
+    modelCombo.setBounds (b.removeFromTop (26));
+    modelHint.setBounds (b.removeFromTop (16));
+
+    hfKey.setBounds (b.removeFromTop (44));
+    hfHint.setBounds (b.removeFromTop (16));
     soundchartsKey.setBounds (b.removeFromTop (44));
+    soundchartsHint.setBounds (b.removeFromTop (16));
 
     b.removeFromTop (10);
+    folderLabel.setBounds (b.removeFromTop (18));
     exportPathEditor.setBounds (b.removeFromTop (26));
-    folderLabel.setBounds        (b.removeFromTop (34));
+    exportHint.setBounds (b.removeFromTop (16));
     b.removeFromTop (8);
     saveButton.setBounds (b.removeFromTop (30));
 }

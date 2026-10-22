@@ -1,0 +1,18 @@
+you are a helpful programmer. please, create a standalone python app working across daw with mcp which takes a stability ai api key and gemini AI key and supports music creators 
+
+Tabs list:
+
+- create from scratch (prompt text, sound)
+	- use stability AI with the specified text and or uploaded audio
+	- no clue button - listen to my mic for 7 seconds and initiate the sound with ambiente and high 0.95, basic prompt with bpm and melodic or rhythmic
+- analyse uploaded track / from DAW to suggest improvements 
+	- analyse the track using gemini with the prompt "genre, tempo, and key, then dive into the instruments, production style, and overall mood it creates"
+	- suggest improvements to the track using gemini
+- generate alternatives
+	- use stability ai with noise 0.4. use generate_alternative.py code to see how it is done.
+	- for each alternative , send alternative and original uploaded track to gemini with the prompt "you are a music production explainer. please analyse the beginning beat and the resulting lo fi prod and explain the changes made. dive into the instruments, production style and overall mood it creates"
+
+- tweak on a sample to create a new sample (suggest samples?)
+	- for each generated track, provide a button "send to DAW" which sends the track back to DAW with dissected midi tracks, for further development.
+
+Output code in a separate directory standalone. 

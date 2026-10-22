@@ -4,14 +4,16 @@ namespace app {
 
 FindReferencesTab::FindReferencesTab (PluginProcessor& p) : processor (p)
 {
-    queryLabel.setText ("Genre / artist query", dontSendNotification);
-    queryLabel.setFont (Font (13.0f, Font::bold));
-    queryLabel.setJustificationType (Justification::left);
+    styleFieldTitle (queryLabel, "Genre / artist query");
     addAndMakeVisible (queryLabel);
 
     queryEditor.setMultiLine (false);
     queryEditor.setText ("lo-fi hip hop", dontSendNotification);
+    queryEditor.setColour (TextEditor::textColourId, Colours::white);
     addAndMakeVisible (queryEditor);
+
+    styleFieldHint (queryHint, "Genre, era or artist to research. Adds genre history, popular artists, geolocation and recent trends.");
+    addAndMakeVisible (queryHint);
 
     findButton.setButtonText ("Find references (genre history + artists)");
     findButton.onClick = [this]() { processor.findReferences (queryEditor.getText().trim()); };
@@ -53,6 +55,7 @@ void FindReferencesTab::resized()
 
     queryLabel.setBounds (b.removeFromTop (20));
     queryEditor.setBounds (b.removeFromTop (26));
+    queryHint.setBounds (b.removeFromTop (16));
 
     b.removeFromTop (10);
     findButton.setBounds (b.removeFromTop (34));

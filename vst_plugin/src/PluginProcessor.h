@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #include <JuceHeader.h>
 
 #include "core/PluginState.h"
@@ -50,7 +52,7 @@ public:
     void setKeys (const ApiKeys& keys);
 
     OwnedArray<GeneratedAudio>& getGenerated() { return generated; }
-    int getNumGenerated() const { return generated.size(); }
+    int getNumGenerated() const;
     GeneratedAudio* getSelected() const;
     int getSelectedIndex() const { return selectedIndex; }
     void setSelectedIndex (int index);
@@ -90,8 +92,10 @@ public:
     // DAW input capture (the "from DAW" option on the analyse tab).
     void startCapture();
     void stopCapture();
+    File stopCaptureAndSave();
     bool isCapturing() const { return capturing; }
     File saveCaptureToDisk();
+    File getLastCaptureFile() const { return lastCaptureFile; }
 
     // Export the dissected tracks for the given generated item.
     String getLastExportFolder() const { return lastExportFolder; }
@@ -106,6 +110,7 @@ private:
     AudioIO        audioIO;
 
     OwnedArray<GeneratedAudio> generated;
+    mutable SpinLock generatedLock;
     int  selectedIndex { -1 };
 
     JobState job;
@@ -130,11 +135,15 @@ private:
     MidiBuffer pendingMidi;
 
     // Capture
-    bool              capturing { false };
+    std::atomic<bool> capturing { false };
     AudioBuffer<float> captureBuffer;
-    int               captureWrite { 0 };
+    std::atomic<int>  captureWrite { 0 };
     double            captureRate { 44100.0 };
-    int               captureMaxSamples { 0 };
+    std::atomic<int>  captureMaxSamples { 0 };
+    File              lastCaptureFile;
+    mutable SpinLock  captureLock;
+
+    AudioBuffer<float> copyCapturedAudio() const;
 
     String lastExportFolder;
 

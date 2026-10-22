@@ -2,6 +2,24 @@
 
 namespace app {
 
+void styleFieldTitle (Label& label, const String& text)
+{
+    label.setText (text, dontSendNotification);
+    label.setFont (Font (12.5f, Font::bold));
+    label.setJustificationType (Justification::left);
+    label.setColour (Label::textColourId, Colours::white);
+    label.setInterceptsMouseClicks (false, false);
+}
+
+void styleFieldHint (Label& label, const String& text)
+{
+    label.setText (text, dontSendNotification);
+    label.setFont (Font (11.0f));
+    label.setJustificationType (Justification::left);
+    label.setColour (Label::textColourId, Colours::lightgrey);
+    label.setInterceptsMouseClicks (false, false);
+}
+
 Section::Section (const String& title)
 {
     titleLabel.setText (title, dontSendNotification);
@@ -96,8 +114,7 @@ void StatusBar::resized()
 //==============================================================================
 KeyField::KeyField (const String& labelText, const String& initialValue)
 {
-    labelLabel.setText (labelText, dontSendNotification);
-    labelLabel.setJustificationType (Justification::left);
+    styleFieldTitle (labelLabel, labelText);
     addAndMakeVisible (labelLabel);
 
     editor.setText (initialValue, dontSendNotification);

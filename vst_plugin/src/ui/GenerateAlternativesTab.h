@@ -20,6 +20,7 @@ private:
     Label       nameLabel;
     TextButton  playButton;
     TextButton  compareButton;
+    TextButton  sendButton;
     ResultBox   compareResult;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GenAltRow)
@@ -41,9 +42,11 @@ private:
     TextButton  generateButton;
     ResultBox   analysisResult;
     Component   altContainer;
+    StatusBar   statusBar;
     Array<std::unique_ptr<GenAltRow>> altRows;
 
     void rebuildAltRows ();
+    void layoutAltRows ();
     void updateStatus ();
 
     void changeListenerCallback (ChangeBroadcaster*) override;
