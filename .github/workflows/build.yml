@@ -13,18 +13,29 @@ jobs:
   # ---------------------------------------------------------------
   windows-vst3:
     runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Build
-        run: cmake --build vst_plugin/build --config Release
 
-      - name: Upload Windows VST3 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ADE-Hack-Windows-VST3
-          path: vst_plugin/build/ADEHack_artefacts/Release/VST3/ADE Hack.vst3/**
-          retention-days: 7
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    # Activates the MSVC Developer Command Prompt environment variables
+    - name: Set up MSVC Developer Command Prompt
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64 # Options: x64, x86, amd64_x86, etc.
+
+    - name: Configure CMake
+      run: cmake -B ${{ github.workspace }}/build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+
+    - name: Build Project
+      run: cmake --build ${{ github.workspace }}/build --config ${{ env.BUILD_TYPE }}
+
+    - name: Upload Windows VST3 artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ADE-Hack-Windows-VST3
+        path: vst_plugin/build/ADEHack_artefacts/Release/VST3/ADE Hack.vst3/**
+        retention-days: 7
 
   # ---------------------------------------------------------------
   # macOS — VST3 + AU (Ableton Live, FL Studio, Logic Pro)
