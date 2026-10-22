@@ -178,11 +178,11 @@ export function Dashboard() {
               <BriefDrawer open={briefOpen} mark={mark} hot={hot} onClose={() => setBriefOpen(false)} onMark={setMark} onDescribe={describe} />
               {stage === "review" ? (
                 <div className="review-layout">
-                  <PageHeader eyebrow="Review" title="Read the brief" subtitle="Locked facts stay as you said them. Prompts are ready to edit.">
+                  <PageHeader eyebrow="Review" title="Ready to build" subtitle="A recap of the conversation, then one prompt for each layer.">
                     <SessionStatus />
                   </PageHeader>
                   <p className="card brief-slim">{summary}</p>
-                  <ReviewStage />
+                  <ReviewStage bubbles={bubbles} />
                   {turn ? <ReasoningCard mark={mark} onMark={setMark} onDescribe={describe} /> : null}
                 </div>
               ) : null}
