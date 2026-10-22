@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 from contracts import RenderJob, RenderResult
 
-from api.audio import SR, analyse, bar_frames, bar_seconds, session_dir, wav_name, write_wav
+from api.audio import analyse, bar_frames, bar_seconds, session_dir, wav_name, write_wav
 from api.renderer import MockRenderer
 
 _ENV = {
@@ -75,7 +75,10 @@ class StabilityAPIRenderer:
             audio = _post(self.config, job, payload)
             return _save(self.data_root, job, audio)
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
-            self.notes.append(f"Stability API failed, used the mock renderer: {error}")
+            detail = str(error)
+            if self.config.api_key:
+                detail = detail.replace(self.config.api_key, "[redacted]")
+            self.notes.append(f"Stability API failed, used the mock renderer: {detail}")
             return self.mock.render(job, chords)
 
 

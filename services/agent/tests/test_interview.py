@@ -1,5 +1,6 @@
 """Adaptive interviewer with a stubbed Claude, plus deterministic number extraction."""
 
+import pytest
 from botocore.exceptions import ClientError
 from contracts import TurnRequest
 
@@ -99,7 +100,10 @@ def test_industrial_line_asks_at_most_one_question() -> None:
     assert any("Industrial and aggressive means a dark, high energy world" in detail for detail in details)
     assert "Asked about texture because the style was unclear" in details
     sent = stub.calls[1]["messages"][0]["content"][0]["text"]
+    system = stub.calls[1]["system"][0]["text"]
     assert INDUSTRIAL in sent
+    assert "<<<USER_DATA>>>" in sent
+    assert INDUSTRIAL not in system
     assert "questions_remaining" in sent
     assert "94" in sent
 
@@ -187,3 +191,17 @@ def test_contradiction_keeps_the_users_mood() -> None:
     assert mood.source == "you"
     assert any(step.detail == "Kept tense: you said aggressive" for step in response.trace)
     assert response.summary == "Aggressive and tense."
+
+
+def test_tool_output_must_match_the_schema() -> None:
+    from agent.bedrock import _tool_input
+
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["decision"],
+        "properties": {"decision": {"type": "string", "enum": ["ready", "next_question"]}},
+    }
+    response = tool_response("interview", {"decision": "ready", "extra": "ignore me"})
+    with pytest.raises(RuntimeError):
+        _tool_input(response, "interview", schema)

@@ -6,7 +6,7 @@ import pytest
 from botocore.exceptions import ClientError, ReadTimeoutError
 from contracts import TurnRequest
 
-from agent.bedrock import BedrockProvider, client_config, session_kwargs
+from agent.bedrock import BedrockProvider, client_config, session_kwargs, unseal
 from agent.prompts import ANCHORS, DESCRIPTORS
 from agent.tool_schema import extraction_schema
 from agent.vocab import vocabulary
@@ -269,7 +269,7 @@ def test_successful_polish_keeps_wording_and_leaves_negatives() -> None:
 
     def converse(**kwargs):
         stub.calls.append(kwargs)
-        message = json.loads(kwargs["messages"][0]["content"][0]["text"])
+        message = json.loads(unseal(kwargs["messages"][0]["content"][0]["text"]))
         prompts = []
         for layer in message["layers"]:
             prompts.append({"layer": layer["layer"], "prompt": layer["prompt"].replace(",", ", quite", 1)})
@@ -328,7 +328,7 @@ def _assert_template_kept(layer: str, mutate, reason: str) -> None:
 
     def converse(**kwargs):
         stub.calls.append(kwargs)
-        message = json.loads(kwargs["messages"][0]["content"][0]["text"])
+        message = json.loads(unseal(kwargs["messages"][0]["content"][0]["text"]))
         prompts = []
         for item in message["layers"]:
             text = mutate(item["prompt"]) if item["layer"] == layer else item["prompt"]
@@ -341,7 +341,7 @@ def _assert_template_kept(layer: str, mutate, reason: str) -> None:
     response = provider.run_turn(request(f"keep-{layer}-{reason}", write_prompts=True))
     assert response.prompts is not None
     kept = next(item for item in response.prompts if item.layer == layer)
-    original = json.loads(stub.calls[0]["messages"][0]["content"][0]["text"])
+    original = json.loads(unseal(stub.calls[0]["messages"][0]["content"][0]["text"]))
     template = next(item["prompt"] for item in original["layers"] if item["layer"] == layer)
     assert kept.prompt == template
     assert any(step.detail == f"Kept the template for the {layer} prompt: {reason}" for step in response.trace)

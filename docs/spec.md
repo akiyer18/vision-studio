@@ -173,7 +173,7 @@ bass as roots around C2, velocity 80 to 100. Detected audio keys replace the pre
 - WAV, 44.1 kHz, 16 bit, stereo. Length = bars x 4 x 60 / BPM (8 bars at 76 BPM = 25.26 s).
 - The section name is verse. Names: verse_{layer}_{bpm}bpm_{bars}bars_v{n}.wav, for example verse_drums_76bpm_8bars_v1.wav.
 - Session folder data/sessions/{session_id}/:
-  - audio/: the upload. webm or opus is converted to 44.1 kHz stereo WAV with ffmpeg (brew install ffmpeg).
+  - audio/: the upload. Allowed types are wav, mp3, m4a, aiff, webm, and mid. mp3, m4a, aiff, and webm are converted to 44.1 kHz stereo WAV with ffmpeg (brew install ffmpeg). A recording longer than 5 minutes is refused. The stored name is random.
   - renders/: rendered WAVs.
   - midi/: verse_chords_{bpm}bpm_{bars}bars.mid and verse_bass_{bpm}bpm_{bars}bars.mid.
   - export/: the picked variation of each layer, variation 1 when that layer was not picked, and both MIDI files.
@@ -182,7 +182,7 @@ bass as roots around C2, velocity 80 to 100. Detected audio keys replace the pre
 - POST /render sends { session_id } and builds three RenderJobs per selected layer at take 1.
 - POST /regenerate sends { session_id, layer } and re-renders that layer at the next take.
 - POST /export sends { session_id, picks? }. picks maps a layer name to a variation number. The response is { files }.
-- GET /files/{session_id}/{path} serves a file from that session folder, including renders/, midi/ and export/.
+- GET /files/{session_id}/{path} serves a file from that session folder, including renders/, midi/ and export/. session_id is a UUID. The path cannot leave that folder.
 - Chords are close voiced: the lowest tone is the chord tone nearest C4 and the other tones stack above it. Bass is the root nearest C2. One chord per bar. A progression shorter than the bar count repeats. MIDI notes use velocity 90. Rendered bass moves velocity from 80 to 100 with the seed.
 - MockRenderer: synthesized drums, sine pad chords, root note bass, and a filtered noise texture. Melody is the top tone of the chord voicing. Variations differ by seed (pattern density, voicing, filter).
 - Full mix sums drums, chords, bass and texture. Each of those layers is peak-normalised to about −1 dBFS first. A limiter then holds the sum at about −0.1 dBFS, so the mix peak stays below 0 dBFS.

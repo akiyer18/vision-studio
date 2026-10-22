@@ -42,9 +42,9 @@ def test_wav_mp3_and_webm_keep_features_and_reach_the_renderer(tmp_path: Path) -
     assert _seconds(wav) == 5
 
     uploads = [
-        ("wav-session", "instrument_loop", "take.wav", wav, "audio/wav"),
-        ("mp3-session", "full_track", "take.mp3", mp3, "audio/mpeg"),
-        ("webm-session", "hum", "take.webm", webm, "audio/webm"),
+        ("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "instrument_loop", "take.wav", wav, "audio/wav"),
+        ("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "full_track", "take.mp3", mp3, "audio/mpeg"),
+        ("cccccccc-cccc-4ccc-8ccc-cccccccccccc", "hum", "take.webm", webm, "audio/webm"),
     ]
     with TestClient(create_app(tmp_path / "data")) as client:
         stored: dict[str, dict] = {}
@@ -64,9 +64,9 @@ def test_wav_mp3_and_webm_keep_features_and_reach_the_renderer(tmp_path: Path) -
             assert _seconds(Path(features["path"])) == pytest.approx(5, abs=0.05)
             stored[session_id] = features
 
-        _render_with_intent(client, "wav-session", stored["wav-session"], "reshape this", "transform")
-        _render_with_intent(client, "mp3-session", stored["mp3-session"], "continue this", "extend")
-        _render_with_intent(client, "webm-session", stored["webm-session"], "build around it", "accompany")
+        _render_with_intent(client, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", stored["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"], "reshape this", "transform")
+        _render_with_intent(client, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", stored["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"], "continue this", "extend")
+        _render_with_intent(client, "cccccccc-cccc-4ccc-8ccc-cccccccccccc", stored["cccccccc-cccc-4ccc-8ccc-cccccccccccc"], "build around it", "accompany")
 
 
 def _render_with_intent(client: TestClient, session_id: str, features: dict, text: str, intent: str) -> None:
@@ -109,17 +109,17 @@ def test_a_stated_progression_is_the_chords_source_audio(tmp_path: Path) -> None
         client.post(
             "/turn",
             json={
-                "session_id": "pinned",
+                "session_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
                 "text": "105bpm, C, Am, F, G",
                 "output": ["chords"],
                 "answer": {"slot": "mood", "action": "skip_all"},
             },
         )
-        written = client.post("/turn", json={"session_id": "pinned", "write_prompts": True})
+        written = client.post("/turn", json={"session_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "write_prompts": True})
         assert written.json()["progression"]["chords"] == ["C", "Am", "F", "G"]
-        rendered = client.post("/render", json={"session_id": "pinned"})
+        rendered = client.post("/render", json={"session_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"})
         assert rendered.status_code == 200
-        debug = client.get("/debug/pinned").json()
+        debug = client.get("/debug/dddddddd-dddd-4ddd-8ddd-dddddddddddd").json()
         sources = {job["init_audio"] for job in debug["jobs"]}
         assert len(sources) == 1
         pinned = Path(next(iter(sources)))
@@ -139,16 +139,16 @@ def test_stability_falls_back_to_the_mock_when_the_endpoint_is_blank(
         client.post(
             "/turn",
             json={
-                "session_id": "fallback",
+                "session_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
                 "text": "a calm pad",
                 "output": ["drums"],
                 "answer": {"slot": "mood", "action": "skip_all"},
             },
         )
-        client.post("/turn", json={"session_id": "fallback", "write_prompts": True})
-        rendered = client.post("/render", json={"session_id": "fallback"})
+        client.post("/turn", json={"session_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", "write_prompts": True})
+        rendered = client.post("/render", json={"session_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"})
         assert rendered.status_code == 200
         assert rendered.json()[0]["path"].endswith(".wav")
-        debug = client.get("/debug/fallback").json()
+        debug = client.get("/debug/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee").json()
         assert any("mock renderer" in note for note in debug["notes"])
         assert "api_key" not in json.dumps(debug)

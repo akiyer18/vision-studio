@@ -26,6 +26,9 @@ dev = [
     "pytest>=9.1.1",
 ]
 
+[tool.ruff.lint]
+select = ["F", "E9"]
+
 [tool.pytest.ini_options]
 testpaths = ["services"]
 markers = [

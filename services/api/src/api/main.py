@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import sys
@@ -23,25 +24,30 @@ from agent.turn import run_turn
 from contracts import AudioFeatures, LayerPrompt, RenderJob, RenderResult, SongBrief, TraceStep, TurnRequest, TurnResponse
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.audio import (
     UPLOAD_LIMIT,
     ConversionError,
     analyse,
+    assert_short_enough,
     check_session_id,
     convert_to_wav,
     default_data_root,
     midi_name,
     needs_conversion,
-    safe_filename,
     session_dir,
+    stored_name,
+    upload_kind,
 )
+from api.guard import BODY_LIMIT, RateLimiter, allowed_origins, assert_frontend_clean, cleanup_old_sessions, content_too_large
 from api.renderer import MockRenderer, Renderer, pin_chord_audio
 from api.stability import StabilityAPIRenderer
 
-_WEB = ["http://localhost:5173", "http://127.0.0.1:5173"]
+logger = logging.getLogger("api")
+_LIMITED = {"/turn", "/render", "/upload"}
 _INPUTS = {"text_only", "hum", "vocal", "instrument_loop", "drum_loop", "full_track", "midi"}
 _session_locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
@@ -121,6 +127,7 @@ def load_local_env() -> None:
 
 
 def create_app(data_root: Path | None = None) -> FastAPI:
+    assert_frontend_clean()
     provider = os.environ.get("PROVIDER", "mock")
     renderer_name = os.environ.get("RENDERER", "mock")
     if provider not in {"mock", "bedrock"}:
@@ -131,11 +138,30 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     app = FastAPI(title="Vision Studio")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=_WEB,
+        allow_origins=allowed_origins(),
         allow_methods=["*"],
         allow_headers=["*"],
     )
     app.state.data_root = data_root or default_data_root()
+    app.state.ip_limit = RateLimiter()
+    app.state.session_limit = RateLimiter()
+    cleanup_old_sessions(app.state.data_root)
+
+    @app.middleware("http")
+    async def guard_request(request: Request, call_next):
+        if content_too_large(request.headers.get("content-length"), BODY_LIMIT):
+            return JSONResponse(status_code=413, content={"detail": "Upload limit is 50 MB"})
+        if request.method == "POST" and request.url.path in _LIMITED:
+            host = request.client.host if request.client else "unknown"
+            if not request.app.state.ip_limit.allow(host):
+                return JSONResponse(status_code=429, content={"detail": "Too many requests. Try again shortly."})
+        try:
+            return await call_next(request)
+        except (HTTPException, StarletteHTTPException):
+            raise
+        except Exception:
+            logger.exception("request failed")
+            return JSONResponse(status_code=500, content={"detail": "Something went wrong. Try again."})
     app.state.sessions = {}
     app.state.turns = {}
     app.state.uploads = {}
@@ -156,22 +182,33 @@ def create_app(data_root: Path | None = None) -> FastAPI:
             check_session_id(session_id)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
+        _limit_session(request, session_id)
         if input_type not in _INPUTS:
             raise HTTPException(400, "input_type is not recognised")
         payload = await _read_upload(file)
+        try:
+            kind = upload_kind(file.filename or "", payload)
+        except ValueError as error:
+            raise HTTPException(415, str(error)) from error
+        if input_type == "midi" and kind != "mid":
+            raise HTTPException(415, "Use a wav, mp3, m4a, aiff, webm, or mid file.")
         folder = session_dir(request.app.state.data_root, session_id) / "audio"
         folder.mkdir(parents=True, exist_ok=True)
-        original = folder / safe_filename(file.filename or "upload")
+        original = folder / stored_name(file.filename or "upload")
         original.write_bytes(payload)
-        if input_type == "midi" or original.suffix.lower() in {".mid", ".midi"}:
+        if kind == "mid":
             return AudioFeatures(input_type="midi", confidence=0.8)
         target = original
-        if needs_conversion(original.name, file.content_type):
-            target = original.with_suffix(".wav")
-            try:
+        try:
+            if needs_conversion(kind):
+                target = original.with_suffix(".wav")
                 convert_to_wav(original, target)
-            except ConversionError as error:
-                raise HTTPException(422, str(error)) from error
+            assert_short_enough(target)
+        except ConversionError as error:
+            original.unlink(missing_ok=True)
+            if target != original:
+                target.unlink(missing_ok=True)
+            raise HTTPException(422, str(error)) from error
         features = analyse(target, input_type).model_copy(update={"path": str(target)})
         request.app.state.uploads[session_id] = {
             "file": original.name,
@@ -182,6 +219,11 @@ def create_app(data_root: Path | None = None) -> FastAPI:
 
     @app.post("/turn", response_model=TurnResponse)
     def turn(body: TurnRequest, request: Request) -> TurnResponse:
+        try:
+            check_session_id(body.session_id)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        _limit_session(request, body.session_id)
         with _lock_for(body.session_id):
             seen: dict[str, TurnResponse] = request.app.state.turns.setdefault(body.session_id, {})
             if body.request_id and body.request_id in seen:
@@ -195,6 +237,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
 
     @app.post("/render", response_model=None)
     def render(body: RenderBody, request: Request) -> list[RenderResult] | StreamingResponse:
+        _limit_session(request, body.session_id)
         record, prompts = _prepare_render(request, body)
         renderer = request.app.state.renderer
         debug = request.app.state.debug.setdefault(body.session_id, {})
@@ -300,6 +343,8 @@ def create_app(data_root: Path | None = None) -> FastAPI:
             root = session_dir(request.app.state.data_root, session_id).resolve()
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
+        if file_path.startswith(("/", "\\")) or "\x00" in file_path or ".." in Path(file_path).parts:
+            raise HTTPException(404, "File not found")
         target = (root / file_path).resolve()
         if not target.is_relative_to(root) or not target.is_file():
             raise HTTPException(404, "File not found")
@@ -320,6 +365,11 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         }
 
     return app
+
+
+def _limit_session(request: Request, session_id: str) -> None:
+    if not request.app.state.session_limit.allow(session_id):
+        raise HTTPException(429, "Too many requests. Try again shortly.")
 
 
 def _lock_for(session_id: str) -> threading.Lock:

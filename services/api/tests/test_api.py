@@ -29,7 +29,7 @@ def test_render_uses_edited_prompt_text(tmp_path: Path) -> None:
         turn = client.post(
             "/turn",
             json={
-                "session_id": "edited",
+                "session_id": "11111111-1111-4111-8111-111111111111",
                 "text": "I feel sad in the rain",
                 "output": ["drums"],
                 "overrides": {"key": "D minor", "style": "a piano ballad"},
@@ -38,12 +38,12 @@ def test_render_uses_edited_prompt_text(tmp_path: Path) -> None:
         )
         assert turn.status_code == 200
         assert turn.json()["status"] == "review"
-        written = client.post("/turn", json={"session_id": "edited", "write_prompts": True})
+        written = client.post("/turn", json={"session_id": "11111111-1111-4111-8111-111111111111", "write_prompts": True})
         assert written.json()["status"] == "ready"
         rendered = client.post(
             "/render",
             json={
-                "session_id": "edited",
+                "session_id": "11111111-1111-4111-8111-111111111111",
                 "prompts": [{"layer": "drums", "prompt": "edited drums prompt", "negative": "no hats"}],
             },
         )
@@ -60,7 +60,7 @@ def test_turn_render_and_export_match_the_bar_length(tmp_path: Path) -> None:
         turn = client.post(
             "/turn",
             json={
-                "session_id": "phase2",
+                "session_id": "22222222-2222-4222-8222-222222222222",
                 "text": "I feel sad in the rain",
                 "output": ["drums", "chords", "bass", "texture"],
                 "overrides": {"key": "D minor", "style": "a piano ballad"},
@@ -69,12 +69,12 @@ def test_turn_render_and_export_match_the_bar_length(tmp_path: Path) -> None:
         )
         assert turn.status_code == 200
         assert turn.json()["status"] == "review"
-        written = client.post("/turn", json={"session_id": "phase2", "write_prompts": True})
+        written = client.post("/turn", json={"session_id": "22222222-2222-4222-8222-222222222222", "write_prompts": True})
         body = written.json()
         assert body["status"] == "ready"
         assert body["progression"]["chords"] == ["Dm", "Bb", "F", "C"]
 
-        rendered = client.post("/render", json={"session_id": "phase2"})
+        rendered = client.post("/render", json={"session_id": "22222222-2222-4222-8222-222222222222"})
         assert rendered.status_code == 200
         results = rendered.json()
         assert [(item["layer"], item["variant"]) for item in results] == [
@@ -91,16 +91,16 @@ def test_turn_render_and_export_match_the_bar_length(tmp_path: Path) -> None:
         assert Path(drums[0]["path"]).parent.name == "renders"
         assert Path(drums[0]["path"]).name == "verse_drums_76bpm_8bars_v1.wav"
 
-        session = data / "sessions" / "phase2"
+        session = data / "sessions" / "22222222-2222-4222-8222-222222222222"
         for kind in ("chords", "bass"):
             midi = session / "midi" / f"verse_{kind}_76bpm_8bars.mid"
             assert midi_span(midi.read_bytes()) == (round(60_000_000 / 76), 8 * 4 * 480)
 
-        served = client.get("/files/phase2/renders/verse_drums_76bpm_8bars_v1.wav")
+        served = client.get("/files/22222222-2222-4222-8222-222222222222/renders/verse_drums_76bpm_8bars_v1.wav")
         assert served.status_code == 200
         assert served.content == Path(drums[0]["path"]).read_bytes()
 
-        exported = client.post("/export", json={"session_id": "phase2"})
+        exported = client.post("/export", json={"session_id": "22222222-2222-4222-8222-222222222222"})
         assert exported.status_code == 200
         names = sorted(Path(path).name for path in exported.json()["files"])
         assert names == [
@@ -116,13 +116,13 @@ def test_turn_render_and_export_match_the_bar_length(tmp_path: Path) -> None:
         _assert_wav(export_dir / "verse_chords_76bpm_8bars_v1.wav", expected_frames)
 
         before = Path(drums[0]["path"]).read_bytes()
-        again = client.post("/regenerate", json={"session_id": "phase2", "layer": "drums"})
+        again = client.post("/regenerate", json={"session_id": "22222222-2222-4222-8222-222222222222", "layer": "drums"})
         assert again.status_code == 200
         assert [item["variant"] for item in again.json()] == [1, 2, 3]
         _assert_wav(Path(drums[0]["path"]), expected_frames)
         assert Path(drums[0]["path"]).read_bytes() != before
 
-        picked = client.post("/export", json={"session_id": "phase2", "picks": {"drums": 2}})
+        picked = client.post("/export", json={"session_id": "22222222-2222-4222-8222-222222222222", "picks": {"drums": 2}})
         assert picked.status_code == 200
         picked_drums = export_dir / "verse_drums_76bpm_8bars_v2.wav"
         assert picked_drums.read_bytes() == Path(drums[1]["path"]).read_bytes()
@@ -137,7 +137,7 @@ def test_melody_and_full_mix_use_the_same_length(tmp_path: Path) -> None:
     for layer in ("melody", "full_mix"):
         result = renderer.render(
             RenderJob(
-                session_id="tones",
+                session_id="77777777-7777-4777-8777-777777777777",
                 layer=layer,
                 prompt="TrackType: Instrument",
                 negative="vocals",
@@ -157,7 +157,7 @@ def test_full_mix_peak_stays_below_full_scale(tmp_path: Path) -> None:
     renderer = MockRenderer(tmp_path)
     result = renderer.render(
         RenderJob(
-            session_id="mix",
+            session_id="88888888-8888-4888-8888-888888888888",
             layer="full_mix",
             prompt="TrackType: Music",
             negative="vocals",
@@ -179,7 +179,7 @@ def test_full_mix_peak_stays_below_full_scale(tmp_path: Path) -> None:
 
 def test_cors_allows_the_web_app(tmp_path: Path) -> None:
     with TestClient(create_app(tmp_path)) as client:
-        response = client.get("/files/phase2/missing.wav", headers={"Origin": "http://localhost:5173"})
+        response = client.get("/files/22222222-2222-4222-8222-222222222222/missing.wav", headers={"Origin": "http://localhost:5173"})
         assert response.status_code == 404
         assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
 
@@ -188,30 +188,33 @@ def test_midi_upload_skips_audio_analysis(tmp_path: Path) -> None:
     with TestClient(create_app(tmp_path / "data")) as client:
         response = client.post(
             "/upload",
-            data={"session_id": "phase4", "input_type": "midi"},
+            data={"session_id": "33333333-3333-4333-8333-333333333333", "input_type": "midi"},
             files={"file": ("idea.mid", b"MThd", "audio/midi")},
         )
     assert response.status_code == 200
     features = response.json()
     assert features["input_type"] == "midi"
     assert features["confidence"] == 0.8
-    assert (tmp_path / "data" / "sessions" / "phase4" / "audio" / "idea.mid").is_file()
+    stored = list((tmp_path / "data" / "sessions" / "33333333-3333-4333-8333-333333333333" / "audio").glob("*.mid"))
+    assert len(stored) == 1
+    assert stored[0].name != "idea.mid"
+    assert stored[0].read_bytes().startswith(b"MThd")
 
 
-def test_upload_converts_opus_and_returns_features(tmp_path: Path) -> None:
+def test_upload_converts_m4a_and_returns_features(tmp_path: Path) -> None:
     source = tmp_path / "phrase.wav"
     _write_tone(source)
-    opus = tmp_path / "phrase.opus"
+    packed = tmp_path / "phrase.m4a"
     subprocess.run(
-        ["ffmpeg", "-y", "-i", str(source), "-c:a", "libopus", str(opus)],
+        ["ffmpeg", "-y", "-i", str(source), "-c:a", "aac", str(packed)],
         check=True,
         capture_output=True,
     )
     with TestClient(create_app(tmp_path / "data")) as client:
         response = client.post(
             "/upload",
-            data={"session_id": "phase2", "input_type": "instrument_loop"},
-            files={"file": ("phrase.opus", opus.read_bytes(), "audio/ogg")},
+            data={"session_id": "22222222-2222-4222-8222-222222222222", "input_type": "instrument_loop"},
+            files={"file": ("phrase.m4a", packed.read_bytes(), "audio/mp4")},
         )
     assert response.status_code == 200
     features = response.json()
@@ -220,7 +223,9 @@ def test_upload_converts_opus_and_returns_features(tmp_path: Path) -> None:
     assert features["mode"] in {"major", "minor"}
     assert 0 <= features["confidence"] <= 1
     assert features["bpm"] is None or isinstance(features["bpm"], int | float)
-    stored = tmp_path / "data" / "sessions" / "phase2" / "audio" / "phrase.wav"
+    folder = tmp_path / "data" / "sessions" / "22222222-2222-4222-8222-222222222222" / "audio"
+    stored = next(folder.glob("*.wav"))
+    assert stored.name != "phrase.wav"
     with wave.open(str(stored)) as handle:
         assert handle.getframerate() == 44100
         assert handle.getnchannels() == 2
@@ -247,7 +252,7 @@ def test_render_stream_reports_each_variation_and_keeps_other_layers(tmp_path: P
         turn = client.post(
             "/turn",
             json={
-                "session_id": "stream",
+                "session_id": "44444444-4444-4444-8444-444444444444",
                 "text": "I feel sad in the rain",
                 "output": ["drums", "bass", "chords"],
                 "overrides": {"key": "D minor", "style": "a piano ballad"},
@@ -255,12 +260,12 @@ def test_render_stream_reports_each_variation_and_keeps_other_layers(tmp_path: P
             },
         )
         assert turn.status_code == 200
-        written = client.post("/turn", json={"session_id": "stream", "write_prompts": True})
+        written = client.post("/turn", json={"session_id": "44444444-4444-4444-8444-444444444444", "write_prompts": True})
         assert written.json()["status"] == "ready"
         rendered = client.post(
             "/render",
             headers={"Accept": "application/x-ndjson"},
-            json={"session_id": "stream"},
+            json={"session_id": "44444444-4444-4444-8444-444444444444"},
         )
         assert rendered.status_code == 200
         assert rendered.headers["content-type"].startswith("application/x-ndjson")
@@ -279,7 +284,7 @@ def test_render_stream_reports_each_variation_and_keeps_other_layers(tmp_path: P
         again = client.post(
             "/regenerate",
             headers={"Accept": "application/x-ndjson"},
-            json={"session_id": "stream", "layer": "drums"},
+            json={"session_id": "44444444-4444-4444-8444-444444444444", "layer": "drums"},
         )
         assert again.status_code == 200
         follow = [json.loads(line) for line in again.text.splitlines() if line.strip()]
@@ -289,16 +294,16 @@ def test_render_stream_reports_each_variation_and_keeps_other_layers(tmp_path: P
             (2, 3),
         ]
 
-        missing = client.post("/regenerate", json={"session_id": "stream", "layer": "bass"})
+        missing = client.post("/regenerate", json={"session_id": "44444444-4444-4444-8444-444444444444", "layer": "bass"})
         assert missing.status_code == 404
-        retry = client.post("/render", json={"session_id": "stream", "layer": "bass"})
+        retry = client.post("/render", json={"session_id": "44444444-4444-4444-8444-444444444444", "layer": "bass"})
         assert retry.status_code == 200
         assert [(item["layer"], item["variant"]) for item in retry.json()] == [
             ("bass", 1),
             ("bass", 2),
             ("bass", 3),
         ]
-        chords = client.post("/regenerate", json={"session_id": "stream", "layer": "chords"})
+        chords = client.post("/regenerate", json={"session_id": "44444444-4444-4444-8444-444444444444", "layer": "chords"})
         assert chords.status_code == 200
         assert [item["variant"] for item in chords.json()] == [1, 2, 3]
 
@@ -321,7 +326,7 @@ MESSAGE = (
 
 
 def test_duplicate_request_id_returns_the_previous_response(tmp_path: Path) -> None:
-    payload = {"session_id": "duplicate", "text": "I feel sad", "request_id": "same-id"}
+    payload = {"session_id": "55555555-5555-4555-8555-555555555555", "text": "I feel sad", "request_id": "same-id"}
     with TestClient(create_app(tmp_path / "data")) as client:
         first = client.post("/turn", json=payload)
         second = client.post("/turn", json=payload)
@@ -340,7 +345,7 @@ def test_the_synth_pattern_message_renders(tmp_path: Path) -> None:
         turn = client.post(
             "/turn",
             json={
-                "session_id": "synth-pattern",
+                "session_id": "66666666-6666-4666-8666-666666666666",
                 "text": MESSAGE,
                 "answer": {"slot": "mood", "action": "skip_all"},
             },
@@ -352,9 +357,9 @@ def test_the_synth_pattern_message_renders(tmp_path: Path) -> None:
         assert body["brief"]["slots"]["structure"]["value"] == "16 bars"
         assert body["brief"]["arc"]["start"] == "agony and tension"
         assert body["brief"]["arc"]["description"] == "Agony and tension releases into a positive breath"
-        written = client.post("/turn", json={"session_id": "synth-pattern", "write_prompts": True})
+        written = client.post("/turn", json={"session_id": "66666666-6666-4666-8666-666666666666", "write_prompts": True})
         assert written.json()["status"] == "ready"
-        rendered = client.post("/render", json={"session_id": "synth-pattern"})
+        rendered = client.post("/render", json={"session_id": "66666666-6666-4666-8666-666666666666"})
     assert rendered.status_code == 200
     assert rendered.json()
     assert {item["bpm"] for item in rendered.json()} == {105}
