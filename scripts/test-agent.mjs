@@ -50,10 +50,14 @@ const ctx = {
   critiqueCapture: async (p, ref) => { calls.push(["critiqueCapture", p, ref]); return { lowEnd: "sub masking", topFixes: [{ what: "bass highpass", how: "add_effect Bass EQ Eight highpass 60 Hz" }] }; },
   importSample: async (o) => { calls.push(["importSample", o]); return { path: `/out/${o.name}.wav`, url: `/out/${o.name}.wav`, track: o.track || o.name, chain: ["highpass 120", "gain -3"] }; },
   listen: async (p, q) => { calls.push(["listen", p, q]); return { text: "a dry, clicky kick with a short sub tail; dark and driving" }; },
+  synthLocal: async (o) => { calls.push(["synthLocal", o]); return { path: `/out/local-${o.kind}.wav`, url: `/out/local-${o.kind}.wav`, durationSeconds: (o.decayMs || 400) / 1000, kind: o.kind }; },
+  enhanceProject: async (o) => { calls.push(["enhanceProject", o]); return { capture: { path: "/out/capture.wav", bars: o.bars || 8, fromBar: 1 }, enhanced: { path: "/out/enhanced.wav", url: "/out/enhanced.wav", track: "AI Enhance" }, strength: o.strength ?? 0.5, verdict: "closer to the intent", score: 7 }; },
+  referenceTrack: async (o) => { calls.push(["referenceTrack", o]); return { query: o.query, title: "Still D.R.E.", artist: "Dr. Dre", bpm: 93, key: "A minor", source: "model (verify)" }; },
   judge: async (p, intent) => { calls.push(["judge", p, intent]); return { text: "tight and clicky but the sub tail is too short", match: 6 }; },
   transcribe: async (p, o) => { calls.push(["transcribe", p, o]); return { notes: Array.from({ length: 12 }, (_, i) => ({ pitch: 60 + (i % 5), startBeats: i * 0.5, durationBeats: 0.5, velocity: 90 })), bars: 2, bpm: 118, tracks: [{ name: "piano", noteCount: 12 }], summary: "12 notes, piano", midiPath: "/tmp/t.mid", ms: 1234 }; },
   live: {
-    setTempo: async (bpm) => { calls.push(["setTempo", bpm]); return { tempo: bpm }; },
+    jump: async (bar) => { calls.push(["jump", bar]); return { ok: true, bar, position: (bar - 1) * 4 }; },
+    setTempo: async (arg) => { const bpm = typeof arg === "object" ? arg.bpm : arg; calls.push(["setTempo", bpm]); return { tempo: bpm, warped: [], unwarpedLeft: [] }; },
     listTracks: async () => [{ index: 0, name: "Kick", is_midi: true, selected: true, soundPath: "/out/kick.wav" }, { index: 1, name: "Hats", is_midi: true, selected: false }],
     buildLane: async (i) => { calls.push(["buildLane", i]); return { track: { index: 1, name: i.name }, notes: i.steps.length, loadedSample: true }; },
     buildMelody: async (i) => { calls.push(["buildMelody", i]); return { track: { index: 2, name: i.name }, notes: i.notes.length, loadedSample: true }; },
@@ -78,6 +82,16 @@ const ctx = {
     loadToPad: async (i) => { calls.push(["loadToPad", i]); return { pad: { name: i.label, has_chain: true }, device_index: 0 }; },
     setTrackColor: async (i) => { calls.push(["setTrackColor", i]); return { color: i.colorIndex }; },
     captureMidi: async () => { calls.push(["captureMidi"]); return { captured: true, track: "Keys" }; },
+    addLoopLayer: async (i) => { calls.push(["addLoopLayer", i]); return { track: { index: 3, name: i.name }, slot: i.slot ?? 0, clip: { name: i.name, length: (i.bars || 2) * 4, warping: true, warp_mode: "beats" }, loop: { path: "/out/loop.wav", url: "/out/loop.wav" }, matchMix: i.matchMix !== false }; },
+    audition: async (i) => { calls.push(["audition", i]); return { tracks: i.tracks, bars: i.bars || 4, soloed: i.tracks, restored: true }; },
+    clipInfo: async (i) => { calls.push(["clipInfo", i]); return { track: i.track, slot: i.slot ?? 0, name: "take", is_audio_clip: true, length: 16, looping: true, warping: true, warp_mode: "complex_pro", file_path: "/out/take.wav" }; },
+    setClipWarp: async (i) => { calls.push(["setClipWarp", i]); return { track: i.track, slot: i.slot ?? 0, done: ["warp", "warp_mode"], errors: {}, clip: { warping: i.warp !== false, warp_mode: i.warpMode || "complex_pro" } }; },
+    loadAudioClip: async (i) => { calls.push(["loadAudioClip", i]); return { track: i.track, track_created: false, slot: i.slot ?? 0, clip: { name: "loop", warping: true, warp_mode: i.warpMode || "complex_pro" } }; },
+    undo: async (i) => { calls.push(["undo", i]); return { undone: i?.steps || 1, requested: i?.steps || 1, can_undo: true, can_redo: true }; },
+    redo: async (i) => { calls.push(["redo", i]); return { redone: i?.steps || 1, requested: i?.steps || 1, can_undo: true, can_redo: false }; },
+    meters: async (i) => { calls.push(["meters", i]); return { ticks: i?.ticks || 10, seconds: (i?.ticks || 10) / 10, is_playing: true, tracks: [{ index: 0, name: "Kick", peak: 0.62, silent: false }, { index: 1, name: "Hats", peak: 0.0, silent: true }], master: { peak: 0.7 } }; },
+    setArm: async (i) => { calls.push(["setArm", i]); return { track: i.track, state: { arm: i.arm, monitoring: i.monitoring || "auto" } }; },
+    sessionRecord: async (i) => { calls.push(["sessionRecord", i]); return { track: i.track, slot: i.slot ?? 0, bars: i.bars || 4, timed_out: false, clip: { name: "take", length: (i.bars || 4) * 4 } }; },
     show: async () => ({ view: "Session" }),
     play: async () => ({ playing: true }),
     stop: async () => ({ playing: false }),
@@ -85,7 +99,7 @@ const ctx = {
 };
 
 const tools = makeTools(ctx, { beat: "/tmp/fake.wav", refs: [{ name: "loop.wav", path: "/tmp/ref1.wav" }, { name: "kick.wav", path: "/tmp/ref2.wav" }] });
-const expected = ["set_tempo", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "transcribe_audio", "judge_sound", "slice_sample", "chop_sample", "load_device", "add_effect", "set_param", "list_devices", "set_mixer", "create_scene", "fire_scene", "record_arrangement", "analyze_audio", "compare_audio", "render_preview", "set_track_color", "capture_midi", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "separate_stems", "analyze_music", "process_audio", "master_preview", "generate_loop", "restyle_mix", "production_dna", "critique_mix", "label_pieces", "refine_sound", "undo_sound", "listen_live", "critique_capture", "describe_set", "read_clip", "import_sample", "restyle_audio", "explain_result", "genre_guide", "genre_blueprint", "generate_rhythm", "design_kit", "build_kit", "load_to_pad", "compose_track", "show_live", "play", "stop"];
+const expected = ["set_tempo", "set_position", "list_tracks", "analyze_recording", "write_drum_pattern", "write_melody", "synthesize_sound", "build_drum_layer", "build_melody_layer", "update_layer", "replace_sound", "remove_layer", "listen", "transcribe_audio", "judge_sound", "slice_sample", "chop_sample", "load_device", "add_effect", "set_param", "list_devices", "set_mixer", "create_scene", "fire_scene", "synth_local", "add_loop_layer", "enhance_project", "audition", "clip_info", "set_clip_warp", "load_audio_clip", "live_undo", "meters", "record_performance", "record_arrangement", "analyze_audio", "compare_audio", "render_preview", "set_track_color", "capture_midi", "layer_samples", "tune_sample", "shape_sample", "set_send", "browse_library", "mix_balance", "review_mix", "separate_stems", "analyze_music", "process_audio", "master_preview", "generate_loop", "restyle_mix", "production_dna", "critique_mix", "label_pieces", "refine_sound", "undo_sound", "listen_live", "critique_capture", "describe_set", "read_clip", "import_sample", "restyle_audio", "explain_result", "reference_track", "genre_guide", "genre_blueprint", "generate_rhythm", "design_kit", "build_kit", "load_to_pad", "compose_track", "show_live", "play", "stop"];
 assert.deepEqual(tools.map((t) => t.name), expected, "tool names");
 for (const t of tools) {
   assert.ok(t.description && t.description.length > 20, `${t.name} description`);
@@ -95,6 +109,7 @@ for (const t of tools) {
 
 const sample = {
   set_tempo: { bpm: 126 },
+  set_position: { bar: 1 },
   list_tracks: {},
   analyze_recording: { which: "beat" },
   write_drum_pattern: { description: "four on the floor", bpm: 126, bars: 1 },
@@ -118,6 +133,17 @@ const sample = {
   create_scene: { name: "Drop", index: 1 },
   fire_scene: { index: 1 },
   record_arrangement: { bars: 16 },
+  synth_local: { kind: "sub", name: "sub-kick", startHz: 120, endHz: 45, decayMs: 400 },
+  add_loop_layer: { name: "Tops", prompt: "shuffled hats and shaker loop, no kick or snare", kind: "tops", bars: 2, matchMix: true, strength: 0.4 },
+  enhance_project: { intent: "cosmo pop techno, keep the guitar as the lead", strength: 0.5, bars: 8 },
+  audition: { tracks: ["AI Enhance"], bars: 4 },
+  clip_info: { track: "Drums", slot: 0 },
+  set_clip_warp: { track: "Tops", slot: 0, warp: true, warpMode: "beats" },
+  load_audio_clip: { track: "AI Texture", samplePath: "/out/loop.wav", warpMode: "complex_pro" },
+  live_undo: { steps: 1 },
+  meters: { ticks: 10 },
+  record_performance: { track: "Keys", slot: 0, bars: 4, monitoring: "in" },
+  reference_track: { query: "Still D.R.E. Dr. Dre" },
   analyze_audio: { which: "ref#1" },
   compare_audio: { a: "ref#1", b: "/out/x.wav" },
   render_preview: { bars: 2 },
@@ -158,6 +184,7 @@ const sample = {
   show_live: {}, play: {}, stop: {},
 };
 for (const t of tools) {
+  if (!(t.name in sample)) throw new Error(`no sample input for ${t.name}`);
   const input = t.parse(sample[t.name]);               // zod validation (what the runner does)
   const before = events.length;
   const out = await t.run(input);
@@ -228,7 +255,7 @@ const rsc = calls.filter((c) => c[0] === "synth").at(-1)[1];
 assert.equal(rsc.audioPath, "/tmp/ref1.wav"); assert.equal(rsc.offsetSeconds, 0.5); assert.equal(rsc.strength, 0.6, "ref strength default 0.6");
 assert.equal(JSON.parse(await ss0.run(ss0.parse({ role: "kick", prompt: "x kick, dry one-shot", source: "ref#9" }))).ok, false, "bad ref in synth -> ok:false");
 const h = (await runProducer({ history: [], userText: "make it like this", recordings: { refs: [{ name: "loop.wav", path: "/tmp/ref1.wav" }] }, ctx, client: { beta: { messages: { toolRunner(params) { return { params, pushMessages() {}, async *[Symbol.asyncIterator]() { yield { role: "assistant", stop_reason: "end_turn", content: [] }; } }; } } } } })).history;
-assert.match(h[0].content, /ref#1 "loop.wav" \(from an earlier turn; path: \/tmp\/ref1.wav\)/); assert.match(h[0].content, /earlier files are still usable/);
+assert.match(h[0].content, /\[earlier: ref#1 loop\.wav \(name one to use it\)\.\]/, "older attachments are listed by name only (paths stay out of the prompt)"); assert.ok(!/\/tmp\/ref1\.wav/.test(h[0].content), "no path for an earlier ref");
 assert.ok(PRODUCER_SYSTEM.includes("REFERENCE FILES") && PRODUCER_SYSTEM.includes("ref#N"));
 
 // v4 tools: shapes, bounds, failure paths
@@ -393,7 +420,7 @@ ctx.live.loadDevice = async (i) => ({ requested: i.device, match: "ci", device: 
 ctx.live.setParam = async (i) => ({ param: { name: i.param, value: i.value, min: 0, max: 1, display: `${i.value}` } });
 const fxm = JSON.parse(await T("add_effect").run({ track: "Snare", device: "reverb", params: [{ name: "Dry/Wet", value: 0.2 }] }));
 assert.equal(fxm.match, "ci"); assert.equal(fxm.device, "Reverb"); assert.equal(fxm.requested, "reverb");
-for (const k of ["LIVE 10 STANDARD ON THIS MACHINE", "NO Ping Pong Delay", "KIT PATH", "909 Core Kit.adg", "kick 36, snare 38, clap 39", "Arpeggiator", "Dynamic Tube", "bitcrusher", '"exact"|"alias"|"ci"|"fuzzy"', "return tracks"]) assert.ok(PRODUCER_SYSTEM.includes(k), `system prompt has ${k}`);
+for (const k of ["LIVE 10 STANDARD ON THIS MACHINE", "NO Ping Pong Delay", "build_kit with useGroove:true", "909 Core Kit.adg", "kick 36, snare 38, clap 39", "Arpeggiator", "Dynamic Tube", "bitcrusher", '"exact"|"alias"|"ci"|"fuzzy"', "return tracks"]) assert.ok(PRODUCER_SYSTEM.includes(k), `system prompt has ${k}`);
 assert.ok(!PRODUCER_SYSTEM.includes("Ping Pong Delay / Echo at"), "no nonexistent device recipe left");
 
 // v7: stems, music analysis, processing, mastering, loops, restyle, Gemini ears
@@ -509,7 +536,9 @@ assert.deepEqual(calls.filter((c) => c[0] === "critiqueCapture").at(-1).slice(1)
 await T("critique_capture").run({ path: "/out/capture.wav" }); assert.equal(calls.filter((c) => c[0] === "critiqueCapture").at(-1)[2], undefined);
 ctx.critiqueCapture = async () => { throw new Error("GEMINI_API_KEY not set"); };
 assert.equal(JSON.parse(await T("critique_capture").run({ path: "/out/capture.wav" })).ok, false);
-const ds = JSON.parse(await T("describe_set").run({}));
+const dsb = JSON.parse(await T("describe_set").run({}));   // default detail "brief": counts only, no clips / mixer
+assert.equal(dsb.tempo, 124); assert.equal(dsb.tracks[0].clipCount, 1); assert.equal(dsb.tracks[0].clips, undefined); assert.equal(dsb.tracks[1].muted, true); assert.equal(dsb.tracks[1].audioClips, 1);
+const ds = JSON.parse(await T("describe_set").run({ detail: "full" }));
 assert.equal(ds.tempo, 124); assert.equal(ds.playing, true); assert.deepEqual(ds.scenes, ["0:Main", "1"]); assert.equal(ds.tracks.length, 2); assert.deepEqual(ds.tracks[0].devices, ["Drum Rack", "Saturator"]); assert.equal(ds.tracks[0].clips[0].notes, 42); assert.equal(ds.tracks[0].clips[0].playing, true); assert.equal(ds.tracks[1].mixer.mute, true); assert.equal(ds.tracks[1].clips[0].audio, true); assert.equal(ds.tracks[1].hasSound, false);
 ctx.live.describeSet = async () => { throw new Error("unknown cmd: u'describe_set'"); };
 assert.equal(JSON.parse(await T("describe_set").run({})).ok, false);
@@ -549,7 +578,8 @@ assert.equal(ex.stored, true); assert.equal(ex.level, "intermediate"); assert.eq
 let exc = calls.filter((c) => c[0] === "explain").at(-1)[1]; assert.equal(exc.level, "intermediate"); assert.deepEqual(exc.steps.ableton, sample.explain_result.steps_ableton); assert.equal(exc.path, "/out/x.wav");
 const exTurn = JSON.parse(await T("explain_result").run(T("explain_result").parse({ ...sample.explain_result, path: undefined }))); assert.equal(exTurn.path, "turn");
 assert.throws(() => T("explain_result").parse({ ...sample.explain_result, choices: Array(7).fill({ what: "x", why: "y" }) }), "7 choices rejected");
-assert.throws(() => T("explain_result").parse({ ...sample.explain_result, steps_ableton: ["only two", "steps here"] }), "2 steps rejected");
+assert.throws(() => T("explain_result").parse({ ...sample.explain_result, steps_ableton: [] }), "0 steps rejected");   // min 1 (was 3): short explanations are fine
+assert.equal(T("explain_result").parse({ ...sample.explain_result, steps_ableton: ["only two", "steps here"], steps_logic: undefined }).steps_ableton.length, 2, "2 steps and no logic steps accepted");
 assert.throws(() => T("explain_result").parse({ ...sample.explain_result, steps_logic: Array(9).fill("step nine") }), "9 steps rejected");
 ctx.explain = async () => { throw new Error("store unavailable"); };
 assert.equal(JSON.parse(await T("explain_result").run(sample.explain_result)).ok, false);
@@ -562,11 +592,11 @@ const gg = JSON.parse(await T("genre_guide").run(sample.genre_guide)); assert.ma
 assert.throws(() => T("genre_guide").parse({ genre: "x" }), "1-char genre rejected");
 ctx.genreGuide = async () => { throw new Error("ANTHROPIC_API_KEY not set"); };
 assert.equal(JSON.parse(await T("genre_guide").run(sample.genre_guide)).ok, false);
-for (const k of ["ROOMS", "[room: create]", "[room: analyse]", "[room: tweak]", "LEVEL", "at most one clarifying question", "VARIATIONS", "say 'use B'", "EXPLAIN RULE", "explain_result", "Make it in Logic", "Drum Machine Designer", "restyle_audio", "genre_guide"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
+for (const k of ["ROOMS", "[room: create]", "[room: analyse]", "[room: tweak]", "LEVEL", "at most one clarifying question", "VARIATIONS", "say 'use B'", "EXPLAIN RULE", "explain_result", "steps_logic optional", "Drum Machine Designer", "restyle_audio", "genre_guide"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
 
 // v11: genre blueprint, genreTarget, production-first reply
 const gb = JSON.parse(await T("genre_blueprint").run(sample.genre_blueprint));
-assert.equal(gb.slug, "2000s-hip-hop"); assert.match(gb.summary, /92-100 BPM/); assert.match(gb.blueprint, /TYPE: Moog-style/);
+assert.equal(gb.slug, "2000s-hip-hop"); assert.match(gb.summary, /92-100 BPM/); assert.match(gb.bass, /TYPE: Moog-style/); assert.equal(gb.blueprint, undefined, "sections (bass/drumSounds/patterns) replace the whole markdown");
 const gbu = JSON.parse(await T("genre_blueprint").run({ genre: "polka" })); assert.equal(gbu.ok, false); assert.match(gbu.error, /unknown genre 'polka'; closest: 2000s hip hop/);
 assert.throws(() => T("genre_blueprint").parse({ genre: "x" }), "1-char genre rejected");
 ctx.critiqueMix = async (ref, opts) => { calls.push(["critiqueMix", ref, opts]); return { styleRead: "sounds like generic trap", styleAccuracy: { target: "2000s hip hop", verdict: "off", why: "808 hats, no swing" }, bass: { present: false, type: null, suggestion: "Moog-style synth bass, octave 1-2, sliding off the kick on the and of 2" }, moves: ["swap hats for 8th 909 hats 95/60", "add a Moog bass", "snap layer on the snare"] }; };
@@ -577,7 +607,7 @@ ctx.critiqueCapture = async (p, ref, opts) => { calls.push(["critiqueCapture", p
 await T("critique_capture").run({ path: "/out/capture.wav", reference: "ref#1", genreTarget: "boom bap" });
 assert.deepEqual(calls.filter((c) => c[0] === "critiqueCapture").at(-1).slice(1), ["/out/capture.wav", "/tmp/ref1.wav", { genreTarget: "boom bap" }]);
 assert.throws(() => T("critique_mix").parse({ genreTarget: "x".repeat(1501) }), "genreTarget too long rejected");
-for (const k of ["production-first", "bass TYPE", "snaps", "ALWAYS include a bass", "NO LUFS", "genre_blueprint", "[genre blueprint:", "styleAccuracy", "SOUND & PATTERN", "how it moves against the kick", "6 layers", "up to 8"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
+for (const k of ["production-first", "bass TYPE", "snaps", "ask always gets a bass", "NO LUFS", "genre_blueprint", "[genre blueprint:", "styleAccuracy", "Each layer is one call.", "how it moves against the kick", "6 layers", "up to 8"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
 assert.ok(!PRODUCER_SYSTEM.includes('starting with "Review:"') && !PRODUCER_SYSTEM.includes("Explained: see"), "numeric Review/Explained lines removed");
 assert.ok(!PRODUCER_SYSTEM.includes("hats were 4 dB above snare"), "technical review example removed");
 
@@ -614,7 +644,7 @@ const tk = JSON.parse(await T("tune_sample").run(T("tune_sample").parse({ path: 
 assert.equal(tk.preserveFormants, false, "non-vocal default false");
 const tr3 = JSON.parse(await T("tune_sample").run(T("tune_sample").parse({ path: "/out/sub.wav", semitones: 1, name: "s", role: "vocal" }))); assert.equal(tr3.preserveFormants, true, "role vocal -> true");
 const tf = JSON.parse(await T("tune_sample").run(T("tune_sample").parse({ path: "/out/vox.wav", semitones: 1, name: "v", preserveFormants: false }))); assert.equal(tf.preserveFormants, false, "explicit override");
-for (const k of ["TRACK HYGIENE", "design_kit first", "±3 st", "GENRE-TRUE DRUMS", "VOCAL", "build_kit", "load_to_pad", "generate_rhythm", "Never create a second track for the same role", "new SCENE", "Cap: 8 tracks", "at most 2 short lines", "no Hz, tuning numbers or capture statistics", "not sung chops"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
+for (const k of ["Drums live on ONE Drum Rack track", "design_kit first", "±3 st", "GENRE-TRUE DRUMS", "VOCAL", "build_kit", "load_to_pad", "generate_rhythm", "never a second track", "A new beat in an existing set = a new scene", "Cap 8 tracks we created", "in one plain-words clause each", "NO LUFS / crest / dB / levels", "not sung chops"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
 
 // v13: compose_track
 const ct = JSON.parse(await T("compose_track").run(T("compose_track").parse(sample.compose_track)));
@@ -632,17 +662,18 @@ assert.throws(() => T("compose_track").parse({ bars: 33 }), "bars 33 rejected");
 assert.throws(() => T("compose_track").parse({ candidates: 3 }), "candidates 3 rejected");
 ctx.composeTrack = async () => { throw new Error("pytools not installed / run tools/py/setup.sh (Demucs needed for stems)"); };
 const ctf = JSON.parse(await T("compose_track").run(sample.compose_track)); assert.equal(ctf.ok, false); assert.match(ctf.error, /pytools not installed/);
-for (const k of ["COMPOSE A TRACK", "compose_track is the PRIMARY path", "pytools not installed", "fall back to design_kit + build_kit", "DERIVED from the generated track", "regenerate with a different vibe", "use the generated track's vocals as chops", "listen_live once"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
+for (const k of ["COMPOSE A TRACK", "compose_track ONLY when the user says", "pytools not installed", "fall back to design_kit + build_kit", "DERIVED from the generated track", "regenerate with a different vibe", "use the generated track's vocals as chops", "listen_live captures Ableton's REAL output"]) assert.ok(PRODUCER_SYSTEM.includes(k), `prompt has ${k}`);
 
 // persistent attachments: note lists all, marks new vs earlier
 const fc = { beta: { messages: { toolRunner(params) { return { params, pushMessages() {}, async *[Symbol.asyncIterator]() { yield { role: "assistant", stop_reason: "end_turn", content: [] }; } }; } } } };
 const h2 = (await runProducer({ history: [], userText: "use that loop again", recordings: { beat: "/tmp/beat.wav", refs: [{ name: "loop.wav", path: "/tmp/ref1.wav" }, { name: "vox.wav", path: "/tmp/ref2.wav" }], attachedThisTurn: ["ref#2"] }, ctx, client: fc })).history;
-assert.match(h2[0].content, /'beat' = BEATBOX recording \(from an earlier turn; path: \/tmp\/beat.wav\)/);
-assert.match(h2[0].content, /ref#1 "loop.wav" \(from an earlier turn; path: \/tmp\/ref1.wav\)/);
-assert.match(h2[0].content, /ref#2 "vox.wav" \(NEW this turn; path: \/tmp\/ref2.wav\)/);
-assert.match(h2[0].content, /Attached this turn: ref#2/);
+// this turn's attachment carries its path; older ones are listed by name only (compact, no stale paths in the prompt)
+assert.match(h2[0].content, /Attached this turn: ref#2 "vox.wav" \(path: \/tmp\/ref2.wav\)/);
+assert.match(h2[0].content, /which\/source 'ref#2'/);
+assert.match(h2[0].content, /earlier: beat \(beatbox\), ref#1 loop\.wav \(name one to use it\)\./);
+assert.ok(!/\/tmp\/beat\.wav|\/tmp\/ref1\.wav/.test(h2[0].content), "earlier attachments carry no path");
 const h3 = (await runProducer({ history: [], userText: "faster", recordings: { refs: [{ name: "loop.wav", path: "/tmp/ref1.wav" }], attachedThisTurn: [] }, ctx, client: fc })).history;
-assert.match(h3[0].content, /Nothing new was attached/);
+assert.equal(h3[0].content, "faster\n\n[earlier: ref#1 loop.wav (name one to use it).]", "nothing new: only the earlier list");
 const h4 = (await runProducer({ history: [], userText: "hi", recordings: {}, ctx, client: fc })).history;
 assert.equal(h4[0].content, "hi", "no attachments -> plain text");
 
@@ -652,7 +683,7 @@ const bad = JSON.parse(await tools[0].run({ bpm: 100 }));
 assert.equal(bad.ok, false); assert.match(bad.error, /not reachable/);
 assert.equal(events.at(-1).type, "tool_done"); assert.equal(events.at(-1).ok, false);
 // missing recording
-const miss = JSON.parse(await makeTools(ctx, {})[2].run({ which: "hum" }));
+const miss = JSON.parse(await makeTools(ctx, {}).find((t) => t.name === "analyze_recording").run({ which: "hum" }));   // by name: set_position shifted the indices
 assert.equal(miss.ok, false); assert.match(miss.error, /no hum recording/);
 
 // schema rejections
@@ -669,7 +700,7 @@ const fakeClient = { beta: { messages: { toolRunner(params) {
 } } } };
 const r = await runProducer({ history: [], userText: "make a techno beat", recordings: { beat: "/tmp/fake.wav" }, ctx, client: fakeClient });
 assert.equal(r.text, "Kick and Snare are in Live at 126.");
-assert.equal(r.history.length, 2); assert.equal(r.history[0].role, "user"); assert.match(r.history[0].content, /BEATBOX recording \(from an earlier turn/);
+assert.equal(r.history.length, 2); assert.equal(r.history[0].role, "user"); assert.match(r.history[0].content, /\[earlier: beat \(beatbox\) \(name one to use it\)\.\]/);
 assert.equal(r.stopReason, "end_turn");
 console.log(`tools: ${tools.length} · events: ${events.length} · calls: ${calls.length}`);
 console.log("ALL PASS");

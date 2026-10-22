@@ -109,5 +109,8 @@ Witch house, 60-80 BPM halftime (often programmed at 130-150), straight or light
 - oneshot perc: TrackType: SFX, pitched-down tambourine hit with metallic chain rattle, dark reverb, lo-fi, 600 ms
 
 ## Sources
+- https://en.wikipedia.org/wiki/Witch_house_(genre)
+- https://en.wikipedia.org/wiki/Chopped_and_screwed
+- https://en.wikipedia.org/wiki/Salem_(band)
 - Written from model knowledge on request; names and dates are to be verified.
 

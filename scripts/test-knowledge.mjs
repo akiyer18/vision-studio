@@ -1,8 +1,8 @@
-import { listGenres, matchGenre, getBlueprint, getPresets, validateBlueprint, getLoopPrompts, REQUIRED_SECTIONS } from "../lib/knowledge.js";
+import { getIntro, getBlueprint as _gb, listGenres, matchGenre, getBlueprint, getPresets, validateBlueprint, getLoopPrompts, REQUIRED_SECTIONS } from "../lib/knowledge.js";
 let fails = 0;
 const assert = (c, m) => { if (!c) { fails++; console.log("FAIL:", m); } };
 const genres = listGenres();
-assert(genres.length === 23, `expected 23 genres, got ${genres.length}`);
+assert(genres.length >= 23, `expected at least 23 genres, got ${genres.length}`);   // 23 hand-written + gen-*.md written on request
 for (const g of genres) {
   const v = validateBlueprint(g.slug);
   assert(v.ok, `${g.slug}: missing ${v.missing.join(", ")} tooLong=${v.tooLong} (${v.summaryChars} chars)`);
@@ -30,6 +30,16 @@ const aliases = {
   "future bass chords": "future-bass", "a pop song like dua lipa": "pop", "nu-disco groove": "funk-disco", "funk beat with slap bass": "funk-disco", "jazz hop beat": "jazz-hop", "jazzy hip hop": "jazz-hop",
   "uplifting trance 138": "trance", "ambient drone track": "ambient", "make the snare pop": null, "add more soul to the chords": null,
 };
+
+// genre intro (history + references) for the first reply of a session
+for (const g of genres) {
+  const intro = getIntro(g.slug);
+  assert(intro && intro.era && intro.references, `${g.slug}: getIntro era/references`);
+  assert(intro && intro.intro.startsWith("History: ") && intro.intro.includes("Listen to"), `${g.slug}: intro line shape`);
+  assert(intro && intro.era.length <= 320 && intro.references.length <= 320, `${g.slug}: intro parts capped`);
+  const bp = _gb(g.slug); assert(bp.intro === intro.intro && bp.era === intro.era, `${g.slug}: getBlueprint carries intro`);
+}
+assert(getIntro("no-such-genre") === null, "getIntro unknown slug -> null");
 let resolved = 0;
 for (const [text, want] of Object.entries(aliases)) { const got = matchGenre(text); assert(got === want, `matchGenre(${JSON.stringify(text)}) = ${got}, want ${want}`); if (want && got === want) resolved++; }
 assert(resolved >= 36, `only ${resolved} aliases resolved`);

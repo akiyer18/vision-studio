@@ -79,8 +79,6 @@ Industrial, 90-100 BPM (industrial rock/hip hop, half-time backbeat), 120-135 (E
 - loop: industrial rock drum loop at {bpm} BPM, heavy distorted kick layered with an 808, metallic snare with a sheet-metal hit on 2 and 4, crunchy 8th hats, chain and pipe percussion hits, half-time, dry and aggressive, no melody
 - loop: EBM drum loop at {bpm} BPM, 1980s drum machine kick four on the floor, metallic snare on 2 and 4, 8th hats with an open hat, metal percussion, tight and mechanical, no melody
 - loop: industrial techno drum loop at {bpm} BPM, clipped distorted kick four on the floor with a long rumble, anvil and pipe hits instead of claps, bitcrushed 16th hats, air compressor bursts, hammer on steel, relentless, no melody
-- loop: power noise drum loop at {bpm} BPM, heavily distorted kick four on the floor, distorted noise snare, harsh noise 16ths instead of hats, rhythmic noise, no melody
-- loop: dark industrial electronic drum groove at {bpm} BPM, hard-clipped kick, gated metallic snare, sparse machine-noise hats, found-object percussion, stops and dropouts, no melody
 - texture: factory floor ambience with a dark detuned saw drone, long metal pipe resonances and hydraulic hiss, {bpm} BPM, industrial, no drums
 - texture: EBM distorted 16th-note sequencer bass with a tritone stab and feedback swells, {bpm} BPM, industrial, no drums
 - kick: TrackType: SFX, industrial techno kick drum, clipped 909 style punch into a long distorted sub rumble tail, 55 Hz, 700 ms decay, overdriven, mono, dry one-shot

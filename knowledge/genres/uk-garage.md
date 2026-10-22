@@ -1,6 +1,6 @@
 # UK Garage / 2-Step
 slug: uk-garage
-aliases: uk garage, ukg, 2-step, two step, 2 step garage, speed garage, garage, mj cole, todd edwards, el-b, bassline (adjacent), skippy drums
+aliases: uk garage, ukg, 2-step, two step, 2 step garage, 2-step garage, two-step garage, 2-step beat, speed garage, garage, mj cole, todd edwards, el-b, bassline (adjacent), skippy drums
 tempo: 128-135
 
 ## Summary

@@ -59,5 +59,8 @@ Cosmo pop, 112-120 BPM, straight to light swing (0-0.08). Drums: round punchy di
 - perc: TrackType: SFX, analog syndrum zap, pitch-dropping sine tone with slight noise, retro space laser feel, 250 ms, one-shot
 
 ## Sources
+- https://en.wikipedia.org/wiki/Space_age_pop
+- https://en.wikipedia.org/wiki/Nu-disco
+- https://en.wikipedia.org/wiki/Synth-pop
 - Written from model knowledge on request; names and dates are to be verified.
 
