@@ -35,3 +35,15 @@ flowchart LR
 ```
 
 `packages/contracts` is the JSON Schema for the song brief, a turn, and a render job. The web app and the API both generate their types from it. A session keeps uploads in `audio/`, rendered WAVs in `renders/`, MIDI in `midi/`, and picked files in `export/`.
+
+## Repository structure
+
+- `apps/web` — the Vision Studio web application.
+- `services/api` — the HTTP API and rendering service.
+- `services/agent` — the song-agent providers and orchestration.
+- `packages/contracts` — shared JSON Schema and generated types.
+- `kb` — Vision Studio knowledge and product reference material.
+- `docs` — architecture and project documentation.
+- `stable-audio-features` — the self-contained Stable Audio project, including its Ableton integration, analysis code, scripts, tools, and samples.
+
+Stable Audio project credit: Revan Daldaban, Stefan Dvoretskii, and Akshaye Iyer.
