@@ -17,15 +17,15 @@
   --secondary: #b4b1cc;
   --muted: #b4b1cc;
   --quiet: #6f6c8a;
-  --text-hero: 72px;
-  --text-page: 32px;
-  --text-section: 22px;
-  --text-card: 17px;
-  --text-body: 16px;
-  --text-nav: 15px;
-  --text-label: 14px;
-  --text-small: 13px;
-  --text-readout: 26px;
+  --text-hero: 4rem;
+  --text-page: 2rem;
+  --text-section: 1.333rem;
+  --text-card: 1.056rem;
+  --text-body: 0.944rem;
+  --text-nav: 0.889rem;
+  --text-label: 0.833rem;
+  --text-small: 0.833rem;
+  --text-readout: 1.556rem;
   --leading-hero: 1.05;
   --leading-body: 1.6;
   --tracking-hero: -0.03em;
@@ -75,18 +75,18 @@
 
 @media (max-width: 767px) {
   :root {
-    --text-hero: 64.8px;
-    --text-page: 28.8px;
-    --text-section: 19.8px;
-    --text-card: 15.3px;
-    --text-body: 14.4px;
-    --text-nav: 13.5px;
-    --text-readout: 23.4px;
+    --text-hero: 3.6rem;
+    --text-page: 1.8rem;
+    --text-section: 1.2rem;
+    --text-card: 0.95rem;
+    --text-body: 0.85rem;
+    --text-nav: 0.833rem;
+    --text-readout: 1.4rem;
   }
 }
 
 html {
-  font-size: 100%;
+  font-size: 112.5%;
 }
 
 body {
@@ -373,6 +373,15 @@ button.bg-accent:hover:not(:disabled) {
   font-weight: 700;
   line-height: 1.15;
   letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+}
+
+.section-title,
+.home-sub,
+.tip-card,
+.card p,
+.page-sub {
+  overflow-wrap: anywhere;
 }
 
 .page-sub {
