@@ -37,6 +37,49 @@ delete process.env.GEMINI_TIER;
 ok(ears.LITE_SCORE_NOTE === "lite judge, lower confidence", "LITE_SCORE_NOTE string");
 ok(ears.scoreNoteFor(true) === ears.LITE_SCORE_NOTE && ears.scoreNoteFor(false) === undefined, "scoreNoteFor");
 
+// E5: account-level bad keys are dropped from the rotation and shown in the status
+ears._markQuota();
+ears._markBadKey(1);
+s = ears.geminiStatus();
+ok(s.badKeys.length === 1 && s.badKeys[0] === 1 && s.flashAvailable === true, "one bad key listed, flash still available: " + JSON.stringify(s));
+ok(/key 2 rejected/.test(ears.geminiStatusText()), "status text names the rejected key: " + ears.geminiStatusText());
+ears._markBadKey(0); ears._markBadKey(2);
+ok(ears.geminiStatus().flashAvailable === false && /every Gemini key was rejected/.test(ears.geminiStatusText()), "all keys bad -> no flash, clear status text: " + ears.geminiStatusText());
+ears._markQuota();
+ok(ears.geminiStatus().badKeys.length === 0, "clear() also clears bad keys");
+
+// E4 + E5 through the cascade with a stubbed HTTP call: key 1 out of daily quota, key 2 revoked, key 3 fine -> flash answers on key 3
+const seen = [];
+ears._setRequestImpl(async (model, parts, { keyIdx }) => {
+  seen.push(`${model}#${keyIdx}`);
+  if (keyIdx === 0) throw new Error("429 quota exceeded for this model per day (billing plan)");
+  if (keyIdx === 1) throw new Error("400 API key not valid. Please pass a valid API key.");
+  return { text: "ok", ms: 1, provider: "gemini", model, lite: /lite/i.test(model), keyIndex: keyIdx };
+});
+let r = await ears._textGemini("ONLY JSON please", { judge: true });
+ok(r.keyIndex === 2 && r.lite === false, "rotation: flash answered on key 3: " + JSON.stringify({ keyIndex: r.keyIndex, model: r.model, seen }));
+ok(ears.geminiStatus().badKeys.includes(1), "revoked key 2 marked bad after the 400");
+const seenBefore = seen.length;
+r = await ears._textGemini("ONLY JSON please", { judge: true });
+ok(!seen.slice(seenBefore).some((x) => x.endsWith("#1")), "bad key never retried on any model: " + seen.slice(seenBefore).join(","));
+// E4: good key out of quota on every flash model + one revoked key -> lite fallback still happens (not accountOnly)
+ears._markQuota();
+ears._setRequestImpl(async (model, parts, { keyIdx }) => {
+  seen.push(`${model}#${keyIdx}`);
+  if (/lite/i.test(model)) return { text: "lite ok", ms: 1, provider: "gemini", model, lite: true, keyIndex: keyIdx };
+  if (keyIdx === 1) throw new Error("403 PERMISSION_DENIED: API key not valid");
+  throw new Error("429 quota exceeded per day for this billing plan");
+});
+r = await ears._textGemini("ONLY JSON please", { judge: true });
+ok(r.lite === true && /lite/i.test(r.model), "quota on the good keys + one revoked key -> degrades to a lite judge: " + JSON.stringify({ model: r.model, lite: r.lite }));
+// E4: EVERY key revoked -> accountOnly: throws instead of a lite judge
+ears._markQuota();
+ears._setRequestImpl(async (model, parts, { keyIdx }) => { throw new Error("403 PERMISSION_DENIED: API key not valid"); });
+let threw = null;
+try { await ears._textGemini("ONLY JSON please", { judge: true }); } catch (e) { threw = e; }
+ok(threw && threw.accountOnly === true && /API key/.test(threw.message), "all keys revoked -> accountOnly error, no lite call: " + (threw && threw.message.slice(0, 80)));
+ears._setRequestImpl(null); ears._markQuota();
+
 // no keys at all
 delete process.env.GEMINI_API_KEY; delete process.env.GEMINI_API_KEYS;
 ok(ears.geminiAvailable() === false && ears.geminiStatus().keysTotal === 0 && ears.geminiStatus().activeKeyIndex === null && ears.geminiStatusText() === "no GEMINI_API_KEY", "no keys");

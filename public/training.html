@@ -184,7 +184,8 @@ function renderResult(r) {
   if (r.bass?.note) chips.push(r.bass.note);
   $('r-chips').innerHTML = chips.map((c) => `<span class="chip">${c}</span>`).join('');
   const note = r.scoreNote || r.ears?.scoreNote || (r.ears?.lite ? 'lite judge, lower confidence' : null);
-  $('r-note').hidden = !note; $('r-note').textContent = note ? `Ears: ${note}` : '';
+  const notes = [r.note ? `Capture: ${r.note}` : null, note ? `Ears: ${note}` : null].filter(Boolean);
+  $('r-note').hidden = !notes.length; $('r-note').textContent = notes.join(' · ');
   if (r.capture?.url) { $('r-audio').src = r.capture.url; $('r-audio').hidden = false; }
 }
 
@@ -194,7 +195,7 @@ $('reveal').onclick = async () => {
     const r = await j('/api/training/reveal', { id: session.id });
     stopPoll(); $('howsec').hidden = false;
     $('h-sub').textContent = `${(r.built.tracks || []).join(', ') || 'nothing built'} · all muted: unmute one at a time against your own tracks.`;
-    $('h-text').textContent = r.howText + (r.built.drumsError ? `\n\n(drums: ${r.built.drumsError})` : '') + (r.built.bassError ? `\n(bass: ${r.built.bassError})` : '') + (r.built.stemsError ? `\n(stems: ${r.built.stemsError})` : '');
+    $('h-text').textContent = r.howText + (r.built.drumsError ? `\n\n(drums: ${r.built.drumsError})` : '') + (r.built.bassError ? `\n(bass: ${r.built.bassError})` : '') + (r.built.stemsError ? `\n(stems: ${r.built.stemsError})` : '') + (r.built.keysError ? `\n(keys: not placed: ${r.built.keysError})` : '') + (r.built.mixError ? `\n(target mix: not placed: ${r.built.mixError})` : '');
     status('s-check', 'revealed in Live.');
   } catch (e) { stopPoll(); status('s-check', e.message, true); }
   busy(false);

@@ -42,6 +42,8 @@ function insideDir(dir, p) {
 const insideOut = (p) => insideDir(OUT_DIR, p);
 const insideTmp = (p) => insideDir(TMP, p);
 const audioPathOk = (p) => insideOut(p) || insideTmp(p);
+/** First preset name from a live-presets.md cell: "Wobble Bass (speed garage warp), Sub Bass" -> "Wobble Bass" (parentheticals break Live's exact/alias match). */
+const presetName = (cell) => String(cell || '').split(/[,|/]/)[0].replace(/\s*\(.*?\)\s*/g, '').trim();
 
 async function publish(buffer, name, ext, kind) {
   const file = `${slug(name)}-${Date.now()}${ext}`;
@@ -71,7 +73,8 @@ async function liveVersion() {
   try { installed = (await fs.readFile(path.join(here, 'ableton', 'VERSION'), 'utf8')).trim(); } catch {}
   try {
     const { sendToLive } = await import('./ableton/client.js');
-    const r = await sendToLive({ cmd: 'version' }, { timeoutMs: 1500 });
+    await Promise.race([liveQueue.catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);   // let pending Live commands drain (max 3 s) so a busy Live does not read as 'old script'
+    const r = await sendToLive({ cmd: 'version' }, { timeoutMs: 4000 });
     reachable = true;
     running = r?.ok ? String(r.version) : 'pre-5';   // older scripts answer "unknown cmd"
     scriptState.running = running; scriptState.at = Date.now();
@@ -282,7 +285,7 @@ async function nextSlotUnlocked(role) {
   return pick.name;
 }
 async function toSlot(srcPath, hint = '', fallback = 'Snare', opts = {}) {
-  if (!insideOut(srcPath)) throw new Error('path outside output dir');
+  if (!audioPathOk(srcPath)) throw new Error('path outside project audio (output dir or .tmp)');
   const role = roleFor(hint, fallback);
   const name = await nextSlot(role);
   const dest = path.join(OUT_DIR, name);
@@ -848,7 +851,9 @@ function makeCtx(emit) {
       const total = seconds + Math.ceil(barSec) + 2;   // pre-roll: launch quantization can delay the start up to a bar
       let seekNote = null;
       if (scene == null && fromBar != null) {
-        if (await scriptAtLeast('5.8')) { const j = await send({ cmd: 'jump', bar: Math.max(1, Math.round(Number(fromBar))) }).catch((e) => ({ error: e.message })); seekNote = j?.ok ? `capture from bar ${Math.max(1, Math.round(Number(fromBar)))}` : `capture from playhead (jump failed: ${String(j?.error || '').slice(0, 60)})`; }
+        const known58 = await scriptAtLeast('5.8');
+        const versionUnknown = !scriptState.running;   // handshake timed out: do not assume an old script, try the jump anyway
+        if (known58 || versionUnknown) { const j = await send({ cmd: 'jump', bar: Math.max(1, Math.round(Number(fromBar))) }).catch((e) => ({ error: e.message })); seekNote = j?.ok ? `capture from bar ${Math.max(1, Math.round(Number(fromBar)))}` : `capture from playhead (jump failed: ${String(j?.error || '').slice(0, 60)})`; }
         else seekNote = 'capture from playhead (script < 5.8)';
       }
       if (scene != null) await send({ cmd: 'play_scene_for', index: Number(scene), seconds: total });
@@ -957,7 +962,7 @@ function makeCtx(emit) {
             const r = await this.live.loadAudioClip({ track: name, slot: 0, samplePath: a.loop.path, warpMode, overwrite: true });
             rememberClip(name, { audio: true, bars: windowBars, slot: 0 });
             created.push(name);
-            return { track: r.track || name, loop: a.loop.url, bars: windowBars, strength: lst, seededFrom: `${stem} stem`, score: score && !score.skipped ? { vsOriginal: score.winner === 'B' ? 'better' : score.winner === 'A' ? 'weaker' : 'even', confidence: score.confidence, why: score.why, lite: score.lite, scoreNote: score.scoreNote } : score, ...(retried ? { retried } : {}) };
+            return { track: r.track || name, loop: a.loop.url, bars: windowBars, strength: lst, seededFrom: `${stem} stem`, score: score && !score.skipped ? { vsOriginal: score.winner === 'B' ? 'better' : score.winner === 'A' ? 'weaker' : 'even', confidence: score.confidence, why: score.why, lite: score.lite, provider: score.provider, scoreNote: score.scoreNote } : score, ...(retried ? { retried } : {}) };
           };
           const drumWords = String(dna?.drums || '').slice(0, 140);
           const harmonyWords = String(dna?.harmonyMelody || dna?.harmony || '').slice(0, 140);
@@ -982,7 +987,7 @@ function makeCtx(emit) {
             if (!kit.length) { const kitR = await this.sliceKitFromAudio(stems.drums, { name: 'enh' }); kit = kitR.kit.filter((k) => !k.alt); }
             const have = new Set(kit.map((k) => k.kind));
             const pattern = { ...rhythm.pattern, lanes: (rhythm.pattern?.lanes || []).map((l) => ({ ...l, instrument: have.has(l.instrument) ? l.instrument : /snare|clap|rim/.test(l.instrument) ? (have.has('snare') ? 'snare' : 'clap') : /hat|ride|crash|perc|shaker/.test(l.instrument) ? (have.has(l.instrument) ? l.instrument : 'hat_closed') : 'kick' })) };
-            if (kit.length && pattern.lanes.length) { out.built.kit = await this.live.buildKit({ name: 'AI Kit', kit, pattern, bars: pattern.bars, slot: 0, useGroove: true, humanize: 0.15 }).catch((e) => ({ error: e.message })); if (!out.built.kit?.error) created.push('AI Kit'); }
+            if (kit.length && pattern.lanes.length) { out.built.kit = await this.live.buildKit({ name: 'AI Kit', kit, pattern, bars: pattern.bars, slot: 0, useGroove: true, humanize: 0.15, fire: false }).catch((e) => ({ error: e.message })); if (!out.built.kit?.error) { created.push('AI Kit'); try { await send({ cmd: 'set_mixer', track: 'AI Kit', mute: true }); } catch {} } }
             out.kitSounds = kit.map((k) => k.kind);
           } else out.built.kit = { skipped: 'no audible drums in the recording' };
           if (stems.bass && sounding(stemPeak.bass)) {
@@ -996,7 +1001,7 @@ function makeCtx(emit) {
             for (const n of tr.notes) { if (n.pitch < 28 || n.pitch > 55) continue; const k = Math.round(n.startBeats * 4); const prev = byOnset.get(k); if (!prev || n.pitch < prev.pitch) byOnset.set(k, n); }
             const notes = [...byOnset.values()].map((n) => ({ pitch: n.pitch, startBeats: Math.round(n.startBeats * 4) / 4, durationBeats: Math.max(0.25, Math.round(n.durationBeats * 4) / 4), velocity: n.velocity })).sort((a, b) => a.startBeats - b.startBeats).filter((n) => n.startBeats < windowBars * 4);
             if (notes.length >= 2) {
-              let preset = 'Bass'; try { const k = await import('./lib/knowledge.js'); const pr = bp && k.getPresets ? k.getPresets(bp.slug) : null; const list = pr?.bass || pr?.bassPresets; if (Array.isArray(list) && list.length) preset = list[0]; else if (typeof list === 'string' && list) preset = list.split(/[,|/]/)[0].trim(); } catch {}
+              let preset = 'Bass'; try { const k = await import('./lib/knowledge.js'); const pr = bp && k.getPresets ? k.getPresets(bp.slug) : null; const list = pr?.bass || pr?.bassPresets; if (Array.isArray(list) && list.length) preset = presetName(String(list[0])); else if (typeof list === 'string' && list) preset = presetName(list); } catch {}
               try { await this.live.loadDevice({ track: 'AI Bass', name: preset }); } catch { try { await this.live.loadDevice({ track: 'AI Bass', name: 'Bass' }); } catch {} }
               out.built.bass = await this.live.buildMelody({ name: 'AI Bass', notes, bars: windowBars, slot: 0 }).catch((e) => ({ error: e.message }));
               out.built.bass.notes = notes.length; out.built.bass.preset = preset; if (bassLoop) out.built.bass.loop = bassLoop;
@@ -1020,7 +1025,7 @@ function makeCtx(emit) {
       out.scores = Object.fromEntries(Object.entries(out.built).filter(([, v]) => v && v.score).map(([k, v]) => [k, v.score]));
       // UI contract: layers = [{track, status, score, lite, judge, scoreNote}] (status: built | skipped | error)
       const TRACK_OF = { tops: 'AI Tops', texture: 'AI Texture', kit: 'AI Kit', bass: 'AI Bass' };
-      out.layers = [{ track: 'AI Enhance', status: clip?.error ? 'error' : 'built', role: 'reference', score: null, lite: null, judge: null, scoreNote: null }, ...Object.entries(out.built).filter(([k]) => TRACK_OF[k]).map(([k, v]) => { const sc = v?.score && !v.score.skipped && !v.score.error ? v.score : null; return { track: v?.track?.name || v?.track || TRACK_OF[k], status: v?.error ? 'error' : v?.skipped || v?.note ? 'skipped' : 'built', score: sc ? sc.vsOriginal : null, confidence: sc?.confidence ?? null, lite: sc?.lite ?? null, judge: sc?.why || v?.score?.skipped || v?.score?.error || null, scoreNote: sc?.scoreNote ?? null, ...(v?.error ? { error: v.error } : {}), ...(v?.skipped ? { why: v.skipped } : {}) }; })];
+      out.layers = [{ track: 'AI Enhance', status: clip?.error ? 'error' : 'built', role: 'reference', score: null, lite: null, judge: null, scoreNote: null }, ...Object.entries(out.built).filter(([k]) => TRACK_OF[k]).map(([k, v]) => { const sc = v?.score && !v.score.skipped && !v.score.error ? v.score : null; return { track: v?.track?.name || v?.track || TRACK_OF[k], status: v?.error ? 'error' : v?.skipped || v?.note ? 'skipped' : 'built', score: sc ? Math.round((Number(sc.confidence) || 0) * 10) : null, verdict: sc?.vsOriginal ?? null, confidence: sc?.confidence ?? null, lite: sc?.lite ?? null, judge: sc?.provider ?? null, why: sc?.why || v?.score?.skipped || v?.score?.error || null, scoreNote: sc?.scoreNote ?? null, ...(v?.error ? { error: v.error } : {}), ...(v?.skipped ? { why: v.skipped } : {}) }; })];
       out.scoreNote = Object.values(out.scores).map((sc) => sc?.scoreNote).find(Boolean) || (Object.keys(out.scores).length ? undefined : 'layers not scored (no Gemini judge available)');
       out.note = `${out.layers.filter((l) => l.status === 'built').map((l) => l.track).join(', ')} built${out.capture?.from ? ` (${out.capture.from})` : ''}; only AI Enhance audible now`;
       out.listening = 'AI Enhance (the reference) plays SOLOED for a few bars so the user hears the direction alone; AI Tops, AI Texture, AI Kit and AI Bass are muted until asked for. Offer: "A/B it against my original", "unmute the tops", "use the AI kit instead of my drums", "unmute the bass", "another take of the texture".';
@@ -1306,7 +1311,7 @@ function makeCtx(emit) {
       const patB = { ...rhythm.pattern, bars: barsB, lanes: sliceSteps(rhythm.pattern.lanes, B) };
       try { built.drums = await this.live.buildKit({ name: 'Drums', kit: kitMain, pattern: patA, bars: barsA, slot: slotA }); if (patB.lanes.length) { const map = built.drums.padMap || {}; const patBm = { ...patB, lanes: patB.lanes }; built.drumsB = await this.live.buildKit({ name: 'Drums', kit: kitMain.map((k) => ({ ...k, note: map[k.label || k.kind] })), pattern: patBm, bars: barsB, slot: slotB }); } } catch (e) { built.drums = { error: e.message }; }
       const hasInstrument = async (track) => { try { const d = await this.live.listDevices({ track, params: false }); return (d.devices || []).some((x) => /simpler|sampler|instrument|rack|impulse/i.test(`${x.class_name} ${x.name}`)); } catch { return false; } };
-      const presetFor = async (role, fallbackQuery) => { try { const k = await import('./lib/knowledge.js'); const pr = bp && k.getPresets ? k.getPresets(bp.slug) : null; const list = pr?.[role] || pr?.[`${role}Presets`]; if (Array.isArray(list) && list.length) return list[0]; if (typeof list === 'string' && list) return list.split(/[,|/]/)[0].trim(); } catch {} return fallbackQuery; };
+      const presetFor = async (role, fallbackQuery) => { try { const k = await import('./lib/knowledge.js'); const pr = bp && k.getPresets ? k.getPresets(bp.slug) : null; const list = pr?.[role] || pr?.[`${role}Presets`]; if (Array.isArray(list) && list.length) return presetName(String(list[0])); if (typeof list === 'string' && list) return presetName(list); } catch {} return fallbackQuery; };
       const builtTracks = ['Drums'];
       if (bassNotes.length) { try { const nA = sliceNotes(bassNotes, A), nB = sliceNotes(bassNotes, B); const existed = await hasInstrument('Bass'); built.bass = await this.live.buildMelody({ name: 'Bass', notes: nA.length ? nA : bassNotes.slice(0, 16), bars: barsA, slot: slotA }); if (nB.length) await this.live.buildMelody({ name: 'Bass', notes: nB, bars: barsB, slot: slotB }); builtTracks.push('Bass'); if (!existed) { const preset = await presetFor('bass', 'Hip-Hop Sub Bass'); try { built.bass.preset = (await this.live.loadDevice({ track: 'Bass', name: preset })).device?.name || preset; } catch (e) { built.bass.presetError = e.message; } } else built.bass.preset = 'kept the existing instrument'; } catch (e) { built.bass = { error: e.message }; } }
       if (keysNotes.length) { try { const nA = sliceNotes(keysNotes, A), nB = sliceNotes(keysNotes, B); const existed = await hasInstrument('Keys'); built.keys = await this.live.buildMelody({ name: 'Keys', notes: nA.length ? nA : keysNotes.slice(0, 24), bars: barsA, slot: slotA }); if (nB.length) await this.live.buildMelody({ name: 'Keys', notes: nB, bars: barsB, slot: slotB }); builtTracks.push('Keys'); if (!existed) { const preset = await presetFor('keys', 'Grand Piano'); try { built.keys.preset = (await this.live.loadDevice({ track: 'Keys', name: preset })).device?.name || preset; } catch (e) { built.keys.presetError = e.message; } } else built.keys.preset = 'kept the existing instrument'; } catch (e) { built.keys = { error: e.message }; } }
@@ -1546,9 +1551,10 @@ function makeCtx(emit) {
       /** setTempo(bpm) or setTempo({ bpm, warpClips }): with warpClips the user's unwarped audio clips are warped first so they follow the new tempo. */
       setTempo: async (arg) => {
         const { bpm, warpClips = false } = typeof arg === 'object' && arg ? arg : { bpm: arg };
+        if (!Number.isFinite(Number(bpm))) throw new Error('setTempo: bpm required');
         const target = clamp(Number(bpm), 40, 300);
         const send = await liveClient();
-        let warped = [], unwarpedLeft = [];
+        let warped = [], unwarpedLeft = [], capped = false;
         if (warpClips && await scriptAtLeast('5.8')) {
           const r = okOrThrow(await send({ cmd: 'set_tempo', bpm: target, warp_clips: true }), 'set_tempo');
           warped = r.warped || []; unwarpedLeft = r.unwarped_left || r.unwarpedLeft || [];
@@ -1561,6 +1567,7 @@ function makeCtx(emit) {
           for (const t of set?.tracks || []) {
             if (t.is_midi) continue;
             const clips = Array.isArray(t.clips) ? t.clips : [];
+            if (clips.length >= 16) capped = true;   // describe_set reports at most 16 session clips per track
             for (const c of clips) {
               if (!c || !(c.name != null || c.has_clip)) continue;
               const slot = c.slot ?? c.index ?? clips.indexOf(c);
@@ -1573,7 +1580,7 @@ function makeCtx(emit) {
         }
         const r = okOrThrow(await send({ cmd: 'set_tempo', bpm: target }), 'set_tempo');
         lastBuild.bpm = target; tempoCache.at = Date.now();
-        return { ...r, bpm: target, warped, unwarpedLeft };
+        return { ...r, bpm: target, warped, unwarpedLeft, ...(capped ? { note: 'first 16 session clips per track checked; arrangement clips not scanned (ADEHack < 5.8)' } : {}) };
       },
       /** ADEHack 5.8: move the song position. beat 0 = bar 1. Older scripts: throws a clear error. */
       setPosition: async (arg = {}) => { const beat = typeof arg === 'object' && arg ? arg.beat : arg; if (!(await scriptAtLeast('5.8'))) throw new Error('set_position needs ADEHack 5.8 (installed; relaunch Live)'); return okOrThrow(await (await liveClient())({ cmd: 'set_position', beat: Math.max(0, Number(beat) || 0) }), 'set_position'); },
@@ -1591,13 +1598,13 @@ function makeCtx(emit) {
       play: async () => (await liveClient())({ cmd: 'play' }),
       stop: async () => (await liveClient())({ cmd: 'stop' }),
       deleteTrack: async (name) => { const send = await liveClient(); const t = await trackByName(send, name); if (!t) throw new Error(`no track named ${name}`); const ours = Object.values(lastBuild.tracks).some((x) => String(x.name).toLowerCase() === t.name.toLowerCase()) || /^AI /.test(t.name); if (!ours) throw new Error(`refusing to delete "${t.name}": this session did not create it (mute it with set_mixer instead)`); const r = okOrThrow(await send({ cmd: 'delete_track', track: t.name }), 'delete_track'); forgetTrack(t.name); await saveChat(); return r; },
-      async buildLane({ name, instrument, samplePath, steps, bars = 1, swing = 0, slot = 0, humanize = 0, useGroove = false }) {
+      async buildLane({ name, instrument, samplePath, steps, bars = 1, swing = 0, slot = 0, humanize = 0, useGroove = false, fire = true }) {
         const send = await liveClient();
         const t = await ensureTrack(send, name);
         let load = null;
         if (samplePath) { const slotPath = await toSlot(samplePath, instrument || name, 'Snare'); load = await sendWithRetry(send, { cmd: 'load_sample', path: slotPath, track: t.name }); if (load?.ok) { try { await send({ cmd: 'set_device_param', track: t.name, device: 'Simpler', param: 'Vol < Vel', value: 0.65 }); } catch {} } if (load?.ok) rememberSound(t.name, samplePath, slotPath, instrument || name); }
         const notes = stepsToNotes(steps, swing, humanize, lastBuild.bpm || 120, useGroove ? lastBuild.groove : null);
-        const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.name, slot: Number(slot) || 0, length: bars * 4, notes, fire: true, name, show: false }), 'create_clip');
+        const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.name, slot: Number(slot) || 0, length: bars * 4, notes, fire: fire !== false, name, show: false }), 'create_clip');
         lastBuild.tracks[instrument || name] = { index: t.index, name: t.name };
         if (!Number(slot)) rememberClip(t.name, { steps, bars, swing, humanize });
         return { track: t, notes: notes.length, loadedSample: Boolean(load?.ok), loadError: load && !load.ok ? load.error : undefined, clip: clip.mode };
@@ -1704,7 +1711,7 @@ function makeCtx(emit) {
         return r;
       },
       // one Drum Rack track for the whole kit (fewer tracks); falls back to per-lane tracks on older scripts
-      async buildKit({ name = 'Drums', kit = [], pattern, bars, slot = 0, useGroove = false, humanize = 0 }) {
+      async buildKit({ name = 'Drums', kit = [], pattern, bars, slot = 0, useGroove = false, humanize = 0, fire = true }) {
         const send = await liveClient();
         const GM = { kick: 36, snare: 38, clap: 39, rim: 37, hat_closed: 42, hat_open: 46, tom_low: 45, tom_high: 50, ride: 51, crash: 49, perc: 54 };
         const b = bars || pattern?.bars || 2;
@@ -1723,13 +1730,13 @@ function makeCtx(emit) {
           const notes = [];
           const kitBpm = await syncTempo(); const grooveT = useGroove ? (pattern?.groove || lastBuild.groove) : null;
           for (const lane of pattern?.lanes || []) { const padNote = noteFor[lane.instrument] ?? noteFor[LANE_LABEL[lane.instrument]] ?? GM[lane.instrument] ?? 54; for (const n of stepsToNotes(lane.steps, pattern?.swing || 0, humanize, kitBpm, grooveT)) notes.push({ ...n, pitch: padNote }); }
-          const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.name, slot: Number(slot) || 0, length: b * 4, notes, fire: true, name, show: false }), 'create_clip');
+          const clip = okOrThrow(await send({ cmd: 'create_clip', track: t.name, slot: Number(slot) || 0, length: b * 4, notes, fire: fire !== false, name, show: false }), 'create_clip');
           lastBuild.tracks.drums = { index: t.index, name: t.name };
           if (!Number(slot)) rememberClip(t.name, { notes: notes.map((n) => ({ pitch: n.pitch, startBeats: n.start, durationBeats: n.duration, velocity: n.velocity })), bars: b });
           return { track: t, mode: 'drum_rack', pads, padMap: noteFor, notes: notes.length, clip: clip.mode, reusedExistingPads: occupied.size - pads.length };
         }
         const built = [];
-        for (const lane of pattern?.lanes || []) { const k = kit.find((x) => (x.label || x.kind) === lane.instrument || x.kind === lane.instrument); const label = LANE_LABEL[lane.instrument] || lane.instrument; built.push(await this.buildLane({ name: label, instrument: lane.instrument, samplePath: k?.samplePath, steps: lane.steps, bars: b, swing: pattern.swing || 0, slot, useGroove: true })); }
+        for (const lane of pattern?.lanes || []) { const k = kit.find((x) => (x.label || x.kind) === lane.instrument || x.kind === lane.instrument); const label = LANE_LABEL[lane.instrument] || lane.instrument; built.push(await this.buildLane({ name: label, instrument: lane.instrument, samplePath: k?.samplePath, steps: lane.steps, bars: b, swing: pattern.swing || 0, slot, useGroove: true, fire })); }
         return { mode: 'per_lane_fallback', note: 'Drum Rack pad loading needs ADEHack 5.6; built one track per lane instead', tracks: built.map((x) => x.track?.name) };
       },
       describeSet: async ({ detail = 'brief' } = {}) => { const r = okOrThrow(await (await liveClient())({ cmd: 'describe_set' }), 'describe_set'); if (detail === 'full') return r; return { ...r, tracks: (r.tracks || []).map((t) => ({ index: t.index, name: t.name, is_midi: t.is_midi, devices: (t.devices || []).map((d) => d.name || d.class_name).slice(0, 6), clipCount: Array.isArray(t.clips) ? t.clips.length : t.clip_count, muted: t.mute ?? t.muted, selected: t.selected })), returns: undefined, master: undefined, note: 'brief view; detail:"full" adds mixer and clips' }; },

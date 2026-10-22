@@ -108,7 +108,7 @@ for (const t of tools) {
 }
 
 const sample = {
-  set_tempo: { bpm: 126 },
+  set_tempo: { bpm: 126, confirmed: true },   // the stub set has a user track (Hats, no soundPath): without confirmed the tool refuses
   set_position: { bar: 1 },
   list_tracks: {},
   analyze_recording: { which: "beat" },
@@ -678,8 +678,26 @@ const h4 = (await runProducer({ history: [], userText: "hi", recordings: {}, ctx
 assert.equal(h4[0].content, "hi", "no attachments -> plain text");
 
 // failures become ok:false strings, never throws
+// set_tempo gate (A11): user tracks present + no confirmed -> refuses, Live untouched
+{
+  const before = calls.length;
+  const gated = JSON.parse(await tools[0].run({ bpm: 100 }));
+  assert.equal(gated.ok, false, "gated: ok false"); assert.equal(gated.needsConfirmation, true, "gated: needsConfirmation"); assert.deepEqual(gated.userTracks, ["Hats"], "gated: names the user track");
+  assert.equal(calls.filter((c) => c[0] === "setTempo").length, calls.slice(0, before).filter((c) => c[0] === "setTempo").length, "gated: setTempo not called");
+  const okConf = JSON.parse(await tools[0].run({ bpm: 100, confirmed: true }));
+  assert.equal(okConf.ok, true, "confirmed: proceeds"); assert.equal(okConf.confirmed, true);
+  // only our tracks (soundPath / AI prefix), server-shaped { ok, tracks } reply -> no confirmation needed
+  const savedList = ctx.live.listTracks;
+  ctx.live.listTracks = async () => ({ ok: true, tracks: [{ index: 0, name: "Kick", soundPath: "/out/kick.wav" }, { index: 1, name: "AI Bass" }] });
+  const ours = JSON.parse(await tools[0].run({ bpm: 100 }));
+  assert.equal(ours.ok, true, "only our tracks: proceeds without confirmed");
+  ctx.live.listTracks = async () => { throw new Error("Live not reachable"); };
+  const down = JSON.parse(await tools[0].run({ bpm: 100 }));
+  assert.equal(down.ok, true, "listTracks failing does not block (setTempo reports Live state itself)");
+  ctx.live.listTracks = savedList;
+}
 ctx.live.setTempo = async () => { throw new Error("Live not reachable"); };
-const bad = JSON.parse(await tools[0].run({ bpm: 100 }));
+const bad = JSON.parse(await tools[0].run({ bpm: 100, confirmed: true }));
 assert.equal(bad.ok, false); assert.match(bad.error, /not reachable/);
 assert.equal(events.at(-1).type, "tool_done"); assert.equal(events.at(-1).ok, false);
 // missing recording

@@ -3,7 +3,7 @@ let fails = 0, passes = 0;
 const ok = (cond, msg, extra = '') => { if (cond) passes++; else { fails++; console.log('FAIL', msg, extra); } };
 
 const T = await import('../lib/training.js');
-const { comparePatterns, describePattern, compareBass, scoreAttempt, feedbackFor, startHints, pickKey, targetPromptBody, levelSpec, mountTraining } = T;
+const { comparePatterns, describePattern, compareBass, scoreAttempt, feedbackFor, startHints, pickKey, targetPromptBody, levelSpec, mountTraining, presetName, publicView } = T;
 
 // ---- levels
 ok(levelSpec('ADVANCED').bars === 8 && levelSpec('advanced').layers.includes('keys'), 'levelSpec advanced');
@@ -64,6 +64,22 @@ const fakeApp = { use: (p) => routes.push(`use ${typeof p === 'string' ? p : '/'
 mountTraining(fakeApp, { makeCtx: () => ({}) });
 for (const r of ['use /training-audio', 'get /api/training/levels', 'post /api/training/start', 'post /api/training/check', 'post /api/training/reveal', 'get /api/training/:id/progress']) ok(routes.includes(r), `route ${r}`, routes.join(', '));
 let threw = false; try { mountTraining(fakeApp, {}); } catch { threw = true; } ok(threw, 'mount without makeCtx throws');
+
+// ---- T8: preset names from live-presets.md cells lose parentheticals so loadDevice matches
+ok(presetName('Wobble Bass (speed garage warp), Sub Bass') === 'Wobble Bass', 'presetName strips parenthetical', presetName('Wobble Bass (speed garage warp), Sub Bass'));
+ok(presetName('Deep Wave Bass | Basic Sub') === 'Deep Wave Bass', 'presetName takes the first of | list');
+ok(presetName('') === 'Bass' && presetName('(x)') === 'Bass', 'presetName falls back to Bass');
+
+// ---- T9: the public session view hides the answers until revealed, except what the level discloses
+const sess = { id: 'x', level: 'advanced', bpm: 120, key: 'F minor', prompt: 'secret', pattern: { lanes: [] }, patternWords: 'kick on every beat', bassNotes: [{ pitch: 41 }], targetPath: '/t', workPath: '/w', stems: {} };
+const adv = publicView(sess);
+ok(!('prompt' in adv) && !('pattern' in adv) && !('patternWords' in adv) && !('bassNotes' in adv) && !('key' in adv) && !('workPath' in adv), 'advanced view hides answers and paths', Object.keys(adv).join(','));
+const beg = publicView({ ...sess, level: 'beginner' });
+ok(beg.patternWords === 'kick on every beat' && !('key' in beg) && !('bassNotes' in beg) && !('prompt' in beg), 'beginner view shows pattern words only', Object.keys(beg).join(','));
+const mid = publicView({ ...sess, level: 'intermediate' });
+ok(mid.key === 'F minor' && !('patternWords' in mid) && !('bassNotes' in mid), 'intermediate view shows the key only', Object.keys(mid).join(','));
+const rev = publicView({ ...sess, revealed: true });
+ok(rev.prompt === 'secret' && rev.bassNotes.length === 1 && rev.key === 'F minor' && !('workPath' in rev), 'revealed view shows answers, never paths', Object.keys(rev).join(','));
 
 console.log(`${passes} passed, ${fails} failed`);
 process.exit(fails ? 1 : 0);

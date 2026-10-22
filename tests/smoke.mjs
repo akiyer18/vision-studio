@@ -122,5 +122,17 @@ ok(!/clamp\(totalBars, 1, 64\)/.test(src), "enhance no longer captures 64 bars")
 const setTempoSrc = src.match(/setTempo: async \(arg\) => \{[\s\S]*?\n      \},/)?.[0] || "";
 ok(/typeof arg === 'object' && arg \? arg : \{ bpm: arg \}/.test(setTempoSrc), "setTempo keeps the positional bpm call shape");
 
+// ---- review fixes (22 Oct): toSlot accepts .tmp, buildKit fire option, enhance kit muted + unfired, layer contract, setTempo guards, preset names
+const presetName = new Function(src.match(/const presetName = [^\n]*/)[0] + "; return presetName;")();
+ok(presetName("Wobble Bass (speed garage warp), Sub Bass") === "Wobble Bass", "presetName strips parentheticals and takes the first name", presetName("Wobble Bass (speed garage warp), Sub Bass"));
+ok(presetName("Deep Wave Bass.adg | Other") === "Deep Wave Bass.adg", "presetName splits on |");
+ok(/async function toSlot[\s\S]{0,200}audioPathOk\(srcPath\)/.test(src), "toSlot accepts .tmp paths via audioPathOk");
+ok(/async buildKit\(\{[^}]*fire = true/.test(src) && /name: 'AI Kit'[^\n]*fire: false/.test(src), "enhance builds AI Kit with fire:false");
+ok(/track: 'AI Kit', mute: true/.test(src), "enhance mutes AI Kit right after building it");
+ok(/score: sc \? Math\.round\(\(Number\(sc\.confidence\) \|\| 0\) \* 10\) : null, verdict: sc\?\.vsOriginal/.test(src) && /judge: sc\?\.provider \?\? null/.test(src), "enhance layers emit numeric score, verdict and judge=provider");
+ok(/throw new Error\('setTempo: bpm required'\)/.test(src), "setTempo rejects a missing bpm");
+ok(/versionUnknown = !scriptState\.running/.test(src), "captureLive still tries the jump when the version handshake timed out");
+ok(/first 16 session clips per track checked/.test(src), "older-script setTempo notes the 16-clip cap");
+
 console.log(`\n${passes} passed, ${fails} failed`);
 process.exit(fails ? 1 : 0);
