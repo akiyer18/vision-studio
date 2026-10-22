@@ -1912,7 +1912,10 @@ async function runChatTurn(req, res, emit0) {
   try {
     const { text = '', beatId, humId, refIds = [], reset } = req.body || {};
     if (reset) { resetSession(); await saveChat(); }
-    if (!hasKey(process.env.ANTHROPIC_API_KEY)) throw new Error('ANTHROPIC_API_KEY is not set in .env (the producer agent needs Claude)');
+    if (!String(text || '').trim() && !beatId && !humId && !(refIds || []).length) throw new Error('empty message: type what you want or attach a recording (nothing was run)');
+    const onGemini = String(process.env.PRODUCER || '').toLowerCase() === 'gemini';
+    if (onGemini && !((await import('./lib/ears.js')).geminiKeys().length)) throw new Error('PRODUCER=gemini but no GEMINI_API_KEY / GEMINI_API_KEYS in .env');
+    if (!onGemini && !hasKey(process.env.ANTHROPIC_API_KEY)) throw new Error('ANTHROPIC_API_KEY is not set in .env (the producer agent needs Claude; or set PRODUCER=gemini)');
     const { runProducer } = await import('./lib/agent.js');
     await reconcileHistory();
     const attachedThisTurn = [];
