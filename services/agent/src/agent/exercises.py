@@ -162,15 +162,39 @@ def exercises_dir() -> Path:
     raise FileNotFoundError("kb/exercises")
 
 
+_EXERCISES: dict[str, Exercise] | None = None
+
+
 def load_exercises(directory: Path | None = None) -> dict[str, Exercise]:
+    global _EXERCISES
+    if directory is None and _EXERCISES is not None:
+        return _EXERCISES
     root = directory or exercises_dir()
+    if root.name != "exercises":
+        raise ValueError("Train exercises load only from kb/exercises")
     found: dict[str, Exercise] = {}
     for path in sorted(root.glob("*.yaml")):
-        exercise = exercise_from_data(parse_yaml(path.read_text(encoding="utf-8")))
+        data = parse_yaml(path.read_text(encoding="utf-8"))
+        if "groups" in data:
+            raise ValueError(f"{path.name} is a Create facet file, not an exercise")
+        exercise = exercise_from_data(data)
         found[exercise.id] = exercise
     if not found:
         raise FileNotFoundError("kb/exercises")
+    if directory is None:
+        _EXERCISES = found
     return found
+
+
+def exercise_phrases() -> tuple[str, ...]:
+    """Prompt, objective, and instruction text. Create must not store these as facets."""
+    phrases: list[str] = []
+    for exercise in load_exercises().values():
+        for phrase in (exercise.prompt, exercise.objective, exercise.instructions):
+            cleaned = phrase.strip()
+            if cleaned:
+                phrases.append(cleaned)
+    return tuple(phrases)
 
 
 def find_template(category: str, kind: str, level: str) -> Exercise:

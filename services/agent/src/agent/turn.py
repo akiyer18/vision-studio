@@ -25,6 +25,7 @@ from agent.defaults import PRESETS, default_slot, derive_bpm, parse_bpm, preset_
 from agent.extract import extract_audio, extract_text, stated_tempo
 from agent.facts import FACTS, INTRO, classify_intent, extract_facts, kept_line, parse_chords, why_for
 from agent.prompt_check import problems
+from agent.exercises import exercise_phrases
 from agent.facets import Facet, FacetPick, applicable, by_importance, catalog, facet_by_id, fallback_pick, guard_pick, resolve_answer
 from agent.prompts import compile_one_sound, compile_prompts, selected_layers
 from agent.slots import ABOUT_QUESTION, ASK_THRESHOLD, MAX_QUESTIONS, slot_specs
@@ -898,16 +899,32 @@ def _answer_facet(session: Session, facet_id: str, action: str, value: str, hook
             except Exception:
                 session.note("fallback", "Bedrock unavailable, kept your words")
     label, descriptor = resolve_answer(facet, text, mapped)
+    if _is_exercise_text(label) or _is_exercise_text(descriptor):
+        session.note("answer", f"Ignored {facet.id}: that text belongs to a Train exercise")
+        return
     descriptor = _without_all(descriptor, session.references)
     session.facet_values[facet.id] = label
     session.facet_descriptors[facet.id] = descriptor
     session.note("answer", f"{facet.id}: {label}")
 
 
+def _is_exercise_text(text: str) -> bool:
+    folded = " ".join(text.split()).lower()
+    if len(folded) < 24:
+        return False
+    for phrase in exercise_phrases():
+        sample = " ".join(phrase.split()).lower()
+        if sample in folded or folded in sample:
+            return True
+    return False
+
+
 def _facet_rows(session: Session) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for facet in catalog():
         if facet.id not in session.facet_values:
+            continue
+        if _is_exercise_text(session.facet_values[facet.id]):
             continue
         rows.append(
             {

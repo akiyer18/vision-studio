@@ -57,10 +57,14 @@ def facets_dir() -> Path:
 
 def load_facets(directory: Path | None = None) -> tuple[Facet, ...]:
     root = directory or facets_dir()
+    if root.name != "facets":
+        raise ValueError("Create facets load only from kb/facets")
     found: list[Facet] = []
     seen: set[str] = set()
     for path in sorted(root.glob("*.yaml")):
         document = _parse(path.read_text(encoding="utf-8"))
+        if any(key in document for key in ("category", "hits", "objective", "instructions")):
+            raise ValueError(f"{path.name} is an exercise file, not a Create facet")
         layer = str(document.get("layer") or "").strip()
         if not layer:
             raise ValueError(f"{path.name} has no layer")

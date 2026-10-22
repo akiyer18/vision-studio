@@ -143,7 +143,7 @@ export function ReviewStage() {
             const edit = edits[layer]
             const text = edit?.prompt ?? prompt?.prompt ?? ""
             const negative = edit?.negative ?? prompt?.negative ?? ""
-            const facets = (brief.facets ?? []).filter((facet) => facet.layer === layer || facet.layer === layer.replace(/_[ab]$/, ""))
+            const facets = (brief.facets ?? []).filter((facet) => facet.layer === layer || facet.layer === layer.replace(/_[ab]$/, "")).filter((facet) => !looksLikeExercise(facet.value))
             return (
               <article key={layer} className="card review-layer">
                 <h3 className="section-title">{layerTitle(layer)}</h3>
@@ -294,6 +294,11 @@ function FactChip({
       {mark ? <span className={mark === "detected" ? "text-[var(--cyan)]" : "text-muted"}>{mark}</span> : null}
     </button>
   )
+}
+
+function looksLikeExercise(value: string): boolean {
+  const text = value.trim().toLowerCase()
+  return text.length >= 24 && (text.startsWith("create a ") || text.includes("recreate it in logic"))
 }
 
 function layerNames(output: OutputChoice[], prompted: string[]): string[] {

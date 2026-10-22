@@ -2,7 +2,8 @@
 
 from contracts import TurnRequest
 
-from agent.facets import FacetPick
+from agent.exercises import exercise_phrases, load_exercises
+from agent.facets import FacetPick, catalog, facets_dir
 from agent.turn import MockHooks, run_session, run_turn
 
 
@@ -88,6 +89,26 @@ def test_invalid_facet_options_use_the_facet_question() -> None:
     assert "nope" not in response.question.options
     assert "punchy club" in response.question.options
     assert any("Rejected the kick_character options" in step.detail for step in response.trace)
+
+
+def test_create_facets_only_contain_kb_facet_values() -> None:
+    library = "\n".join(path.read_text(encoding="utf-8") for path in facets_dir().glob("*.yaml"))
+    phrases = {phrase.lower() for phrase in exercise_phrases()}
+    assert load_exercises()
+    assert catalog()
+    for facet in catalog():
+        assert facet.question in library
+        for value in facet.values:
+            assert value.label in library
+            assert value.descriptor in library
+            blob = f"{facet.question} {value.label} {value.descriptor}".lower()
+            assert all(phrase not in blob for phrase in phrases)
+
+    first = run_turn(_drums("train-leak"))
+    leaked = run_turn(request("train-leak", answer=_answer(first, next(iter(phrases)))))
+    stored = leaked.brief.facets or []
+    assert all(facet.value.lower() not in phrases for facet in stored)
+    assert any("Train exercise" in step.detail for step in leaked.trace)
 
 
 def test_free_text_is_stored_as_a_descriptor() -> None:
