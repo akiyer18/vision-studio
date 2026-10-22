@@ -461,6 +461,8 @@ function friendlyError(msg) {
   const m = String(msg || '');
   if (/not connected|ECONNREFUSED|remote script|control surface|no reply from Live|Live did not/i.test(m)) return LIVE_HELP;
   if (/STABILITY_API_KEY|stability.*key/i.test(m)) return STAB_HELP;
+  if (/credit balance is too low|Plans & Billing/i.test(m)) return 'Anthropic API credits are used up. Add credits at console.anthropic.com (Plans & Billing), then send again; nothing else needs a restart.';
+  if (/invalid_request_error|"type":"error"/i.test(m)) { const mm = m.match(/"message":"([^"]{10,200})/); if (mm) return 'Producer model error: ' + mm[1]; }
   if (/quota|429|RESOURCE_EXHAUSTED/i.test(m)) return QUOTA_HELP;
   return m;
 }
