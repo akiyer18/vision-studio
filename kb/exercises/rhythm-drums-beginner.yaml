@@ -1,0 +1,203 @@
+id: rhythm-drums-beginner
+category: rhythm
+type: drums
+level: beginner
+tempo: 100
+bars: 4
+key: ""
+prompt: "Create a 4-bar drum loop at 100 BPM. Kick on beats 1 and 3, snare on beats 2 and 4, with steady eighth-note hi-hats. Keep the pattern simple and consistent."
+objective: "Recognise and recreate a basic drum pattern with a steady pulse and consistent beat placement."
+instructions: "Listen to the reference on a loop. Recreate it in Logic, then export your recreation and upload it here. This page cannot see your Logic session. A MIDI file is compared exactly. An audio file is an estimate."
+hits:
+  - bar: 1
+    step: 0
+    drum: kick
+    velocity: 108
+  - bar: 1
+    step: 0
+    drum: hat
+    velocity: 84
+  - bar: 1
+    step: 2
+    drum: hat
+    velocity: 76
+  - bar: 1
+    step: 4
+    drum: snare
+    velocity: 112
+  - bar: 1
+    step: 4
+    drum: hat
+    velocity: 84
+  - bar: 1
+    step: 6
+    drum: hat
+    velocity: 74
+  - bar: 1
+    step: 8
+    drum: kick
+    velocity: 104
+  - bar: 1
+    step: 8
+    drum: hat
+    velocity: 82
+  - bar: 1
+    step: 10
+    drum: hat
+    velocity: 74
+  - bar: 1
+    step: 12
+    drum: snare
+    velocity: 110
+  - bar: 1
+    step: 12
+    drum: hat
+    velocity: 80
+  - bar: 1
+    step: 14
+    drum: hat
+    velocity: 72
+  - bar: 2
+    step: 0
+    drum: kick
+    velocity: 108
+  - bar: 2
+    step: 0
+    drum: hat
+    velocity: 84
+  - bar: 2
+    step: 2
+    drum: hat
+    velocity: 76
+  - bar: 2
+    step: 4
+    drum: snare
+    velocity: 112
+  - bar: 2
+    step: 4
+    drum: hat
+    velocity: 84
+  - bar: 2
+    step: 6
+    drum: hat
+    velocity: 74
+  - bar: 2
+    step: 8
+    drum: kick
+    velocity: 104
+  - bar: 2
+    step: 8
+    drum: hat
+    velocity: 82
+  - bar: 2
+    step: 10
+    drum: hat
+    velocity: 74
+  - bar: 2
+    step: 12
+    drum: snare
+    velocity: 110
+  - bar: 2
+    step: 12
+    drum: hat
+    velocity: 80
+  - bar: 2
+    step: 14
+    drum: hat
+    velocity: 72
+  - bar: 3
+    step: 0
+    drum: kick
+    velocity: 108
+  - bar: 3
+    step: 0
+    drum: hat
+    velocity: 84
+  - bar: 3
+    step: 2
+    drum: hat
+    velocity: 76
+  - bar: 3
+    step: 4
+    drum: snare
+    velocity: 112
+  - bar: 3
+    step: 4
+    drum: hat
+    velocity: 84
+  - bar: 3
+    step: 6
+    drum: hat
+    velocity: 74
+  - bar: 3
+    step: 8
+    drum: kick
+    velocity: 104
+  - bar: 3
+    step: 8
+    drum: hat
+    velocity: 82
+  - bar: 3
+    step: 10
+    drum: hat
+    velocity: 74
+  - bar: 3
+    step: 12
+    drum: snare
+    velocity: 110
+  - bar: 3
+    step: 12
+    drum: hat
+    velocity: 80
+  - bar: 3
+    step: 14
+    drum: hat
+    velocity: 72
+  - bar: 4
+    step: 0
+    drum: kick
+    velocity: 108
+  - bar: 4
+    step: 0
+    drum: hat
+    velocity: 84
+  - bar: 4
+    step: 2
+    drum: hat
+    velocity: 76
+  - bar: 4
+    step: 4
+    drum: snare
+    velocity: 112
+  - bar: 4
+    step: 4
+    drum: hat
+    velocity: 84
+  - bar: 4
+    step: 6
+    drum: hat
+    velocity: 74
+  - bar: 4
+    step: 8
+    drum: kick
+    velocity: 104
+  - bar: 4
+    step: 8
+    drum: hat
+    velocity: 82
+  - bar: 4
+    step: 10
+    drum: hat
+    velocity: 74
+  - bar: 4
+    step: 12
+    drum: snare
+    velocity: 110
+  - bar: 4
+    step: 12
+    drum: hat
+    velocity: 80
+  - bar: 4
+    step: 14
+    drum: hat
+    velocity: 72

@@ -1,0 +1,31 @@
+id: harmony-advanced
+category: harmony
+type: chords
+level: advanced
+tempo: 100
+bars: 4
+key: "Eb major"
+prompt: "Create a 4-bar chord progression at 100 BPM in E-flat major using vi – IV – I – V, with one chord per bar. Use inversions, smooth voice leading, and tasteful extended voicings with added color tones such as 7ths or 9ths. Keep the harmonic function of each chord clear while creating a more sophisticated progression. No additional melodies, bass, or drums."
+objective: "Understand extended chords, harmonic colour, and sophisticated voice leading while maintaining the intended harmonic progression."
+instructions: "Listen to the reference on a loop. Recreate it in Logic, then export your recreation and upload it here. This page cannot see your Logic session. A MIDI file is compared exactly. An audio file is an estimate."
+chords:
+  - bar: 1
+    symbol: Cm
+    notes: [51, 55, 58, 60]
+    inversion: 1
+    extensions: [7]
+  - bar: 2
+    symbol: Ab
+    notes: [51, 55, 56, 60]
+    inversion: 2
+    extensions: [7]
+  - bar: 3
+    symbol: Eb
+    notes: [51, 55, 58, 62, 65]
+    inversion: 0
+    extensions: [7, 9]
+  - bar: 4
+    symbol: Bb
+    notes: [62, 65, 68, 70, 72]
+    inversion: 1
+    extensions: [7, 9]

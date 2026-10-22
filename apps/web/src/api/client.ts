@@ -250,3 +250,100 @@ export function getFile(sessionId: string, filePath: string): Promise<Blob> {
     return response.blob()
   })
 }
+
+export type TrainExercise = {
+  id: string
+  template_id: string
+  category: "rhythm" | "harmony"
+  type: string
+  type_label: string
+  level: "beginner" | "intermediate" | "advanced"
+  tempo: number
+  bars: number
+  key: string
+  objective: string
+  instructions: string
+  audio: string
+  note: string
+  midi?: string
+  built?: string
+}
+
+export type TrainEvent = {
+  bar: number
+  beat: number
+  step: number
+  what: string
+  detail?: string
+  confidence?: number
+}
+
+export type TrainCell = {
+  step: number
+  beat: number
+  reference: string[] | number | null
+  yours: string[] | number | null
+  diff: boolean
+}
+
+export type TrainChord = {
+  bar: number
+  reference: string
+  yours: number[]
+  inversion: number
+  diff: boolean
+}
+
+export type TrainResult = {
+  status: string
+  source?: string
+  approximate?: boolean
+  matches?: TrainEvent[]
+  differences?: TrainEvent[]
+  missing?: TrainEvent[]
+  uncertain?: TrainEvent[]
+  scores?: Record<string, number>
+  progression_correct?: boolean | null
+  voicing_similarity?: number | null
+  grid?: {
+    drums?: TrainCell[][]
+    bass?: TrainCell[][]
+    chords?: TrainChord[]
+  }
+}
+
+export type TrainFeedback = {
+  right: string
+  differs: string
+  improve: string
+  next: string
+  stars: number
+  source: string
+}
+
+export type TrainSubmission =
+  | { status: "needs_mapping"; notes: number[] }
+  | { status: "compared"; result: TrainResult; feedback: TrainFeedback }
+
+export function trainFileUrl(id: string, name: string): string {
+  return `${baseUrl()}/train/files/${encodeURIComponent(id)}/${encodeURIComponent(name)}`
+}
+
+export function startExercise(body: { category: string; type: string; level: string }): Promise<TrainExercise> {
+  return request<TrainExercise>("/train/exercise", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+export function revealExercise(id: string): Promise<TrainExercise> {
+  return request<TrainExercise>(`/train/exercise/${encodeURIComponent(id)}/reveal`, { method: "POST" })
+}
+
+export function submitExercise(id: string, file: File, mapping?: Record<string, string>): Promise<TrainSubmission> {
+  const body = new FormData()
+  body.set("file", file)
+  if (mapping) body.set("mapping", JSON.stringify(mapping))
+  return request<TrainSubmission>(`/train/exercise/${encodeURIComponent(id)}/submit`, { method: "POST", body })
+}

@@ -396,5 +396,8 @@ Hackathon scope:
 | Genre deep dive | Live, from the curated files, with Use in Create |
 | Analyse | Soon |
 | Tweak | Soon |
+| Train | Live for Rhythm and Harmony. Sound design and Arrangement are Soon. |
+
+Train. Rhythm (Drums only, and Drums and bass line) and Harmony run at beginner, intermediate, and advanced. The exercises are files in `kb/exercises`. Each one is defined as MIDI, rendered with simple samples, then coloured with Stable Audio audio to audio at a strength between 0.25 and 0.35 when that route is configured. If the call or the check against the MIDI fails, the clean samples play. The producer downloads the reference into Logic, exports a recreation, and uploads it. The page cannot see the Logic session. MIDI is an exact comparison. Audio is marked approximate. Feedback has four sections and may only cite bars and beats that are in the comparison. One to three stars can sit with the feedback. They do not replace it. Download MIDI stays hidden until Show me how it is built. Completed exercises stay in the browser. Create still does not offer a MIDI download.
 
 Pitch line: "Hum it, describe it, or bring your track. Vision Studio makes the sound, explains how, and teaches you to make it yourself."

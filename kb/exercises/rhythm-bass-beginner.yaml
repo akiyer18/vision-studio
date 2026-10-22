@@ -1,0 +1,236 @@
+id: rhythm-bass-beginner
+category: rhythm
+type: bass
+level: beginner
+tempo: 100
+bars: 4
+key: "A minor"
+prompt: "Create a 4-bar drum and bass loop at 100 BPM in A minor. Use a simple drum pattern with kick on beats 1 and 3, snare on beats 2 and 4, and steady eighth-note hi-hats. Add a simple bass line using root notes from A minor that follows the kick rhythm. Keep it repetitive and easy to identify by ear."
+objective: "Understand how a simple bass line follows and reinforces the rhythm established by the drums."
+instructions: "Listen to the reference on a loop. Recreate it in Logic, then export your recreation and upload it here. This page cannot see your Logic session. A MIDI file is compared exactly. An audio file is an estimate."
+hits:
+  - bar: 1
+    step: 0
+    drum: kick
+    velocity: 108
+  - bar: 1
+    step: 0
+    drum: hat
+    velocity: 84
+  - bar: 1
+    step: 2
+    drum: hat
+    velocity: 76
+  - bar: 1
+    step: 4
+    drum: snare
+    velocity: 112
+  - bar: 1
+    step: 4
+    drum: hat
+    velocity: 84
+  - bar: 1
+    step: 6
+    drum: hat
+    velocity: 74
+  - bar: 1
+    step: 8
+    drum: kick
+    velocity: 104
+  - bar: 1
+    step: 8
+    drum: hat
+    velocity: 82
+  - bar: 1
+    step: 10
+    drum: hat
+    velocity: 74
+  - bar: 1
+    step: 12
+    drum: snare
+    velocity: 110
+  - bar: 1
+    step: 12
+    drum: hat
+    velocity: 80
+  - bar: 1
+    step: 14
+    drum: hat
+    velocity: 72
+  - bar: 2
+    step: 0
+    drum: kick
+    velocity: 108
+  - bar: 2
+    step: 0
+    drum: hat
+    velocity: 84
+  - bar: 2
+    step: 2
+    drum: hat
+    velocity: 76
+  - bar: 2
+    step: 4
+    drum: snare
+    velocity: 112
+  - bar: 2
+    step: 4
+    drum: hat
+    velocity: 84
+  - bar: 2
+    step: 6
+    drum: hat
+    velocity: 74
+  - bar: 2
+    step: 8
+    drum: kick
+    velocity: 104
+  - bar: 2
+    step: 8
+    drum: hat
+    velocity: 82
+  - bar: 2
+    step: 10
+    drum: hat
+    velocity: 74
+  - bar: 2
+    step: 12
+    drum: snare
+    velocity: 110
+  - bar: 2
+    step: 12
+    drum: hat
+    velocity: 80
+  - bar: 2
+    step: 14
+    drum: hat
+    velocity: 72
+  - bar: 3
+    step: 0
+    drum: kick
+    velocity: 108
+  - bar: 3
+    step: 0
+    drum: hat
+    velocity: 84
+  - bar: 3
+    step: 2
+    drum: hat
+    velocity: 76
+  - bar: 3
+    step: 4
+    drum: snare
+    velocity: 112
+  - bar: 3
+    step: 4
+    drum: hat
+    velocity: 84
+  - bar: 3
+    step: 6
+    drum: hat
+    velocity: 74
+  - bar: 3
+    step: 8
+    drum: kick
+    velocity: 104
+  - bar: 3
+    step: 8
+    drum: hat
+    velocity: 82
+  - bar: 3
+    step: 10
+    drum: hat
+    velocity: 74
+  - bar: 3
+    step: 12
+    drum: snare
+    velocity: 110
+  - bar: 3
+    step: 12
+    drum: hat
+    velocity: 80
+  - bar: 3
+    step: 14
+    drum: hat
+    velocity: 72
+  - bar: 4
+    step: 0
+    drum: kick
+    velocity: 108
+  - bar: 4
+    step: 0
+    drum: hat
+    velocity: 84
+  - bar: 4
+    step: 2
+    drum: hat
+    velocity: 76
+  - bar: 4
+    step: 4
+    drum: snare
+    velocity: 112
+  - bar: 4
+    step: 4
+    drum: hat
+    velocity: 84
+  - bar: 4
+    step: 6
+    drum: hat
+    velocity: 74
+  - bar: 4
+    step: 8
+    drum: kick
+    velocity: 104
+  - bar: 4
+    step: 8
+    drum: hat
+    velocity: 82
+  - bar: 4
+    step: 10
+    drum: hat
+    velocity: 74
+  - bar: 4
+    step: 12
+    drum: snare
+    velocity: 110
+  - bar: 4
+    step: 12
+    drum: hat
+    velocity: 80
+  - bar: 4
+    step: 14
+    drum: hat
+    velocity: 72
+bass:
+  - bar: 1
+    start: 0
+    length: 4
+    pitch: 45
+  - bar: 1
+    start: 8
+    length: 4
+    pitch: 45
+  - bar: 2
+    start: 0
+    length: 4
+    pitch: 45
+  - bar: 2
+    start: 8
+    length: 4
+    pitch: 45
+  - bar: 3
+    start: 0
+    length: 4
+    pitch: 45
+  - bar: 3
+    start: 8
+    length: 4
+    pitch: 45
+  - bar: 4
+    start: 0
+    length: 4
+    pitch: 45
+  - bar: 4
+    start: 8
+    length: 4
+    pitch: 45

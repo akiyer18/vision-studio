@@ -1,0 +1,31 @@
+id: harmony-intermediate
+category: harmony
+type: chords
+level: intermediate
+tempo: 100
+bars: 4
+key: "C major"
+prompt: "Create a 4-bar chord progression at 100 BPM in C major using I – V – vi – IV, with one chord per bar. Use chord inversions to create smooth voice leading, keeping common tones where possible and minimizing large jumps between voices. Use triads only, with no additional melodies, bass, or drums. Keep the rhythm simple so the differences in chord voicing are easy to hear and identify."
+objective: "Understand how chord inversions affect the position of notes and how voice leading creates smooth transitions between chords."
+instructions: "Listen to the reference on a loop. Recreate it in Logic, then export your recreation and upload it here. This page cannot see your Logic session. A MIDI file is compared exactly. An audio file is an estimate."
+chords:
+  - bar: 1
+    symbol: C
+    notes: [60, 64, 67]
+    inversion: 0
+    extensions: []
+  - bar: 2
+    symbol: G
+    notes: [59, 62, 67]
+    inversion: 1
+    extensions: []
+  - bar: 3
+    symbol: Am
+    notes: [57, 60, 64]
+    inversion: 0
+    extensions: []
+  - bar: 4
+    symbol: F
+    notes: [57, 60, 65]
+    inversion: 1
+    extensions: []

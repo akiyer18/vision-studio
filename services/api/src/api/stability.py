@@ -146,6 +146,40 @@ def _save(data_root: Path, job: RenderJob, audio: np.ndarray) -> RenderResult:
     )
 
 
+def colour_audio(config: StabilityConfig, *, source: Path, prompt: str, duration: float, noise: float) -> np.ndarray:
+    """Audio to audio for a training reference. Strength stays in the low band the spec names."""
+    if not 0.25 <= noise <= 0.35:
+        raise ValueError("training strength must stay between 0.25 and 0.35")
+    if not config.ready:
+        raise RuntimeError("Stability API is not configured")
+    fields = config.audio_fields
+    body = {
+        fields["prompt"]: prompt,
+        fields["negative_prompt"]: "",
+        fields["duration"]: round(duration, 3),
+        fields["source"]: str(source),
+        fields["noise"]: noise,
+    }
+    data = json.dumps(body).encode("utf-8")
+    request = urllib.request.Request(
+        config.audio_url,
+        data=data,
+        headers={"Authorization": f"Bearer {config.api_key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            raw = response.read()
+    except Exception as error:
+        detail = str(error)
+        if config.api_key:
+            detail = detail.replace(config.api_key, "[redacted]")
+        raise RuntimeError(detail) from error
+    if raw[:4] != b"RIFF":
+        raise ValueError("the stability response was not a WAV")
+    return _pcm(raw)
+
+
 def _pcm(raw: bytes) -> np.ndarray:
     import wave
     from io import BytesIO

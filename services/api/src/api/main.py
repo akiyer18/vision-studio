@@ -45,6 +45,7 @@ from api.audio import (
 from api.guard import BODY_LIMIT, RateLimiter, allowed_origins, assert_frontend_clean, cleanup_old_sessions, content_too_large
 from api.renderer import MockRenderer, Renderer, pin_chord_audio
 from api.stability import StabilityAPIRenderer
+from api.train import register_train
 
 logger = logging.getLogger("api")
 _LIMITED = {"/turn", "/render", "/upload"}
@@ -365,6 +366,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
             "notes": payload.get("notes", []),
         }
 
+    register_train(app)
     return app
 
 

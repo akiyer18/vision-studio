@@ -1549,3 +1549,159 @@ button.bg-accent:hover:not(:disabled) {
     transform: rotate(5deg);
   }
 }
+
+.train-strip {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 14px;
+}
+
+.home-skills .home-room {
+  min-height: 180px;
+}
+
+.train-readouts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 24px;
+}
+
+.train-player,
+.train-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+}
+
+.train-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.train-download {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  padding: 4px 12px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.train-download.is-secondary {
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.train-error {
+  margin: 0;
+  color: var(--danger);
+}
+
+.train-score {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  color: var(--accent-soft);
+  font-size: 20px;
+  letter-spacing: 0.12em;
+}
+
+.train-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.train-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.train-grid-scroll {
+  overflow-x: auto;
+}
+
+.train-grid {
+  display: grid;
+  width: max-content;
+  grid-template-columns: repeat(16, 28px);
+  gap: 4px;
+}
+
+.train-cell {
+  display: flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--raised);
+  color: var(--secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.train-cell.has-hit {
+  background: var(--accent-deep);
+  color: var(--ink);
+}
+
+.train-cell.is-diff {
+  outline: 1px solid var(--danger);
+}
+
+.train-chords {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.train-chord {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+}
+
+.train-chord.is-diff {
+  outline: 1px solid var(--danger);
+}
+
+.train-map {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.train-map label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.train-map select {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--raised);
+  color: var(--ink);
+  padding: 4px 8px;
+}
+
+@media (max-width: 800px) {
+  .train-readouts,
+  .train-chords {
+    grid-template-columns: 1fr;
+  }
+}

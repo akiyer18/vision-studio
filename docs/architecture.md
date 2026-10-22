@@ -11,7 +11,7 @@ The browser address is read in `apps/web/src/route.ts`. Create stays mounted on 
 | `/` | home | Landing page. The composer is portalled into the hero. |
 | `/create` | create | The studio: conversation, review, results. |
 | `/genres` | genre | Genre deep dive. |
-| `/train` | train | Level choice, then the four skills. |
+| `/train` | train | Level choice, then Rhythm and Harmony exercises. Sound design and Arrangement are Coming soon. |
 | `/styleguide` | styleguide | Visual reference, outside the studio shell. |
 
 Any other path is Home.
@@ -32,8 +32,12 @@ Any other path is Home.
 | GET | `/genres/{genre_id}` | One genre. |
 | GET | `/files/{session_id}/{path}` | Audio and MIDI playback and download. |
 | GET | `/debug/{session_id}` | Thread trace of the last render payload. Tests use it too. |
+| POST | `/train/exercise` | Roll a Rhythm or Harmony exercise and render its reference. |
+| POST | `/train/exercise/{id}/reveal` | Unlock the MIDI download and the bar by bar description. |
+| POST | `/train/exercise/{id}/submit` | Compare an uploaded MIDI or audio file and return feedback. |
+| GET | `/train/files/{id}/{name}` | Reference audio, the clean render, and MIDI after reveal. |
 
-No endpoint is unused.
+No endpoint is unused. Train files stay under `data/exercises/{id}` and the id is a UUID. MIDI is not served until reveal.
 
 ## Stores
 
@@ -42,7 +46,8 @@ No endpoint is unused.
 | `useStudio` | `apps/web/src/state/studio.ts` | Session id (a UUID), the turn, renders, picks, status, prompt edits, playback solo and mute, the thread, idea mode, and the layer choice. |
 | Recent ideas | `apps/web/src/recentIdeas.ts` | `localStorage` list of ideas that can be restored. |
 | Tour | `apps/web/src/tour.ts` | `localStorage` key `vision-studio-tour`. |
-| Level | `apps/web/src/level.ts` | `localStorage` key `vision-studio-level`. Beginner, intermediate, or advanced. It is not sent with a turn. |
+| Level | `apps/web/src/level.ts` | `localStorage` key `vision-studio-level`. Beginner, intermediate, or advanced. It is not sent with a turn. Train preselects difficulty from it. |
+| Train progress | `apps/web/src/trainProgress.ts` | `localStorage` key `vision-studio-train-progress`. Completed exercises, stars, and the next focus. |
 | In-flight lock | `apps/web/src/conversation/flight.ts` | One turn or render at a time. |
 | Recording flag | `apps/web/src/composer/recording.ts` | Whether the composer is recording. |
 
@@ -58,8 +63,11 @@ All of these are mounted from the shell, Home, or the styleguide.
 | `components/Shell.tsx` | Renders the dashboard. |
 | `components/layout/Dashboard.tsx` | Pages, the one composer portal, the brief drawer. |
 | `components/layout/Home.tsx` | Landing page. |
-| `components/train/TrainRoom.tsx` | Train page. |
+| `components/train/TrainRoom.tsx` | Train home, difficulty, and the exercise flow. |
 | `components/train/LevelCards.tsx` | Beginner, intermediate, and advanced. |
+| `components/train/ExerciseScreen.tsx` | Reference player, count in, hidden MIDI, upload. |
+| `components/train/MappingDialog.tsx` | Drum note mapping when a MIDI file uses other pitches. |
+| `components/train/ResultView.tsx` | Four feedback sections, stars, and the comparison grid. |
 | `components/layout/PagePane.tsx` | Page transition. |
 | `components/layout/PreviewCard.tsx` | Floating demo cards on Home. |
 | `components/layout/Transport.tsx` | Brief button, Build now, session status. |
@@ -111,6 +119,8 @@ Python: `uv run pytest` (`services/`).
 | `services/agent/tests/test_one_sound.py` | One sound mode. |
 | `services/agent/tests/test_facets.py` | Facet questions. |
 | `services/agent/tests/test_explain.py` | Explanations. |
+| `services/agent/tests/test_train.py` | Exercise files, the randomizer, MIDI and harmony comparison, feedback citations. |
+| `services/api/tests/test_train_api.py` | Clean reference audio, the production fallback, approximate audio, hidden MIDI. |
 | `services/agent/tests/test_genres.py` | Genre files. |
 | `services/agent/tests/test_midi.py` | MIDI writing. |
 | `services/api/tests/test_api.py` | Upload, turn, render, export, files. |

@@ -1,0 +1,31 @@
+id: harmony-beginner
+category: harmony
+type: chords
+level: beginner
+tempo: 100
+bars: 4
+key: "C major"
+prompt: "Create a 4-bar chord progression at 100 BPM in C major using the Roman numeral progression I – V – vi – IV, with one chord per bar. Use simple root-position triads with no inversions, extensions, additional melodies, bass, or drums. Keep the rhythm simple and sustained so each chord is clearly identifiable."
+objective: "Recognise the progression, identify the chords, and understand how Roman numerals relate to chord names within a key."
+instructions: "Listen to the reference on a loop. Recreate it in Logic, then export your recreation and upload it here. This page cannot see your Logic session. A MIDI file is compared exactly. An audio file is an estimate."
+chords:
+  - bar: 1
+    symbol: C
+    notes: [60, 64, 67]
+    inversion: 0
+    extensions: []
+  - bar: 2
+    symbol: G
+    notes: [67, 71, 74]
+    inversion: 0
+    extensions: []
+  - bar: 3
+    symbol: Am
+    notes: [69, 72, 76]
+    inversion: 0
+    extensions: []
+  - bar: 4
+    symbol: F
+    notes: [65, 69, 72]
+    inversion: 0
+    extensions: []
