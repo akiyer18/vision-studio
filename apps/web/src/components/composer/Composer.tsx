@@ -12,6 +12,7 @@ import { registerInput } from "../../input/bridge.ts"
 import type { ReadingPatch } from "../../input/bridge.ts"
 import { applyCorrection, describeFeatures, fileKind, fileProblem, inputTypeFor, keyPhrase } from "../../input/describe.ts"
 import { noteIdea } from "../../recentIdeas.ts"
+import { go, usePage } from "../../route.ts"
 import { useStudio } from "../../state/studio.ts"
 import type { AudioFeatures } from "../../types/audio_features.ts"
 import type { InputType } from "../../types/input_type.ts"
@@ -30,6 +31,7 @@ type Props = {
 }
 
 export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
+  const page = usePage()
   const [text, setText] = useState("")
   const [held, setHeld] = useState<Held | null>(null)
   const [hint, setHint] = useState<string | null>(null)
@@ -219,9 +221,12 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
   }
 
   async function sendTurn(audio?: AudioFeatures) {
+    const state = useStudio.getState()
+    const chosen = state.mode === "full" && state.turn?.brief.output.length ? undefined : state.mode === "full" ? [state.layerChoice] : undefined
     const posted = await postTurn({
       text: textRef.current.trim() || undefined,
       audio_features: audio,
+      ...(chosen ? { output: chosen } : {}),
     })
     if (!posted) return false
     markWaiting(false)
@@ -272,6 +277,7 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
         echoedRef.current = ""
         textRef.current = ""
         setText("")
+        if (page === "home") go("/create")
         return "sent"
       }
       let audio = featuresRef.current ?? undefined
@@ -290,6 +296,7 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
           setKeyText(keyTextRef.current)
           setTempoText(tempoTextRef.current)
           useStudio.getState().setStatus("idle")
+          if (page === "home") go("/create")
           return "confirm"
         }
       }
@@ -300,6 +307,7 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
       echoedRef.current = ""
       textRef.current = ""
       setText("")
+      if (page === "home") go("/create")
       return "sent"
     } catch (err) {
       useStudio.getState().setStatus("error")
@@ -325,6 +333,7 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
       noteIdea(said, said.length === 0)
       const posted = await sendTurn(next)
       if (!posted) return
+      if (page === "home") go("/create")
       markFixing(false)
       echoedRef.current = ""
       textRef.current = ""
@@ -481,7 +490,7 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
           if (file) acceptFile(file, "drop")
         }}
       >
-        <IdeaMode />
+        {page === "home" ? null : <IdeaMode />}
         <div className="flex items-end gap-2">
           <div className="flex shrink-0 items-center">
             <input
@@ -537,6 +546,10 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
             {waiting ? null : error ? (
               <Button onClick={() => void submit()} disabled={working}>
                 Try again
+              </Button>
+            ) : page === "home" ? (
+              <Button type="submit" disabled={busy || recording || working}>
+                Create
               </Button>
             ) : (
               <button type="submit" aria-label="Send the idea" title="Send the idea" disabled={busy || recording || working} className="send-btn">

@@ -1,6 +1,7 @@
 import { create } from "zustand"
 
 import type { RecentIdea, RecentMessage } from "../recentIdeas.ts"
+import type { OutputChoice } from "../types/output_choice.ts"
 import type { RenderResult } from "../types/render_result.ts"
 import type { SlotName } from "../types/slot_name.ts"
 import type { SongBrief } from "../types/song_brief.ts"
@@ -49,8 +50,10 @@ type StudioState = {
   missing: string[]
   thread: RecentMessage[]
   mode: IdeaMode
+  layerChoice: OutputChoice
   reference: SlotReference
   reading: Reading | null
+  setLayerChoice: (choice: OutputChoice) => void
   setTurn: (turn: TurnResponse | null) => void
   setReading: (reading: Reading | null) => void
   commitTurn: (turn: TurnResponse, clearOverrides?: boolean) => void
@@ -103,8 +106,10 @@ export const useStudio = create<StudioState>((set) => ({
   missing: [],
   thread: [],
   mode: "full",
+  layerChoice: "all_layers",
   reference: {},
   reading: null,
+  setLayerChoice: (layerChoice) => set({ layerChoice }),
   setTurn: (turn) => set({ turn }),
   setReading: (reading) =>
     set((state) => {
@@ -230,6 +235,7 @@ export const useStudio = create<StudioState>((set) => ({
       restored: false,
       missing: [],
       thread: [],
+      layerChoice: "all_layers",
       reference: {},
       reading: null,
     })),
@@ -264,6 +270,7 @@ export const useStudio = create<StudioState>((set) => ({
       missing: [],
       thread: entry.thread,
       mode: entry.mode ?? "full",
+      layerChoice: entry.layers.length === 1 ? (entry.layers[0] as OutputChoice) : "all_layers",
       reference: {},
       reading: null,
     })),

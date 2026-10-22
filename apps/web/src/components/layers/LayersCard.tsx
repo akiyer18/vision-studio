@@ -24,6 +24,8 @@ export function LayersCard() {
   const mode = useStudio((state) => state.mode)
   const prompts = useStudio((state) => (state.turn?.status === "ready" ? state.turn.prompts : undefined))
   const output = useStudio((state) => state.turn?.brief.output)
+  const layerChoice = useStudio((state) => state.layerChoice)
+  const setLayerChoice = useStudio((state) => state.setLayerChoice)
   const edits = useStudio((state) => state.promptEdits)
   const trace = useStudio((state) => state.turn?.trace)
   const status = useStudio((state) => state.status)
@@ -34,7 +36,7 @@ export function LayersCard() {
   const choice = useRef<OutputChoice | null>(null)
   const cards = prompts ?? []
   const stored = output ?? []
-  const picked = stored.length === 1 ? stored[0] : "all_layers"
+  const picked = stored.length === 1 ? stored[0] : stored.length === 0 ? layerChoice : "all_layers"
   const shown: OutputChoice = !features.fullMix && picked === "full_mix" ? "all_layers" : picked
   const failure = Object.values(failures)[0]?.message
   const buildFailed = status === "error" && cards.length > 0 && !error
@@ -42,6 +44,7 @@ export function LayersCard() {
   function choose(next: OutputChoice) {
     if (inFlight() || useStudio.getState().status === "working") return
     choice.current = next
+    setLayerChoice(next)
     setError(null)
     void postTurn({ output: [next] }).catch((err: unknown) => {
       const message = err instanceof ApiError ? err.message : "That did not go through. Try again."

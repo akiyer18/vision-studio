@@ -15,8 +15,8 @@ export function PagePane({ active, scroll = false, children }: Props) {
       inert={!active}
       aria-hidden={active ? undefined : true}
       initial={false}
-      animate={{ opacity: active ? 1 : 0, y: active || reduce ? 0 : 8 }}
-      transition={{ duration: reduce ? 0 : 0.2, ease: "easeOut" }}
+      animate={{ opacity: active ? 1 : 0, y: active || reduce ? 0 : 12 }}
+      transition={{ duration: reduce ? 0 : 0.22, ease: "easeOut" }}
     >
       {children}
     </motion.div>

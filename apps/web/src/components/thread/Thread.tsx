@@ -12,6 +12,7 @@ import { traceSentence } from "../../studio/traceMark.ts"
 import { useStudio } from "../../state/studio.ts"
 import type { AnswerAction } from "../../types/answer_action.ts"
 import type { SlotName } from "../../types/slot_name.ts"
+import type { SongBrief } from "../../types/song_brief.ts"
 import { Button } from "../Button.tsx"
 import { DemoMenu } from "../DemoMenu.tsx"
 import { Logo } from "../Logo.tsx"
@@ -30,6 +31,7 @@ type Props = {
 
 export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
   const question = useStudio((state) => (state.turn?.status === "question" ? (state.turn.question ?? null) : null))
+  const brief = useStudio((state) => state.turn?.brief)
   const turnStatus = useStudio((state) => state.turn?.status ?? null)
   const prompts = useStudio((state) => (state.turn?.status === "ready" ? state.turn.prompts : undefined))
   const intro = useStudio((state) => state.turn?.intro)
@@ -40,6 +42,7 @@ export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
   const [last, setLast] = useState<{ action: AnswerAction; value?: string } | null>(null)
   const [away, setAway] = useState(false)
   const busy = useRef(false)
+  const dismissed = useRef<string | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const pinned = useRef(true)
   const firstExchange = bubbles.findIndex((bubble) => bubble.prompt)
@@ -76,8 +79,21 @@ export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
     [onExchange],
   )
 
+  const layersQuestion = question?.slot === "output"
+  const askedBefore = bubbles.some((bubble) => bubble.prompt)
+  const idea = bubbles.find((bubble) => !bubble.prompt)?.text
   const working = status === "working"
   const fresh = !intro && bubbles.length === 0 && !reading && !question && turnStatus === null
+
+  useEffect(() => {
+    if (!layersQuestion || !question || working) return
+    const key = `${question.index}:${question.text}`
+    if (dismissed.current === key) return
+    dismissed.current = key
+    const value = question.options.find((option) => option.toLowerCase() === "all layers separately") ?? question.options[0]
+    if (!value) return
+    void postTurn({ answer: { slot: "output", action: "answer", value } }).catch(() => undefined)
+  }, [layersQuestion, question, working])
 
   useEffect(() => {
     const node = scroller.current
@@ -105,7 +121,7 @@ export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
             <p>I ask a few short questions. Your details stay as you said them. Press Build now at any time.</p>
           </Agent>
         ) : null}
-        {intro ? <Agent>{intro}</Agent> : null}
+        {intro && bubbles.length === 0 ? <Agent>{intro}</Agent> : null}
         {earlier.map((bubble) => (
           <Exchange key={bubble.id} bubble={bubble} />
         ))}
@@ -117,13 +133,19 @@ export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
         {later.map((bubble) => (
           <Exchange key={bubble.id} bubble={bubble} />
         ))}
-        {question ? (
+        {question && !layersQuestion ? (
           <div className="bubble-row">
             <span className="vs-mark" aria-hidden="true">
               <Logo />
             </span>
             <div className="rich-card">
-              <QuestionMessage question={question} locked={working} onAnswer={(action, value) => void send(action, value)} />
+              <QuestionMessage
+                question={question}
+                reflection={askedBefore ? undefined : reflect(idea)}
+                draft={askedBefore ? undefined : draftLine(brief)}
+                locked={working}
+                onAnswer={(action, value) => void send(action, value)}
+              />
             </div>
           </div>
         ) : null}
@@ -324,4 +346,22 @@ function revise(patch: ReadingPatch) {
   } catch {
     return
   }
+}
+
+function reflect(idea: string | undefined): string {
+  const trimmed = idea?.trim().replace(/\s+/g, " ") ?? ""
+  if (!trimmed || trimmed === "A sound") return "I have the sound you sent."
+  const sentence = trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
+  return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`
+}
+
+function draftLine(brief: SongBrief | undefined): string {
+  const mood = brief?.slots.mood?.value
+  const world = brief?.slots.world?.value
+  const energy = brief?.slots.energy?.value
+  const key = brief?.slots.key?.value
+  const tempo = brief?.slots.tempo?.value
+  const tempoText = tempo ? (/\bbpm\b/i.test(tempo) ? tempo : `${tempo} BPM`) : undefined
+  const parts = [mood, world, energy, key, tempoText].filter((part): part is string => Boolean(part))
+  return parts.length > 0 ? `Draft: ${parts.join(", ")}.` : "Draft: the details are still open."
 }

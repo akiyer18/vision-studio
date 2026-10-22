@@ -8,7 +8,7 @@ import { useStudio } from "../../state/studio.ts"
 import { Button } from "../Button.tsx"
 import { PageHeader } from "./PageHeader.tsx"
 
-export function Transport() {
+export function Transport({ filled, briefOpen, onBrief }: { filled: number; briefOpen: boolean; onBrief: () => void }) {
   const status = useStudio((state) => state.status)
   const recording = useSyncExternalStore(subscribeRecording, composerRecording, () => false)
   const [error, setError] = useState<string | null>(null)
@@ -27,6 +27,10 @@ export function Transport() {
   return (
     <div>
       <PageHeader eyebrow="Create" title="Shape your idea" subtitle="Describe it, record it, or drop a file. I ask only what is missing.">
+        <button type="button" className="brief-toggle" data-tour="brief" aria-expanded={briefOpen} onClick={onBrief}>
+          Brief
+          <span className="brief-count">{filled}</span>
+        </button>
         <SessionStatus />
         <Button data-tour="build" disabled={status === "working" || recording} onClick={() => void buildNow()}>
           Build now

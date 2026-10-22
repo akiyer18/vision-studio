@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 
 import { inputBridge } from "../../input/bridge.ts"
 import { transport } from "../../playback/transport.ts"
@@ -8,7 +9,6 @@ import { useStudio } from "../../state/studio.ts"
 import type { SongBrief } from "../../types/song_brief.ts"
 import { useTour } from "../../tour.ts"
 import { Composer } from "../composer/Composer.tsx"
-import { BriefCard } from "../brief/BriefCard.tsx"
 import { ReasoningCard } from "../reasoning/ReasoningCard.tsx"
 import { Sidebar } from "../sidebar/Sidebar.tsx"
 import { ReviewStage } from "../thread/ReviewStage.tsx"
@@ -16,8 +16,8 @@ import { Thread, type Bubble } from "../thread/Thread.tsx"
 import { Tour } from "../tour/Tour.tsx"
 import { GenreRoom, type GenreDetail } from "../genre/GenreRoom.tsx"
 import { Skeleton } from "../Skeleton.tsx"
+import { BriefDrawer } from "./BriefDrawer.tsx"
 import { Home } from "./Home.tsx"
-import { Insight } from "./Insight.tsx"
 import { PageHeader } from "./PageHeader.tsx"
 import { PagePane } from "./PagePane.tsx"
 import { Readouts } from "./Readouts.tsx"
@@ -39,6 +39,9 @@ export function Dashboard() {
   const tour = useTour(page === "create")
   const mode = useStudio((state) => state.mode)
   const [mark, setMark] = useState<string | null>(null)
+  const [briefOpen, setBriefOpen] = useState(false)
+  const [homeSlot, setHomeSlot] = useState<HTMLDivElement | null>(null)
+  const [createSlot, setCreateSlot] = useState<HTMLDivElement | null>(null)
   const [talking, setTalking] = useState(false)
   const [bubbles, setBubbles] = useState<Bubble[]>([])
   const [stamp, setStamp] = useState(sessionId)
@@ -118,24 +121,28 @@ export function Dashboard() {
 
   const hot = status === "working"
 
+  const composerSlot = page === "home" ? homeSlot : createSlot
+  const composer = (
+    <Composer started={started} onBegin={() => setTalking(true)} onBubble={addBubble} onExchange={addExchange} />
+  )
+
   return (
     <div className="studio-root">
       <div className="grain" aria-hidden="true" />
+      <PagePane active={page === "home"} scroll>
+        <Home composerHost={setHomeSlot} />
+      </PagePane>
+      <PagePane active={page !== "home"}>
       <div className="studio-shell">
         <Sidebar
-          page={page === "genre" ? "genre" : page === "create" ? "create" : "home"}
+          page={page === "genre" ? "genre" : "create"}
           onReplay={() => {
             if (page !== "create") go("/create")
             tour.replay()
           }}
         />
         <div className="studio-pages">
-          <PagePane active={page === "home"}>
-            <main className="studio-main is-scroll">
-              <Home />
-            </main>
-          </PagePane>
-          <PagePane active={page === "genre"}>
+          <PagePane active={page === "genre"} scroll>
             <main className="studio-main is-scroll">
               <PageHeader eyebrow="Genres" title="Explore a style" subtitle="Read the references, then open Create with those traits." />
               <GenreRoom onUse={useGenre} />
@@ -143,24 +150,17 @@ export function Dashboard() {
           </PagePane>
           <PagePane active={page === "create"}>
             <main className={`studio-main ${stage === "review" ? "is-scroll" : ""}`}>
-              <div className="studio-frame" hidden={stage !== "talk"}>
-                <Transport />
-                <Readouts />
-                <div className="studio-split">
+              <div className="studio-frame is-focus" hidden={stage !== "talk"}>
+                <Transport filled={filledDetails(turn?.brief)} briefOpen={briefOpen} onBrief={() => setBriefOpen((value) => !value)} />
+                <div className="focus-column">
+                  <Readouts />
                   <section className={`card conversation-card p-5 ${hot ? "is-hot" : ""}`} aria-label="Conversation">
-                    <h2 className="section-title">Conversation</h2>
                     <Thread bubbles={bubbles} onExchange={addExchange} showLayers={false} showDemo={demoQuery} />
-                    <div className="studio-composer">
-                      <Composer started={started} onBegin={() => setTalking(true)} onBubble={addBubble} onExchange={addExchange} />
-                    </div>
+                    <div className="studio-composer" ref={setCreateSlot} />
                   </section>
-                  <div className="brief-column">
-                    <BriefCard mark={mark} hot={hot} />
-                    {turn ? <ReasoningCard mark={mark} onMark={setMark} onDescribe={describe} /> : null}
-                  </div>
                 </div>
-                <Insight />
               </div>
+              <BriefDrawer open={briefOpen} mark={mark} hot={hot} onClose={() => setBriefOpen(false)} onMark={setMark} onDescribe={describe} />
               {stage === "review" ? (
                 <div className="review-layout">
                   <PageHeader eyebrow="Review" title="Read the brief" subtitle="Locked facts stay as you said them. Prompts are ready to edit.">
@@ -190,9 +190,16 @@ export function Dashboard() {
           </PagePane>
         </div>
       </div>
+      </PagePane>
       <Tour open={tour.open && page === "create"} onClose={tour.finish} />
+      {composerSlot ? createPortal(composer, composerSlot) : null}
     </div>
   )
+}
+
+function filledDetails(brief: SongBrief | null | undefined): number {
+  if (!brief) return 0
+  return Object.values(brief.slots).filter((slot) => slot?.value?.trim()).length
 }
 
 function briefLine(brief: SongBrief | null | undefined) {

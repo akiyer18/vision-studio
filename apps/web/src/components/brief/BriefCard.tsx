@@ -39,7 +39,7 @@ export function BriefCard({ mark, hot = false }: Props) {
   const summary = rows.slice(0, 3).map((row) => row.text).join(" · ") || "Details appear here as we talk."
 
   return (
-    <section className={`card brief-card flex flex-col gap-4 p-5 ${hot ? "is-hot" : ""}`} data-open={open ? "true" : "false"} data-tour="brief" aria-label="Song brief">
+    <section className={`card brief-card flex flex-col gap-4 p-5 ${hot ? "is-hot" : ""}`} data-open={open ? "true" : "false"} aria-label="Song brief">
       <button type="button" className="brief-summary" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
         <span className="section-title">Brief</span>
         <span className="mono text-secondary">{summary}</span>
