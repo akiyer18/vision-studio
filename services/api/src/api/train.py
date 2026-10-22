@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from agent.compare import compare_midi
-from agent.exercises import describe, exercise_from_data, exercise_to_dict, find_template, vary
+from agent.exercises import Exercise, apply_setup, describe, exercise_from_data, exercise_to_dict, find_template, vary
 from agent.train_feedback import feedback_payload, write_feedback
 from api.audio import (
     UPLOAD_LIMIT,
@@ -39,6 +39,9 @@ class StartBody(BaseModel):
     type: str
     level: str
     seed: int | None = None
+    tempo: int | None = None
+    bars: int | None = None
+    key: str | None = None
 
 
 def register_train(app: FastAPI) -> None:
@@ -50,7 +53,7 @@ def register_train(app: FastAPI) -> None:
         except KeyError as error:
             raise HTTPException(400, "Choose a rhythm or harmony exercise.") from error
         seed = secrets.randbelow(10_000) if body.seed is None else body.seed
-        exercise = vary(template, seed)
+        exercise = apply_setup(vary(template, seed), tempo=body.tempo, bars=body.bars, key=body.key)
         exercise_id = str(uuid.uuid4())
         folder = _folder(request.app.state.data_root, exercise_id)
         try:
@@ -78,6 +81,7 @@ def register_train(app: FastAPI) -> None:
         payload = _public(stored)
         payload["midi"] = "reference.mid"
         payload["built"] = describe(exercise)
+        payload["pattern"] = _pattern(exercise)
         return payload
 
     @app.post("/train/exercise/{exercise_id}/submit")
@@ -127,6 +131,22 @@ def register_train(app: FastAPI) -> None:
         if not target.is_file():
             raise HTTPException(404, "File not found")
         return FileResponse(target)
+
+
+def _pattern(exercise: Exercise) -> dict[str, object]:
+    drums: dict[int, list[str]] = {}
+    for hit in exercise.hits:
+        drums.setdefault(hit.bar, [""] * 16)
+        label = {"kick": "K", "snare": "S" if hit.velocity >= 50 else "g", "hat": "H", "open_hat": "O"}[hit.drum]
+        cell = drums[hit.bar][hit.step]
+        drums[hit.bar][hit.step] = f"{cell}{label}" if cell else label
+    return {
+        "drums": [drums[bar] for bar in range(1, exercise.bars + 1) if bar in drums],
+        "bass": [{"bar": note.bar, "start": note.start, "pitch": note.pitch} for note in exercise.bass],
+        "chords": [
+            {"bar": chord.bar, "symbol": chord.symbol, "notes": list(chord.notes)} for chord in exercise.chords
+        ],
+    }
 
 
 def _public(stored: dict[str, object]) -> dict[str, object]:

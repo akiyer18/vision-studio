@@ -267,6 +267,13 @@ export type TrainExercise = {
   note: string
   midi?: string
   built?: string
+  pattern?: TrainPattern
+}
+
+export type TrainPattern = {
+  drums: string[][]
+  bass: { bar: number; start: number; pitch: number }[]
+  chords: { bar: number; symbol: string; notes: number[] }[]
 }
 
 export type TrainEvent = {
@@ -329,7 +336,14 @@ export function trainFileUrl(id: string, name: string): string {
   return `${baseUrl()}/train/files/${encodeURIComponent(id)}/${encodeURIComponent(name)}`
 }
 
-export function startExercise(body: { category: string; type: string; level: string }): Promise<TrainExercise> {
+export function startExercise(body: {
+  category: string
+  type: string
+  level: string
+  tempo?: number
+  bars?: number
+  key?: string
+}): Promise<TrainExercise> {
   return request<TrainExercise>("/train/exercise", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

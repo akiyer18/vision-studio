@@ -1747,6 +1747,170 @@ h4.section-title,
   font-size: var(--text-label);
 }
 
+.train-categories {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.train-category,
+.train-soon,
+.train-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+}
+
+.train-category {
+  min-height: 220px;
+}
+
+.train-soon {
+  min-height: 120px;
+}
+
+.train-soon .section-title {
+  font-size: var(--text-card);
+}
+
+.train-icon {
+  width: 32px;
+  height: 32px;
+  fill: var(--accent);
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+
+.train-setup {
+  max-width: 40rem;
+}
+
+.train-segment {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.train-segment button,
+.train-type,
+.train-count {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--raised);
+  color: var(--ink);
+  padding: 6px 12px;
+  font-size: var(--text-label);
+}
+
+.train-segment button[aria-pressed="true"],
+.train-type[aria-pressed="true"],
+.train-count[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.train-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.train-type {
+  display: flex;
+  min-width: 9rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.train-tempo,
+.train-key {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.train-tempo input,
+.train-key select {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.train-key select {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--raised);
+  color: var(--ink);
+  padding: 6px 10px;
+}
+
+.train-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(16rem, 0.8fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.train-wave {
+  width: 100%;
+  height: 140px;
+  color: var(--accent);
+}
+
+.train-count {
+  font-size: var(--text-small);
+}
+
+.engine-badge {
+  margin-left: auto;
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--secondary);
+  padding: 4px 10px;
+  font-size: var(--text-small);
+}
+
+.train-reveal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px;
+}
+
+.train-reveal summary {
+  cursor: pointer;
+  font-size: var(--text-card);
+  font-weight: 600;
+}
+
+.train-roll {
+  display: flex;
+  max-height: 280px;
+  flex-direction: column;
+  gap: 4px;
+  overflow: auto;
+}
+
+.train-roll-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.train-feedback {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.train-mark {
+  margin-right: 8px;
+  color: var(--accent);
+}
+
 .home-skills .home-room {
   min-height: 180px;
 }
@@ -1893,6 +2057,9 @@ h4.section-title,
 @media (max-width: 800px) {
   .train-readouts,
   .train-chords,
+  .train-categories,
+  .train-stage,
+  .train-feedback,
   .goal-fields,
   .alt-board {
     grid-template-columns: 1fr;

@@ -11,14 +11,18 @@ const sections = [
   ["What to focus on next", "next"],
 ] as const
 
+const icons = ["✓", "≠", "→", "◎"]
+
 type Props = {
   feedback: TrainFeedback
   result: TrainResult
+  busy?: boolean
+  error?: string
   onBack: () => void
-  onHome: () => void
+  onNext: () => void
 }
 
-export function ResultView({ feedback, result, onBack, onHome }: Props) {
+export function ResultView({ feedback, result, busy = false, error = "", onBack, onNext }: Props) {
   return (
     <section className="review-layout" aria-label="Feedback">
       <PageHeader
@@ -26,16 +30,23 @@ export function ResultView({ feedback, result, onBack, onHome }: Props) {
         title="Feedback"
         subtitle={result.approximate ? "This comparison is an estimate from the audio." : "This comparison is from the MIDI."}
       />
-      {sections.map(([title, key]) => (
-        <article key={key} className="card train-copy">
-          <h2 className="section-title">{title}</h2>
-          <p>{feedback[key]}</p>
-        </article>
-      ))}
       <p className="train-score" aria-label={`${feedback.stars} of 3`}>
         <span className="readout-label">Score</span>
         <span aria-hidden="true">{stars(feedback.stars)}</span>
       </p>
+      <div className="train-feedback">
+        {sections.map(([title, key], index) => (
+          <article key={key} className="card train-copy">
+            <h3 className="section-title">
+              <span className="train-mark" aria-hidden="true">
+                {icons[index]}
+              </span>
+              {title}
+            </h3>
+            <p>{feedback[key]}</p>
+          </article>
+        ))}
+      </div>
       {typeof result.progression_correct === "boolean" ? (
         <p>
           Progression {result.progression_correct ? "matches" : "differs"}. Voicing similarity{" "}
@@ -44,11 +55,12 @@ export function ResultView({ feedback, result, onBack, onHome }: Props) {
       ) : null}
       <Comparison result={result} />
       <div className="train-actions">
-        <Button onClick={onBack}>Upload another take</Button>
-        <Button tone="secondary" onClick={onHome}>
-          Train home
+        <Button onClick={onBack}>Try again</Button>
+        <Button tone="secondary" disabled={busy} onClick={onNext}>
+          {busy ? "Preparing the reference" : "Next exercise"}
         </Button>
       </div>
+      {error ? <p className="train-error">{error}</p> : null}
     </section>
   )
 }

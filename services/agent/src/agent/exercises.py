@@ -204,6 +204,94 @@ def find_template(category: str, kind: str, level: str) -> Exercise:
     raise KeyError(category, kind, level)
 
 
+def apply_setup(
+    exercise: Exercise,
+    *,
+    tempo: int | None = None,
+    bars: int | None = None,
+    key: str | None = None,
+) -> Exercise:
+    """Tempo, length, and key chosen on the setup card. The pattern repeats to fill the bars."""
+    next_tempo = exercise.tempo if tempo is None else int(tempo)
+    if not 40 <= next_tempo <= 220:
+        next_tempo = exercise.tempo
+    next_bars = exercise.bars if bars is None else int(bars)
+    if next_bars not in (4, 8, 16, 32):
+        next_bars = exercise.bars
+    next_key = exercise.key
+    delta = 0
+    if key and exercise.key:
+        old = _root(exercise.key)
+        new = _root(key)
+        if old is not None and new is not None:
+            delta = (new - old) % 12
+            if delta > 6:
+                delta -= 12
+            next_key = key.strip()
+    if next_tempo == exercise.tempo and next_bars == exercise.bars and next_key == exercise.key and delta == 0:
+        return exercise
+    prompt = exercise.prompt
+    if next_tempo != exercise.tempo:
+        prompt = re.sub(r"\b\d+\s*BPM\b", f"{next_tempo} BPM", prompt)
+    if next_bars != exercise.bars:
+        prompt = re.sub(r"\b\d+-bar\b", f"{next_bars}-bar", prompt)
+    if exercise.key and next_key != exercise.key and exercise.key in prompt:
+        prompt = prompt.replace(exercise.key, next_key)
+    return replace(
+        exercise,
+        tempo=next_tempo,
+        bars=next_bars,
+        key=next_key,
+        prompt=prompt,
+        hits=tuple(
+            replace(hit, bar=bar)
+            for hit in exercise.hits
+            for bar in _places(hit.bar, exercise.bars, next_bars)
+        ),
+        bass=tuple(
+            replace(note, bar=bar, pitch=max(0, min(127, note.pitch + delta)))
+            for note in exercise.bass
+            for bar in _places(note.bar, exercise.bars, next_bars)
+        ),
+        chords=tuple(
+            replace(
+                chord,
+                bar=bar,
+                symbol=_shift_symbol(chord.symbol, delta),
+                notes=tuple(max(0, min(127, pitch + delta)) for pitch in chord.notes),
+            )
+            for chord in exercise.chords
+            for bar in _places(chord.bar, exercise.bars, next_bars)
+        ),
+    )
+
+
+def _places(bar: int, source: int, target: int) -> tuple[int, ...]:
+    if target == source:
+        return (bar,)
+    if target < source:
+        return (bar,) if bar <= target else ()
+    return tuple(range(bar, target + 1, source))
+
+
+def _root(label: str) -> int | None:
+    token = label.strip().split(" ", 1)[0]
+    token = {"Db": "C#", "D#": "Eb", "Gb": "F#", "G#": "Ab", "A#": "Bb"}.get(token, token)
+    try:
+        return _NAMES.index(token)
+    except ValueError:
+        return None
+
+
+def _shift_symbol(symbol: str, delta: int) -> str:
+    if delta == 0:
+        return symbol
+    for name in sorted(_NAMES, key=len, reverse=True):
+        if symbol.startswith(name):
+            return _NAMES[(_NAMES.index(name) + delta) % 12] + symbol[len(name) :]
+    return symbol
+
+
 def vary(template: Exercise, seed: int) -> Exercise:
     """A fresh exercise. Positions and chords stay inside the level's constraints."""
     rng = random.Random(seed)

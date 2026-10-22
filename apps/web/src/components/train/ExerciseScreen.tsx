@@ -1,12 +1,12 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   ApiError,
   revealExercise,
-  startExercise,
   submitExercise,
   trainFileUrl,
   type TrainExercise,
   type TrainFeedback,
+  type TrainPattern,
   type TrainResult,
 } from "../../api/client.ts"
 import { levelCopy } from "../../level.ts"
@@ -24,6 +24,7 @@ type Props = {
 
 export function ExerciseScreen({ exercise, onBack, onExercise, onResult }: Props) {
   const [countIn, setCountIn] = useState(false)
+  const [loop, setLoop] = useState(true)
   const [playing, setPlaying] = useState(false)
   const [revealed, setRevealed] = useState(Boolean(exercise.midi))
   const [busy, setBusy] = useState(false)
@@ -46,7 +47,7 @@ export function ExerciseScreen({ exercise, onBack, onExercise, onResult }: Props
     arming.current = true
     try {
       if (countIn) await countClicks(exercise.tempo, 4)
-      audio.loop = true
+      audio.loop = loop
       await audio.play()
       setPlaying(true)
     } catch {
@@ -95,119 +96,190 @@ export function ExerciseScreen({ exercise, onBack, onExercise, onResult }: Props
     }
   }
 
-  async function another() {
-    setBusy(true)
-    setError("")
-    try {
-      const next = await startExercise({ category: exercise.category, type: exercise.type, level: exercise.level })
-      setRevealed(false)
-      setFile(null)
-      setUnknown(null)
-      setPlaying(false)
-      onExercise(next)
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "A new variation did not load. Try again.")
-    } finally {
-      setBusy(false)
-    }
-  }
+  const source = trainFileUrl(exercise.id, exercise.audio)
+  const engine = exercise.note.toLowerCase().includes("production character") ? "Production pass" : "Clean samples"
 
   return (
     <section className="review-layout" aria-label="Exercise">
       <PageHeader
         eyebrow="Train"
         title={`${level.title}, ${exercise.type_label}`}
-        subtitle="Listen on a loop, recreate it in Logic, then upload the file. This page cannot see your session."
+        subtitle={`${exercise.tempo} BPM${exercise.key ? `, ${exercise.key}` : ""}, ${exercise.bars} bars. Listen, then recreate it in Logic.`}
       />
-      <div className="train-readouts">
-        <article className="card readout-tile">
-          <p className="readout-label">Tempo</p>
-          <p className="readout">{exercise.tempo}</p>
-        </article>
-        {exercise.key ? (
-          <article className="card readout-tile">
-            <p className="readout-label">Key</p>
-            <p className="readout">{exercise.key}</p>
+      <div className="train-stage">
+        <div className="card train-player">
+          <Waveform src={source} />
+          <audio
+            key={exercise.id}
+            ref={audioRef}
+            src={source}
+            loop={loop}
+            preload="auto"
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+            onEnded={() => setPlaying(false)}
+          />
+          <div className="train-actions">
+            <Button onClick={() => void togglePlay()}>{playing ? "Stop" : "Play"}</Button>
+            <Button tone={loop ? "primary" : "secondary"} aria-pressed={loop} onClick={() => setLoop((value) => !value)}>
+              Loop
+            </Button>
+            <button
+              type="button"
+              className="train-count"
+              aria-pressed={countIn}
+              title="Four clicks at the exercise tempo before the loop starts."
+              onClick={() => setCountIn((value) => !value)}
+            >
+              Count in
+            </button>
+            <span className="engine-badge" title={exercise.note}>
+              {engine}
+            </span>
+          </div>
+        </div>
+        <div className="train-beside">
+          <article className="card train-copy">
+            <h3 className="section-title">Objective</h3>
+            <p>{exercise.objective}</p>
           </article>
-        ) : null}
-        <article className="card readout-tile">
-          <p className="readout-label">Bars</p>
-          <p className="readout">{exercise.bars}</p>
-        </article>
-      </div>
-      <div className="card train-player">
-        <audio
-          key={exercise.id}
-          ref={audioRef}
-          src={trainFileUrl(exercise.id, exercise.audio)}
-          loop
-          preload="auto"
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
-        />
-        <div className="train-actions">
-          <Button onClick={() => void togglePlay()}>{playing ? "Stop" : "Play"}</Button>
-          <Button tone={countIn ? "primary" : "secondary"} aria-pressed={countIn} onClick={() => setCountIn((value) => !value)}>
-            Count in
-          </Button>
-          <Button tone="secondary" disabled={busy} onClick={() => void another()}>
-            New variation
+          <article className="card train-copy">
+            <h3 className="section-title">How to practise</h3>
+            <p>{exercise.instructions}</p>
+          </article>
+          <label className="train-download">
+            {busy ? "Comparing" : "Upload your recreation"}
+            <input
+              className="sr-only"
+              type="file"
+              accept=".mid,.midi,.wav,.mp3,.m4a,.aiff,.aif,.webm"
+              disabled={busy}
+              onChange={(event) => {
+                const chosen = event.target.files?.[0]
+                event.target.value = ""
+                if (!chosen) return
+                setFile(chosen)
+                setUnknown(null)
+                void send(chosen)
+              }}
+            />
+          </label>
+          <Button tone="ghost" onClick={onBack}>
+            Back
           </Button>
         </div>
-        <p className="text-secondary">The reference loops. Count in plays four clicks at the exercise tempo before it starts.</p>
-        <p className="text-secondary">{exercise.note}</p>
       </div>
-      <article className="card train-copy">
-        <h2 className="section-title">Learning objective</h2>
-        <p>{exercise.objective}</p>
-      </article>
-      <article className="card train-copy">
-        <h2 className="section-title">How to practise</h2>
-        <p>{exercise.instructions}</p>
-      </article>
-      <div className="train-actions">
+      <details
+        className="card train-reveal"
+        onToggle={(event) => {
+          if (event.currentTarget.open && !revealed && !busy) void reveal()
+        }}
+      >
+        <summary>Reveal how it is built</summary>
+        {busy && !revealed ? <p className="text-secondary">Preparing the pattern.</p> : null}
+        {revealed && exercise.pattern ? <PatternView pattern={exercise.pattern} /> : null}
+        {exercise.built ? <p>{exercise.built}</p> : null}
         {revealed && exercise.midi ? (
-          <a className="train-download" href={trainFileUrl(exercise.id, exercise.midi)} download>
-            Download MIDI
-          </a>
-        ) : (
-          <Button disabled={busy} onClick={() => void reveal()}>
-            Show me how it is built
-          </Button>
-        )}
-        <label className="train-download is-secondary">
-          Upload your recreation
-          <input
-            className="sr-only"
-            type="file"
-            accept=".mid,.midi,.wav,.mp3,.m4a,.aiff,.aif,.webm"
-            disabled={busy}
-            onChange={(event) => {
-              const chosen = event.target.files?.[0]
-              event.target.value = ""
-              if (!chosen) return
-              setFile(chosen)
-              setUnknown(null)
-              void send(chosen)
-            }}
-          />
-        </label>
-        <Button tone="ghost" onClick={onBack}>
-          Back
-        </Button>
-      </div>
-      {!revealed ? (
-        <p className="text-secondary">Practise by ear first. The MIDI download appears after you ask to see how it is built.</p>
-      ) : null}
-      {exercise.built ? (
-        <article className="card train-copy">
-          <h2 className="section-title">How it is built</h2>
-          <p>{exercise.built}</p>
-        </article>
-      ) : null}
+          <div className="train-actions">
+            <a className="train-download is-secondary" href={trainFileUrl(exercise.id, exercise.midi)} download>
+              Download MIDI
+            </a>
+            <a className="train-download is-secondary" href={source} download>
+              Download audio
+            </a>
+          </div>
+        ) : null}
+      </details>
       {unknown && file ? <MappingDialog notes={unknown} busy={busy} onCompare={(mapping) => void send(file, mapping)} /> : null}
       {error ? <p className="train-error">{error}</p> : null}
     </section>
+  )
+}
+
+function Waveform({ src }: { src: string }) {
+  const canvas = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const node = canvas.current
+    if (!node) return
+    let gone = false
+    const context = new AudioContext()
+    void fetch(src)
+      .then((response) => response.arrayBuffer())
+      .then((buffer) => context.decodeAudioData(buffer))
+      .then((audio) => {
+        if (gone) return
+        const data = audio.getChannelData(0)
+        const ctx = node.getContext("2d")
+        if (!ctx) return
+        const width = node.width
+        const height = node.height
+        const size = Math.max(1, Math.floor(data.length / width))
+        ctx.clearRect(0, 0, width, height)
+        ctx.fillStyle = getComputedStyle(node).color
+        for (let index = 0; index < width; index += 1) {
+          let peak = 0
+          for (let sample = 0; sample < size; sample += 1) peak = Math.max(peak, Math.abs(data[index * size + sample] ?? 0))
+          const bar = Math.max(2, peak * height)
+          ctx.fillRect(index, (height - bar) / 2, 1, bar)
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => void context.close())
+    return () => {
+      gone = true
+    }
+  }, [src])
+  return <canvas ref={canvas} className="train-wave" width={720} height={140} />
+}
+
+const pitchNames = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
+
+function PatternView({ pattern }: { pattern: TrainPattern }) {
+  if (pattern.drums.length > 0) {
+    return (
+      <div className="train-compare">
+        {pattern.drums.map((bar, index) => (
+          <div key={index} className="train-bar">
+            <p className="readout-label">Bar {index + 1}</p>
+            <div className="train-grid-scroll">
+              <div className="train-grid">
+                {bar.map((cell, step) => (
+                  <span key={step} className={cell ? "train-cell has-hit" : "train-cell"}>
+                    {cell}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+  const notes =
+    pattern.bass.length > 0
+      ? pattern.bass
+      : pattern.chords.flatMap((chord) => chord.notes.flatMap((pitch) => Array.from({ length: 16 }, (_, start) => ({ bar: chord.bar, start, pitch }))))
+  const pitches = [...new Set(notes.map((note) => note.pitch))].sort((left, right) => right - left)
+  if (pitches.length === 0) return null
+  const bars = Math.max(...notes.map((note) => note.bar))
+  return (
+    <div className="train-roll">
+      {pitches.map((pitch) => (
+        <div key={pitch} className="train-roll-row">
+          <span className="readout-label">{pitchNames[pitch % 12]}{Math.floor(pitch / 12) - 1}</span>
+          <div className="train-grid-scroll">
+          <div className="train-grid" style={{ gridTemplateColumns: `repeat(${bars * 16}, 28px)` }}>
+            {Array.from({ length: bars * 16 }, (_, index) => {
+              const bar = Math.floor(index / 16) + 1
+              const start = index % 16
+              const hit = notes.some((note) => note.bar === bar && note.start === start && note.pitch === pitch)
+              return <span key={index} className={hit ? "train-cell has-hit" : "train-cell"} />
+            })}
+          </div>
+          </div>
+        </div>
+      ))}
+    </div>
   )
 }
 
