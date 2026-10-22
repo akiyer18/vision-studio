@@ -18,8 +18,8 @@ export const features: Flags = {
   styleguideLink: true,
   demo: true,
   create: true,
-  genre: true,
-  analyser: false,
+  genre: false,
+  analyser: true,
   edits: false,
   soundcharts: false,
 }

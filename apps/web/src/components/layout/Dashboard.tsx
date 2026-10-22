@@ -4,6 +4,7 @@ import { createPortal } from "react-dom"
 import { inputBridge } from "../../input/bridge.ts"
 import { transport } from "../../playback/transport.ts"
 import { currentIdea, noteIdea, saveRecent } from "../../recentIdeas.ts"
+import { features } from "../../features.ts"
 import { go, usePage } from "../../route.ts"
 import { useStudio } from "../../state/studio.ts"
 import type { SongBrief } from "../../types/song_brief.ts"
@@ -136,7 +137,7 @@ export function Dashboard() {
       <PagePane active={page !== "home"}>
       <div className="studio-shell">
         <Sidebar
-          page={page === "genre" ? "genre" : page === "train" ? "train" : "create"}
+          page={page === "train" ? "train" : page === "analyse" ? "analyse" : "create"}
           onReplay={() => {
             if (page !== "create") go("/create")
             tour.replay()
@@ -148,10 +149,17 @@ export function Dashboard() {
               <TrainRoom />
             </main>
           </PagePane>
-          <PagePane active={page === "genre"} scroll>
+          {features.genre ? (
+            <PagePane active={page === "genre"} scroll>
+              <main className="studio-main is-scroll">
+                <PageHeader eyebrow="Genres" title="Explore a style" subtitle="Read the references, then open Create with those traits." />
+                <GenreRoom onUse={useGenre} />
+              </main>
+            </PagePane>
+          ) : null}
+          <PagePane active={page === "analyse"} scroll>
             <main className="studio-main is-scroll">
-              <PageHeader eyebrow="Genres" title="Explore a style" subtitle="Read the references, then open Create with those traits." />
-              <GenreRoom onUse={useGenre} />
+              <PageHeader eyebrow="Analyse" title="Hear what your track is doing" subtitle="Upload a track. The notes stay tied to what was measured." />
             </main>
           </PagePane>
           <PagePane active={page === "create"}>

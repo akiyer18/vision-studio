@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
-import { CircleHelp, GraduationCap, House, Library, PenLine, ScanSearch, SlidersHorizontal } from "lucide-react"
+import { CircleHelp, GraduationCap, House, PenLine, ScanSearch } from "lucide-react"
 
 import { Logo } from "../Logo.tsx"
 
@@ -11,7 +11,7 @@ import type { RecentIdea } from "../../recentIdeas.ts"
 import { useStudio } from "../../state/studio.ts"
 import { RecentList } from "./RecentList.tsx"
 
-type Room = "home" | "create" | "genre" | "train"
+type Room = "home" | "create" | "train" | "analyse"
 
 type Props = {
   page: Room
@@ -98,19 +98,19 @@ export function Sidebar({ page, onReplay }: Props) {
             document.getElementById("idea")?.focus()
           }}
         />
-        <RoomButton
-          icon={<Library aria-hidden="true" size={16} />}
-          label="Genres"
-          live={features.genre}
-          current={page === "genre"}
-          onClick={() => go("/genres")}
-        />
-        <SoonItem icon={<ScanSearch aria-hidden="true" size={16} />} label="Analyse" soon={!features.analyser} />
-        <SoonItem icon={<SlidersHorizontal aria-hidden="true" size={16} />} label="Tweak" soon={!features.edits} />
+        {features.analyser ? (
+          <RoomButton
+            icon={<ScanSearch aria-hidden="true" size={16} />}
+            label="Analyse"
+            live
+            current={page === "analyse"}
+            onClick={() => go("/analyse")}
+          />
+        ) : null}
       </nav>
       <RecentList onOpen={openRecent} />
       <div className="relative mt-auto flex flex-col gap-3">
-        <p className="tip-card">Press Build now at any time, your details stay exactly as you said them</p>
+        {page === "create" ? <p className="tip-card">Press Build now at any time, your details stay exactly as you said them</p> : null}
         <p className="side-level">{level ? `Level: ${levelCopy[level].title}` : "Choose a level"}</p>
         <button
           ref={helpRef}

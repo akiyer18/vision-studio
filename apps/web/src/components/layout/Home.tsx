@@ -42,7 +42,7 @@ const modes: {
     copy: "Understand your own track. Get specific suggestions you can hear and choose to apply.",
     icon: ScanSearch,
     soon: !features.analyser,
-    open: () => undefined,
+    open: () => go("/analyse"),
   },
   {
     title: "Create",
@@ -84,8 +84,8 @@ export function Home({ composerHost }: Props) {
           <button type="button" onClick={() => go("/create")}>
             Create
           </button>
-          <button type="button" onClick={() => go("/genres")}>
-            Genres
+          <button type="button" onClick={() => go("/analyse")}>
+            Analyse
           </button>
           <button
             type="button"
