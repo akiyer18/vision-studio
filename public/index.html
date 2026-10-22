@@ -93,7 +93,7 @@
   #c-empty:not([hidden]) + #c-project { display:none; }
   .projectrow { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; font-size:14px; color:var(--muted); padding:12px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); margin-bottom:12px; }
   .projectrow button { font-size:14px; padding:6px 12px; }
-  .projectrow select { width:auto; font-size:13px; padding:5px 8px; }
+  .projectrow select { width:auto; max-width:100%; min-width:0; font-size:13px; padding:5px 8px; }
   .log { display:flex; flex-direction:column; gap:12px; max-height:none; padding:4px 0; }
   .msg { max-width:72ch; padding:10px 14px; border-radius:12px; font-size:15.5px; line-height:1.55; white-space:pre-wrap; }
   .msg.user { background:var(--surface); align-self:flex-end; border:1px solid var(--line); }
@@ -116,7 +116,7 @@
   .tl li .detail { flex-basis:100%; margin:2px 0 6px 15px; padding:8px 10px; background:var(--surface); border:1px solid var(--line); border-radius:8px; font:12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color:var(--text); white-space:pre-wrap; word-break:break-word; max-height:240px; overflow:auto; }
   /* layers */
   .layers { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; white-space:normal; }
-  .layer { display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--line); border-radius:var(--radius); background:var(--bg); font-size:14px; }
+  .layer { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--line); border-radius:var(--radius); background:var(--bg); font-size:14px; }
   .layer b { font-weight:600; margin-right:2px; }
   .layer button { padding:4px 9px; font-size:13px; }
   .layer .pill { font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted); }
@@ -209,6 +209,7 @@
     main { padding:16px 16px 40px; }
     .composer { flex-wrap:wrap; } .composer textarea { flex-basis:100%; } .composer button.big { width:100%; }
     .msg { max-width:100%; }
+    .layer b { flex:1 1 100%; }
     body.projector { font-size:16px; } body.projector .msg { font-size:17px; }
   }
 </style>
@@ -509,8 +510,10 @@ async function pollHealth() {
 function renderSession(st) {
   const el = $('c-session'); if (!el) return; st = st || liveState || {};
   const tracks = Object.values(st.tracks || {}).map(t => t.name); const sounds = Object.keys(st.samples || {}).length;
+  (st.liveTracks || []).forEach(t => { if (t && t.name) noteLayer(t.name, { muted: Boolean(t.muted), solo: Boolean(t.solo) }); });
   const names = aiLayerNames();
   if (!tracks.length && !sounds && !names.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  if (names.length) { const e = $('c-empty'); if (e) e.hidden = true; }
   el.style.display = ''; el.innerHTML = `<b style="color:var(--text)">Session as the producer sees it</b> · ${st.bpm ? st.bpm + ' BPM · ' : ''}${tracks.length} tracks it built${st.genreTarget ? ' · style: ' + escapeHtml(st.genreTarget.split(':')[0]) : ''}${st.groove ? ' · groove template loaded' : ''}${names.length ? ' <span style="color:var(--muted)">· Play hears one alone, Keep unmutes it, Another regenerates, Undo reverts</span>' : ''}`;
   if (names.length) { const w = document.createElement('div'); w.className = 'layers'; names.forEach(n => w.appendChild(layerCard(n))); el.appendChild(w); const hl = hearingLine(); if (hl) el.appendChild(hl); }
 }
@@ -1064,7 +1067,7 @@ function profileCard(profile, title) {
   if (profile.summary) { const p = document.createElement('div'); p.style.cssText = 'font-size:12px;color:var(--muted);padding:0 8px 8px'; p.textContent = profile.summary; wrap.appendChild(p); }
   return wrap;
 }
-$('c-reset').onclick = async () => { await postJson('/api/chat/reset', {}); $('c-log').innerHTML = ''; const e = $('c-empty'); if (e) e.hidden = false; addBot('New session. Live keeps whatever is already there.'); };
+$('c-reset').onclick = async () => { await postJson('/api/chat/reset', {}); $('c-log').innerHTML = ''; layerState.clear(); liveState = null; $('pj-card').style.display = 'none'; $('c-session').style.display = 'none'; const e = $('c-empty'); if (e) e.hidden = false; addBot('New session. Live keeps whatever is already there.'); };
 // first-run entry points
 $('w-type').onclick = () => { $('c-text').focus(); };
 $('w-rec').onclick = () => { $('c-beat').scrollIntoView({ block: 'center' }); $('c-beat').click(); };
@@ -1189,6 +1192,8 @@ function addMsg(cls, text) { const log = $('c-log'); if (cls === 'user') { const
 function addBot(text) { return addMsg('bot', text); }
 function toolRow(tools, ev) { const li = document.createElement('li'); li.dataset.name = ev.name; const sum = document.createElement('span'); sum.className = 'sum'; sum.textContent = ev.summary || ev.name; sum.title = ev.summary || ev.name; li.appendChild(sum); tools.appendChild(li); return li; }
 function toolDone(tools, ev) {
+  // enhance_project / compose_track report progress stages as tool_done events under the same name: update the pending row, colour it only on the final event
+  if (ev.ok !== false && /^(enhance|compose): /.test(ev.summary || '')) { const li = [...tools.children].reverse().find(l => l.dataset.name === ev.name && !l.className); if (li) { const sum = li.querySelector('.sum'); if (sum) { sum.textContent = ev.summary; sum.title = ev.summary; } return li; } }
   let li = [...tools.children].reverse().find(l => l.dataset.name === ev.name && !l.className);
   if (!li) li = toolRow(tools, ev);                       // tool_done without a preceding tool row (queue notice, attachments, style guide, project, compose stages)
   li.className = ev.ok === false ? 'bad' : 'ok'; const sum = li.querySelector('.sum'); if (ev.summary && sum) { sum.textContent = ev.summary; sum.title = ev.summary; }
