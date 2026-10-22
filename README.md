@@ -63,7 +63,7 @@ script is in **DEMO.md**.
 | **ADEHack 5.8** (Live 10 remote script) | Hands: 53 JSON-over-TCP commands: tracks, clips, Simpler hot-swap, Drum Rack pads, devices + parameters, sends, mixer, scenes, transport, warping, audio clips, meters, arrangement/session recording from bar 1 (`set_position` / `jump`), tempo with clip warping, undo. Full list: `ableton/README.md`. | `ableton/ADEHack/ADEHack.py`, `ableton/client.js` |
 | **Training mode** | Stable Audio example per level -> capture the user's attempt -> compare (A/B + pattern/bass match) -> reveal parts on muted `Target` tracks. | `lib/training.js`, `public/training.html` |
 
-## Agent tools (lib/agent.js) - 75
+## Agent tools (lib/agent.js) - 76
 **Hear / analyze:** listen · judge_sound · listen_live · critique_capture · analyze_recording · transcribe_audio · analyze_audio · compare_audio · analyze_music · production_dna · critique_mix · label_pieces · review_mix · describe_set · read_clip · clip_info · meters · reference_track · genre_guide · genre_blueprint
 **Make sounds:** synthesize_sound · synth_local · generate_loop · generate_rhythm · design_kit · compose_track · restyle_mix · restyle_audio · refine_sound · undo_sound · slice_sample · chop_sample · layer_samples · tune_sample · shape_sample · separate_stems · process_audio · master_preview · render_preview · import_sample
 **Build in Live:** set_tempo · set_position · build_kit · load_to_pad · build_drum_layer · build_melody_layer · add_loop_layer · load_audio_clip · update_layer · replace_sound · remove_layer · enhance_project · create_scene · fire_scene · record_arrangement · record_performance · capture_midi · set_clip_warp · set_track_color · live_undo

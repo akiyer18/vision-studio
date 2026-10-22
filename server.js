@@ -96,6 +96,8 @@ app.get('/api/health', async (_req, res) => {
     earsProviders: (await import('./lib/ears.js')).earsProviders(),
     gemini: (await import('./lib/ears.js')).geminiStatus(),
     geminiStatus: (await import('./lib/ears.js')).geminiStatusText(),
+    producer: process.env.PRODUCER || 'claude+gemini-fallback',
+    geminiProducerModel: process.env.GEMINI_PRODUCER_MODEL || 'gemini-3.8-flash',
     outDir: OUT_DIR,
   });
 });
@@ -1942,10 +1944,22 @@ async function runChatTurn(req, res, emit0) {
     let out;
     // Prior-turn thinking blocks are never needed again and their signatures break once safeHistory trims the prefix they were bound to.
     chat.history = stripThinking(chat.history);
-    try { out = await runProducer({ history: chat.history, userText, recordings, ctx: makeCtx(emit) }); }
-    catch (e) {
-      if (/thinking/i.test(e?.message || '') && /signature|bound/i.test(e?.message || '')) { console.warn('[chat] thinking block rejected, stripping and retrying'); chat.history = stripThinking(chat.history); out = await runProducer({ history: chat.history, userText, recordings, ctx: makeCtx(emit) }); }
-      else throw e;
+    // Producer model: Claude by default; Gemini when PRODUCER=gemini, or as the fallback for this turn when Claude's account/API is unavailable.
+    const CLAUDE_DOWN = /credit balance|billing|authentication|invalid x-api-key|\b401\b|overloaded|\b529\b|rate_limit/i;
+    const runGemini = async (why) => {
+      const { runProducerGemini } = await import('./lib/agent-gemini.js');
+      if (why) emit({ type: 'tool_done', name: 'producer', ok: true, summary: `Claude unavailable (${String(why).replace(/^\d+\s*\{.*?"message":"/s, '').slice(0, 80)}): switching to Gemini for this turn` });
+      return runProducerGemini({ history: chat.history, userText, recordings, ctx: makeCtx(emit) });
+    };
+    if (process.env.PRODUCER === 'gemini') out = await runGemini(null);
+    else {
+      try { out = await runProducer({ history: chat.history, userText, recordings, ctx: makeCtx(emit) }); }
+      catch (e) {
+        if (/thinking/i.test(e?.message || '') && /signature|bound/i.test(e?.message || '')) { console.warn('[chat] thinking block rejected, stripping and retrying'); chat.history = stripThinking(chat.history); out = await runProducer({ history: chat.history, userText, recordings, ctx: makeCtx(emit) }); }
+        else if (CLAUDE_DOWN.test(e?.message || '')) { console.warn('[chat] Claude unavailable, Gemini fallback:', String(e?.message).slice(0, 120)); out = await runGemini(e?.message); }
+        else throw e;
+      }
+      if (out?.error && CLAUDE_DOWN.test(String(out.error)) && out.producer !== 'gemini') { console.warn('[chat] Claude unavailable (returned), Gemini fallback:', String(out.error).slice(0, 120)); chat.history = stripThinking(repairHistory(out.history || chat.history)); out = await runGemini(out.error); }
     }
     if (out?.error && /thinking/i.test(String(out.error)) && /signature|bound/i.test(String(out.error))) {   // the runner caught the 400 itself: strip and retry once
       console.warn('[chat] thinking block rejected (returned), stripping and retrying');
