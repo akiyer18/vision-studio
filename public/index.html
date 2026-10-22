@@ -1198,7 +1198,7 @@ function toolDone(tools, ev) {
   if (ev.ok !== false && /^(enhance|compose): /.test(ev.summary || '')) { const li = [...tools.children].reverse().find(l => l.dataset.name === ev.name && !l.className); if (li) { const sum = li.querySelector('.sum'); if (sum) { sum.textContent = ev.summary; sum.title = ev.summary; } return li; } }
   let li = [...tools.children].reverse().find(l => l.dataset.name === ev.name && !l.className);
   if (!li) li = toolRow(tools, ev);                       // tool_done without a preceding tool row (queue notice, attachments, style guide, project, compose stages)
-  li.className = ev.ok === false ? 'bad' : 'ok'; const sum = li.querySelector('.sum'); if (ev.summary && sum) { sum.textContent = ev.summary; sum.title = ev.summary; }
+  li.className = ev.ok === false ? 'bad' : 'ok'; const sum = li.querySelector('.sum'); if (ev.summary && sum) { const shown = ev.ok === false && ev.name === 'turn' ? ev.summary.replace(/^(the producer stopped early: )(.*)$/s, (_, a, b) => a + friendlyError(b)) : ev.summary; sum.textContent = shown; sum.title = ev.summary; }
   // one line per tool call; the chevron opens what the tool returned
   const payload = ev.data || (ev.error ? { error: ev.error } : null);
   if (payload && !li.querySelector('.chev')) {
