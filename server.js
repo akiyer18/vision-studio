@@ -1940,10 +1940,17 @@ async function runChatTurn(req, res, emit0) {
       emit({ type: 'tool_done', name: 'project', ok: true, summary: `working inside your set: ${pj.tracks.length} tracks, ${Math.round(pj.tempo)} BPM` });
     }   // Analyse room = mix detail allowed in critiques
     let out;
+    // Prior-turn thinking blocks are never needed again and their signatures break once safeHistory trims the prefix they were bound to.
+    chat.history = stripThinking(chat.history);
     try { out = await runProducer({ history: chat.history, userText, recordings, ctx: makeCtx(emit) }); }
     catch (e) {
       if (/thinking/i.test(e?.message || '') && /signature|bound/i.test(e?.message || '')) { console.warn('[chat] thinking block rejected, stripping and retrying'); chat.history = stripThinking(chat.history); out = await runProducer({ history: chat.history, userText, recordings, ctx: makeCtx(emit) }); }
       else throw e;
+    }
+    if (out?.error && /thinking/i.test(String(out.error)) && /signature|bound/i.test(String(out.error))) {   // the runner caught the 400 itself: strip and retry once
+      console.warn('[chat] thinking block rejected (returned), stripping and retrying');
+      chat.history = stripThinking(repairHistory(out.history || chat.history));
+      out = await runProducer({ history: chat.history, userText, recordings, ctx: makeCtx(emit) });
     }
     chat.history = safeHistory(repairHistory(out.history), 120);
     if (out.error) emit({ type: 'tool_done', name: 'turn', ok: false, summary: `the producer stopped early: ${String(out.error).slice(0, 140)}` });
