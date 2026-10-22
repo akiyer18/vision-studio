@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
-import { CircleHelp, House, Library, PenLine, ScanSearch, SlidersHorizontal } from "lucide-react"
+import { CircleHelp, GraduationCap, House, Library, PenLine, ScanSearch, SlidersHorizontal } from "lucide-react"
 
 import { Logo } from "../Logo.tsx"
 
 import { features } from "../../features.ts"
+import { chooseLevel, levelCopy, useLevel } from "../../level.ts"
 import { go } from "../../route.ts"
 import { transport } from "../../playback/transport.ts"
 import type { RecentIdea } from "../../recentIdeas.ts"
 import { useStudio } from "../../state/studio.ts"
 import { RecentList } from "./RecentList.tsx"
 
-type Room = "home" | "create" | "genre"
+type Room = "home" | "create" | "genre" | "train"
 
 type Props = {
   page: Room
@@ -19,6 +20,7 @@ type Props = {
 
 export function Sidebar({ page, onReplay }: Props) {
   const restoreSession = useStudio((state) => state.restoreSession)
+  const level = useLevel()
   const [menu, setMenu] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const helpRef = useRef<HTMLButtonElement>(null)
@@ -80,6 +82,13 @@ export function Sidebar({ page, onReplay }: Props) {
           onClick={() => go("/")}
         />
         <RoomButton
+          icon={<GraduationCap aria-hidden="true" size={16} />}
+          label="Train"
+          live
+          current={page === "train"}
+          onClick={() => go("/train")}
+        />
+        <RoomButton
           icon={<PenLine aria-hidden="true" size={16} />}
           label="Create"
           live={features.create}
@@ -102,6 +111,7 @@ export function Sidebar({ page, onReplay }: Props) {
       <RecentList onOpen={openRecent} />
       <div className="relative mt-auto flex flex-col gap-3">
         <p className="tip-card">Press Build now at any time, your details stay exactly as you said them</p>
+        <p className="side-level">{level ? `Level: ${levelCopy[level].title}` : "Choose a level"}</p>
         <button
           ref={helpRef}
           type="button"
@@ -137,6 +147,18 @@ export function Sidebar({ page, onReplay }: Props) {
               }}
             >
               Shortcuts
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="rounded-xl px-2 py-2 text-left text-ink"
+              onClick={() => {
+                setMenu(false)
+                chooseLevel()
+                go("/train")
+              }}
+            >
+              Change level
             </button>
             {features.styleguideLink ? (
               <a role="menuitem" href="/styleguide" className="rounded-xl px-2 py-2 text-ink">

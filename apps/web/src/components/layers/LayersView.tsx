@@ -3,6 +3,7 @@ import { Download } from "lucide-react"
 import { memo, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react"
 
 import { explainResult, fileName, fileUrl, type Explanation } from "../../api/client.ts"
+import { useLevel } from "../../level.ts"
 import { missingLayers } from "../../recentIdeas.ts"
 import { features } from "../../features.ts"
 import { transport } from "../../playback/transport.ts"
@@ -198,6 +199,7 @@ function ExplainPanel() {
   const brief = useStudio((state) => state.turn?.brief ?? null)
   const prompts = useStudio((state) => (state.turn?.status === "ready" ? state.turn.prompts : undefined))
   const trace = useStudio((state) => state.turn?.trace)
+  const level = useLevel()
   const stamp = prompts?.map((item) => item.prompt).join("\n") ?? ""
   const [explanation, setExplanation] = useState<{ stamp: string; value: Explanation } | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
@@ -206,7 +208,7 @@ function ExplainPanel() {
   useEffect(() => {
     if (!brief || !prompts || prompts.length === 0) return
     let cancel = false
-    explainResult({ brief, prompts, trace: trace ?? [] }).then(
+    explainResult({ brief, prompts, trace: trace ?? [], ...(level ? { depth: level } : {}) }).then(
       (result) => {
         if (!cancel) setExplanation({ stamp, value: result })
       },
@@ -217,7 +219,7 @@ function ExplainPanel() {
     return () => {
       cancel = true
     }
-  }, [brief, prompts, stamp, trace])
+  }, [brief, level, prompts, stamp, trace])
 
   if (!prompts || prompts.length === 0) return null
   return (

@@ -101,7 +101,12 @@ export function genreDetail(id: string): Promise<GenreDetail> {
   return request<GenreDetail>(`/genres/${encodeURIComponent(id)}`)
 }
 
-export function explainResult(body: { brief: SongBrief; prompts: LayerPrompt[]; trace: TraceStep[] }): Promise<Explanation> {
+export function explainResult(body: {
+  brief: SongBrief
+  prompts: LayerPrompt[]
+  trace: TraceStep[]
+  depth?: "beginner" | "intermediate" | "advanced"
+}): Promise<Explanation> {
   return request<Explanation>("/explain", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -84,6 +84,7 @@ class ExplainBody(BaseModel):
     brief: SongBrief
     prompts: list[LayerPrompt]
     trace: list[TraceStep]
+    depth: str | None = None
 
 
 class ExplainResponse(BaseModel):
@@ -334,7 +335,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     @app.post("/explain", response_model=ExplainResponse)
     def explain(body: ExplainBody) -> ExplainResponse:
         complete = explain_payload if os.environ.get("PROVIDER") == "bedrock" else None
-        result = explain_result(body.brief, body.prompts, body.trace, complete)
+        result = explain_result(body.brief, body.prompts, body.trace, complete, depth=body.depth)
         return ExplainResponse(how=result.how, steps=list(result.steps), source=result.source)
 
     @app.get("/files/{session_id}/{file_path:path}")

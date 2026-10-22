@@ -19,6 +19,7 @@ import { Skeleton } from "../Skeleton.tsx"
 import { BriefDrawer } from "./BriefDrawer.tsx"
 import { Home } from "./Home.tsx"
 import { PageHeader } from "./PageHeader.tsx"
+import { TrainRoom } from "../train/TrainRoom.tsx"
 import { PagePane } from "./PagePane.tsx"
 import { Readouts } from "./Readouts.tsx"
 import { SessionStatus, Transport } from "./Transport.tsx"
@@ -135,13 +136,18 @@ export function Dashboard() {
       <PagePane active={page !== "home"}>
       <div className="studio-shell">
         <Sidebar
-          page={page === "genre" ? "genre" : "create"}
+          page={page === "genre" ? "genre" : page === "train" ? "train" : "create"}
           onReplay={() => {
             if (page !== "create") go("/create")
             tour.replay()
           }}
         />
         <div className="studio-pages">
+          <PagePane active={page === "train"} scroll>
+            <main className="studio-main is-scroll">
+              <TrainRoom />
+            </main>
+          </PagePane>
           <PagePane active={page === "genre"} scroll>
             <main className="studio-main is-scroll">
               <PageHeader eyebrow="Genres" title="Explore a style" subtitle="Read the references, then open Create with those traits." />

@@ -1,6 +1,7 @@
 import { useEffect, useState, type RefCallback } from "react"
 import { useReducedMotion } from "framer-motion"
-import { Library, PenLine, ScanSearch, SlidersHorizontal, type LucideIcon } from "lucide-react"
+
+import { GraduationCap, PenLine, ScanSearch, type LucideIcon } from "lucide-react"
 
 import { features } from "../../features.ts"
 import { go } from "../../route.ts"
@@ -9,28 +10,62 @@ import { Logo } from "../Logo.tsx"
 import { PreviewCard } from "./PreviewCard.tsx"
 
 const lines = [
+  "Learn the groove behind a house beat",
+  "Hear why this progression feels sad",
   "Make dark industrial drums at 94 BPM",
-  "Turn my voice memo into neo soul chords",
-  "Build a lofi bed for my instrumental",
+  "Find out why my chorus feels small",
 ]
 
 const steps = [
-  { title: "Describe", copy: "Say it, play it, or drop a file." },
-  { title: "Refine together", copy: "Answer one question. Your words stay locked." },
-  { title: "Build and export", copy: "Pick a take, then send the layers to Logic." },
+  { title: "Choose your level", copy: "Beginner, intermediate, or advanced." },
+  { title: "Pick a skill", copy: "Rhythm, harmony, sound design, arrangement." },
+  { title: "Listen, recreate in your DAW, upload", copy: "Play the exercise, rebuild it, then send your version." },
+  { title: "Get feedback", copy: "What matched, what differed and what to practise next." },
 ]
 
-const rooms: {
+const modes: {
   title: string
   copy: string
   icon: LucideIcon
   soon: boolean
   open: () => void
 }[] = [
-  { title: "Create", copy: "Shape an idea into layers.", icon: PenLine, soon: !features.create, open: () => go("/create") },
-  { title: "Genres", copy: "Explore styles and reference tracks.", icon: Library, soon: !features.genre, open: () => go("/genres") },
-  { title: "Analyse", copy: "Hear what a track is doing, then keep the parts you want.", icon: ScanSearch, soon: !features.analyser, open: () => undefined },
-  { title: "Tweak", copy: "Reshape a sample without starting the idea over.", icon: SlidersHorizontal, soon: !features.edits, open: () => undefined },
+  {
+    title: "Train",
+    copy: "Learn by doing. Recreate short exercises in your own DAW and get feedback bar by bar.",
+    icon: GraduationCap,
+    soon: false,
+    open: () => go("/train"),
+  },
+  {
+    title: "Analyse",
+    copy: "Understand your own track. Get specific suggestions you can hear and choose to apply.",
+    icon: ScanSearch,
+    soon: !features.analyser,
+    open: () => undefined,
+  },
+  {
+    title: "Create",
+    copy: "Explore alternatives when you are stuck. Every result explains what it did and why.",
+    icon: PenLine,
+    soon: !features.create,
+    open: () => go("/create"),
+  },
+]
+
+const people = [
+  {
+    title: "Aspiring producer",
+    copy: "You hear ideas but do not know how to build them yet. Start with simple grooves and chords, learn the names for what you hear.",
+  },
+  {
+    title: "Bedroom producer",
+    copy: "You finish loops but they feel flat. Practise syncopation, voicings and arrangement, and compare your version with the reference.",
+  },
+  {
+    title: "Working producer",
+    copy: "You know your tools and want speed and fresh ideas. Generate alternatives that fit your track and inspect exactly how they were made.",
+  },
 ]
 
 type Props = {
@@ -79,20 +114,52 @@ export function Home({ composerHost }: Props) {
             How it works
           </button>
         </nav>
-        <Button className="home-start" onClick={() => go("/create")}>
-          Start creating
+        <Button className="home-start" onClick={() => go("/train")}>
+          Start training
         </Button>
       </header>
       <section className="home-hero" aria-label="Intro">
         <PreviewCard title="Drums" side="left" wave="#F07167" />
         <div className="home-hero-copy">
           <Typed />
-          <p className="home-sub">Describe what you hear in your head. Get editable layers for Logic.</p>
+          <p className="home-sub">Train your ear, understand your tracks, and create new ideas without losing your own sound.</p>
+          <div className="home-actions">
+            <Button onClick={() => go("/train")}>Start training</Button>
+            <Button tone="secondary" onClick={() => go("/create")}>
+              Create
+            </Button>
+          </div>
           <div ref={composerHost} className="home-composer" />
         </div>
         <PreviewCard title="Chords" side="right" wave="#F2C14E" />
       </section>
       <div className="home-below">
+        <section className="home-room-board" aria-label="Modes">
+          {modes.map((mode) => {
+            const Icon = mode.icon
+            return (
+              <article key={mode.title} className={`card home-room ${mode.soon ? "is-soon" : "is-live"}`}>
+                <Icon aria-hidden="true" size={18} />
+                <h2 className="section-title">{mode.title}</h2>
+                <p className="text-secondary">{mode.copy}</p>
+                <div className="mt-auto flex items-center gap-2">
+                  {mode.soon ? <span className="soon-tag">Coming soon</span> : null}
+                  <Button tone={mode.soon ? "secondary" : "primary"} disabled={mode.soon} onClick={mode.open}>
+                    Open
+                  </Button>
+                </div>
+              </article>
+            )
+          })}
+        </section>
+        <section className="home-people" aria-label="Who it is for">
+          {people.map((person) => (
+            <article key={person.title} className="card home-room">
+              <h2 className="section-title">{person.title}</h2>
+              <p className="text-secondary">{person.copy}</p>
+            </article>
+          ))}
+        </section>
         <section id="how-it-works" className="home-steps" aria-label="How it works">
           <ol>
             {steps.map((step, index) => (
@@ -103,24 +170,6 @@ export function Home({ composerHost }: Props) {
               </li>
             ))}
           </ol>
-        </section>
-        <section className="home-room-board" aria-label="Rooms">
-          {rooms.map((room) => {
-            const Icon = room.icon
-            return (
-              <article key={room.title} className={`card home-room ${room.soon ? "is-soon" : "is-live"}`}>
-                <Icon aria-hidden="true" size={18} />
-                <h2 className="section-title">{room.title}</h2>
-                <p className="text-secondary">{room.copy}</p>
-                <div className="mt-auto flex items-center gap-2">
-                  {room.soon ? <span className="soon-tag">Coming soon</span> : null}
-                  <Button tone={room.soon ? "secondary" : "primary"} disabled={room.soon} onClick={room.open}>
-                    Open
-                  </Button>
-                </div>
-              </article>
-            )
-          })}
         </section>
         <p className="home-credits">Built with Stable Audio 3, AWS Bedrock and Soundcharts.</p>
       </div>

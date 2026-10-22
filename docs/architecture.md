@@ -11,6 +11,7 @@ The browser address is read in `apps/web/src/route.ts`. Create stays mounted on 
 | `/` | home | Landing page. The composer is portalled into the hero. |
 | `/create` | create | The studio: conversation, review, results. |
 | `/genres` | genre | Genre deep dive. |
+| `/train` | train | Level choice, then the four skills. |
 | `/styleguide` | styleguide | Visual reference, outside the studio shell. |
 
 Any other path is Home.
@@ -41,6 +42,7 @@ No endpoint is unused.
 | `useStudio` | `apps/web/src/state/studio.ts` | Session id (a UUID), the turn, renders, picks, status, prompt edits, playback solo and mute, the thread, idea mode, and the layer choice. |
 | Recent ideas | `apps/web/src/recentIdeas.ts` | `localStorage` list of ideas that can be restored. |
 | Tour | `apps/web/src/tour.ts` | `localStorage` key `vision-studio-tour`. |
+| Level | `apps/web/src/level.ts` | `localStorage` key `vision-studio-level`. Beginner, intermediate, or advanced. It is not sent with a turn. |
 | In-flight lock | `apps/web/src/conversation/flight.ts` | One turn or render at a time. |
 | Recording flag | `apps/web/src/composer/recording.ts` | Whether the composer is recording. |
 
@@ -56,6 +58,8 @@ All of these are mounted from the shell, Home, or the styleguide.
 | `components/Shell.tsx` | Renders the dashboard. |
 | `components/layout/Dashboard.tsx` | Pages, the one composer portal, the brief drawer. |
 | `components/layout/Home.tsx` | Landing page. |
+| `components/train/TrainRoom.tsx` | Train page. |
+| `components/train/LevelCards.tsx` | Beginner, intermediate, and advanced. |
 | `components/layout/PagePane.tsx` | Page transition. |
 | `components/layout/PreviewCard.tsx` | Floating demo cards on Home. |
 | `components/layout/Transport.tsx` | Brief button, Build now, session status. |

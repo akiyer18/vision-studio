@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react"
 
-export type Page = "home" | "create" | "genre" | "styleguide"
+export type Page = "home" | "create" | "genre" | "train" | "styleguide"
 
 let page: Page = readPage()
 const listeners = new Set<() => void>()
@@ -10,6 +10,7 @@ function readPage(): Page {
   if (path === "/styleguide") return "styleguide"
   if (path === "/create") return "create"
   if (path === "/genres") return "genre"
+  if (path === "/train") return "train"
   return "home"
 }
 

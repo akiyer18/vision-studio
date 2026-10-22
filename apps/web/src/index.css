@@ -892,7 +892,7 @@ button.bg-accent:hover:not(:disabled) {
 }
 
 .home-steps ol {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1218,7 +1218,9 @@ button.bg-accent:hover:not(:disabled) {
 
   .home-rooms,
   .home-steps ol,
-  .home-room-board {
+  .home-room-board,
+  .home-people,
+  .home-skills {
     grid-template-columns: 1fr;
   }
 
@@ -1437,11 +1439,34 @@ button.bg-accent:hover:not(:disabled) {
   background: var(--bg);
 }
 
-.home-room-board {
+.home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+.home-room-board,
+.home-people,
+.home-skills {
   display: grid;
   align-items: start;
-  grid-template-columns: 1.4fr 1.4fr 0.8fr 0.8fr;
   gap: 24px;
+}
+
+.home-room-board,
+.home-people {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.home-skills {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.side-level {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 13px;
 }
 
 .home-room.is-live {
@@ -1450,6 +1475,10 @@ button.bg-accent:hover:not(:disabled) {
 
 .home-room.is-soon {
   min-height: 0;
+}
+
+.home-room-board .home-room {
+  min-height: 300px;
 }
 
 .home-credits {

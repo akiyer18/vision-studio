@@ -36,6 +36,23 @@ def test_explain_fallback_uses_the_brief_and_the_prompt() -> None:
     )
 
 
+def test_level_only_changes_how_much_is_explained() -> None:
+    brief = _brief()
+    prompt = _prompt()
+    trace = [TraceStep(step="ask", detail="sound: What kind of sound is it?")]
+    full = explain_template(brief, [prompt], trace)
+    same = explain_result(brief, [prompt], trace, depth="intermediate")
+    short = explain_result(brief, [prompt], trace, depth="beginner")
+    deep = explain_result(brief, [prompt], trace, depth="advanced")
+
+    assert same.how == full.how
+    assert same.steps == full.steps
+    assert short.how == "Mood: peaceful."
+    assert short.steps == ("In Logic, add a sound track.",)
+    assert full.how in deep.how
+    assert deep.steps[0].endswith("Then try one change and compare.")
+
+
 def test_explain_falls_back_when_the_call_fails() -> None:
     def fail(brief, prompts, trace):
         raise RuntimeError("bedrock down")

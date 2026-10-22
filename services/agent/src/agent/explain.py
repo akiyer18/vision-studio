@@ -32,7 +32,13 @@ class Explanation:
     source: str
 
 
-def explain_template(brief: SongBrief, prompts: list[LayerPrompt], trace: list[TraceStep]) -> Explanation:
+def explain_template(
+    brief: SongBrief,
+    prompts: list[LayerPrompt],
+    trace: list[TraceStep],
+    *,
+    depth: str | None = None,
+) -> Explanation:
     lines: list[str] = []
     slots = brief.slots.model_dump(exclude_none=True)
     for name, label in _LABELS.items():
@@ -52,12 +58,19 @@ def explain_template(brief: SongBrief, prompts: list[LayerPrompt], trace: list[T
         f"{prompt.layer.replace('_', ' ')} track and shape it with Logic's instruments and plugins until it matches: {prompt.prompt}"
         for prompt in prompts
     )
-    return Explanation(how=how, steps=steps, source="template")
+    return _at_depth(Explanation(how=how, steps=steps, source="template"), depth, prompts)
 
 
-def explain_result(brief: SongBrief, prompts: list[LayerPrompt], trace: list[TraceStep], complete=None) -> Explanation:
-    """complete is the Claude call. Any failure keeps the template."""
-    fallback = explain_template(brief, prompts, trace)
+def explain_result(
+    brief: SongBrief,
+    prompts: list[LayerPrompt],
+    trace: list[TraceStep],
+    complete=None,
+    *,
+    depth: str | None = None,
+) -> Explanation:
+    """complete is the Claude call. Any failure keeps the template. depth only shortens or extends the wording."""
+    fallback = explain_template(brief, prompts, trace, depth=depth)
     if complete is None:
         return fallback
     try:
@@ -72,4 +85,22 @@ def explain_result(brief: SongBrief, prompts: list[LayerPrompt], trace: list[Tra
         return fallback
     if not isinstance(steps, list) or not steps or not all(isinstance(step, str) and step.strip() for step in steps):
         return fallback
-    return Explanation(how=how.strip(), steps=tuple(step.strip() for step in steps), source="claude")
+    return _at_depth(
+        Explanation(how=how.strip(), steps=tuple(step.strip() for step in steps), source="claude"),
+        depth,
+        prompts,
+    )
+
+
+def _at_depth(explanation: Explanation, depth: str | None, prompts: list[LayerPrompt]) -> Explanation:
+    if depth == "beginner":
+        how = explanation.how.split(". ")[0]
+        if how and not how.endswith("."):
+            how = f"{how}."
+        steps = tuple(f"In Logic, add a {prompt.layer.replace('_', ' ')} track." for prompt in prompts)
+        return Explanation(how=how or explanation.how, steps=steps, source=explanation.source)
+    if depth == "advanced":
+        how = f"{explanation.how} Listen again and notice which choice changed the sound."
+        steps = tuple(f"{step} Then try one change and compare." for step in explanation.steps)
+        return Explanation(how=how, steps=steps, source=explanation.source)
+    return explanation
