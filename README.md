@@ -1,13 +1,13 @@
 # ADE Hack · Vision Studio — AI Producing Assistant for Ableton Live
 
-**"Claude Code for beats."** A producer agent (Claude Opus 5.5 with 75 tools) sits next to you with Ableton Live 10
+**"Claude Code for beats."** A producer agent (Claude Opus 5.5 with 76 tools) sits next to you with Ableton Live 10
 open. It builds your beat layer by layer, synthesizes every sound with Stable Audio, listens to its own result with
 Gemini and judges it against a genre blueprint, works inside your existing Live project without touching your tracks,
 and keeps you in control: one audible new thing at a time, keep / another take / undo per layer. A Training mode turns
 the same pipeline into a by-ear production exercise.
 
 ```
-you ── text / beatbox / hum / your Live set ──▶ Claude producer agent (75 tools, playbook, 25 genre blueprints)
+you ── text / beatbox / hum / your Live set ──▶ Claude producer agent (76 tools, playbook, 25 genre blueprints)
                                                    ├─▶ Stable Audio 2.5 + 3   loops, hit sequences, audio-to-audio (per stem)
                                                    ├─▶ Gemini (ears)          describe, critique, A/B judge, score vs blueprint
                                                    ├─▶ local toolbelt          Demucs stems, basic-pitch MIDI, librosa, ffmpeg
@@ -34,10 +34,10 @@ cd ~/ade-hack && npm install
 cp .env.example .env     # then fill in (never committed):
 #   STABILITY_API_KEY     required - every sound (Stable Audio 2.5 one-shots/a2a, Stable Audio 3 loops/music)
 #   ANTHROPIC_API_KEY     required - the producer agent (claude-opus-5-5)
-#   GEMINI_API_KEY        required - the ears (audio in). GEMINI_API_KEYS=k2,k3 rotates keys on daily quota (verify)
-#   GEMINI_PAID=1         optional - paid tier: never fall back to lite judges, fail loudly instead (verify)
+#   GEMINI_API_KEY        required - the ears (audio in). GEMINI_API_KEYS=k2,k3 rotates keys per (key, model) on daily quota
+#   GEMINI_PAID=1         optional - paid tier (or GEMINI_TIER=paid): never fall back to lite judges, fail loudly instead
 #   HF_TOKEN              optional - Music Flamingo / MuScriptor Spaces (ZeroGPU quota)
-#   SLOT_POOL=8           optional - indexed slot files per sound role in the Live Place (verify)
+#   SLOT_POOL=8           optional - slot files per sound role in the Live Place (2..32; Live must index them: re-add the Place)
 #   SOUNDCHARTS_*         optional - real catalogue for reference_track (sandbox data without it)
 npm start                # http://localhost:3000 ; GET /api/health shows keys, Live script version, ears status
 bash tools/py/setup.sh   # optional toolbelt (Demucs, basic-pitch, librosa, pedalboard), Python 3.11 venv, ~10 min
@@ -55,18 +55,18 @@ script is in **DEMO.md**.
 ## Tool roles (who does what)
 | Component | Role | Where |
 |---|---|---|
-| **Claude Opus 5.5** (Anthropic API) | Reasoning and orchestration: the producer agent with 75 tools, production playbook (groove, sound design, stereo, mix), genre blueprints injected per turn, creator-in-control and tempo-intent rules. Never touches audio itself. | `lib/agent.js`, `lib/knowledge.js`, `server.js /api/chat` |
+| **Claude Opus 5.5** (Anthropic API) | Reasoning and orchestration: the producer agent with 76 tools, production playbook (groove, sound design, stereo, mix), genre blueprints injected per turn, creator-in-control and tempo-intent rules. Never touches audio itself. | `lib/agent.js`, `lib/knowledge.js`, `server.js /api/chat` |
 | **Stability AI, Stable Audio 2.5 + 3** | Sounds: hit sequences sliced into one-shots with free alternates, genre loops (`design_kit`, `generate_loop`), loop layers seeded from the mix (audio-to-audio), per-stem enhance of a real project, full tracks (`compose_track`). | `lib/stability.js`, `lib/hits.js`, tools synthesize_sound, design_kit, add_loop_layer, enhance_project |
 | **Gemini** (audio-in; Music Flamingo optional) | Ears: describe a capture, production-first critique, pairwise A/B authenticity, strict genre rubric, label chopped pieces, judge a sound against its prompt. Key rotation + lite-judge labelling. | `lib/ears.js`, tools listen, judge_sound, critique_capture, production_dna, critique_mix |
 | **Open-source toolbelt** (`tools/py`) | Demucs stems, basic-pitch audio-to-MIDI, librosa tempo/key/groove, pedalboard processing and master preview. Optional until `tools/py/setup.sh` runs. | `lib/pytools.js`, tools separate_stems, transcribe_audio, analyze_music, process_audio |
 | **Built-in DSP** | YIN pitch tracking, onset/centroid beatbox classification, loop -> 16th MIDI + groove, local sub/808/snap synth, Haas widener, offline ffmpeg render, loudness/band analysis, rubberband tune/stretch. | `lib/melody.js`, `lib/rhythm.js`, `lib/synthlocal.js`, `lib/render.js`, `lib/analyze.js` |
-| **ADEHack 5.8** (Live 10 remote script) | Hands: 54 JSON-over-TCP commands (verify count): tracks, clips, Simpler hot-swap, Drum Rack pads, devices + parameters, sends, mixer, scenes, transport, warping, audio clips, meters, arrangement/session recording from bar 1 (`set_position` / `jump`), tempo with clip warping, undo. Full list: `ableton/README.md`. | `ableton/ADEHack/ADEHack.py`, `ableton/client.js` |
-| **Training mode** | Stable Audio example per level -> capture the user's attempt -> compare (A/B + pattern/bass match) -> reveal parts on muted `Target` tracks. | `lib/training.js`, `public/training.html` (verify) |
+| **ADEHack 5.8** (Live 10 remote script) | Hands: 53 JSON-over-TCP commands: tracks, clips, Simpler hot-swap, Drum Rack pads, devices + parameters, sends, mixer, scenes, transport, warping, audio clips, meters, arrangement/session recording from bar 1 (`set_position` / `jump`), tempo with clip warping, undo. Full list: `ableton/README.md`. | `ableton/ADEHack/ADEHack.py`, `ableton/client.js` |
+| **Training mode** | Stable Audio example per level -> capture the user's attempt -> compare (A/B + pattern/bass match) -> reveal parts on muted `Target` tracks. | `lib/training.js`, `public/training.html` |
 
 ## Agent tools (lib/agent.js) - 75
 **Hear / analyze:** listen · judge_sound · listen_live · critique_capture · analyze_recording · transcribe_audio · analyze_audio · compare_audio · analyze_music · production_dna · critique_mix · label_pieces · review_mix · describe_set · read_clip · clip_info · meters · reference_track · genre_guide · genre_blueprint
 **Make sounds:** synthesize_sound · synth_local · generate_loop · generate_rhythm · design_kit · compose_track · restyle_mix · restyle_audio · refine_sound · undo_sound · slice_sample · chop_sample · layer_samples · tune_sample · shape_sample · separate_stems · process_audio · master_preview · render_preview · import_sample
-**Build in Live:** set_tempo · set_position (verify) · build_kit · load_to_pad · build_drum_layer · build_melody_layer · add_loop_layer · load_audio_clip · update_layer · replace_sound · remove_layer · enhance_project · create_scene · fire_scene · record_arrangement · record_performance · capture_midi · set_clip_warp · set_track_color · live_undo
+**Build in Live:** set_tempo · set_position · build_kit · load_to_pad · build_drum_layer · build_melody_layer · add_loop_layer · load_audio_clip · update_layer · replace_sound · remove_layer · enhance_project · create_scene · fire_scene · record_arrangement · record_performance · capture_midi · set_clip_warp · set_track_color · live_undo
 **Shape, mix, present:** add_effect · set_param · list_devices · browse_library · load_device · set_mixer · mix_balance · set_send · list_tracks · audition · show_live · play · stop · explain_result · budget
 Attachments (beatbox, hum, reference files) and the sample registry persist per chat session (`.tmp/chat-state.json`).
 Server glue: `POST /api/chat` (SSE), `POST /api/upload`, `POST /api/project/scan`, `POST /api/refine`, `POST /api/training/*`, `GET /api/health`, `GET /api/knowledge`.
@@ -96,8 +96,8 @@ Server glue: `POST /api/chat` (SSE), `POST /api/upload`, `POST /api/project/scan
 
 ## Layout
 - `server.js` Express API: chat (SSE), uploads, project scan, refine/undo, Prompt Lab, render/score, Live wrappers (`makeCtx`), slot pool
-- `lib/agent.js` producer agent (system prompt + 75 tools) · `lib/knowledge.js` genre blueprints (`knowledge/genres/*.md`) + Live preset inventory
-- `lib/stability.js` Stable Audio 2.5 / 3 client · `lib/hits.js` hit-sequence one-shots · `lib/ears.js` Gemini / Flamingo ears · `lib/training.js` Training mode (verify)
+- `lib/agent.js` producer agent (system prompt + 76 tools) · `lib/knowledge.js` genre blueprints (`knowledge/genres/*.md`) + Live preset inventory
+- `lib/stability.js` Stable Audio 2.5 / 3 client · `lib/hits.js` hit-sequence one-shots · `lib/ears.js` Gemini / Flamingo ears · `lib/training.js` Training mode
 - `lib/capture.js` AudioTee capture of Live · `lib/pytools.js` toolbelt bridge (`tools/py`) · `lib/render.js`, `lib/analyze.js` offline render + measurements
 - `public/index.html` chat-first studio UI · `public/training.html` Training mode
 - `ableton/` Live 10 remote script (ADEHack), `client.js`, `install.sh`
