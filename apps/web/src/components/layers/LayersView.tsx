@@ -3,6 +3,7 @@ import { Download } from "lucide-react"
 import { memo, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react"
 
 import { explainResult, fileName, fileUrl, type Explanation } from "../../api/client.ts"
+import { readRoll, type RollNote } from "../../studio/midiRoll.ts"
 import { useLevel } from "../../level.ts"
 import { missingLayers } from "../../recentIdeas.ts"
 import { features } from "../../features.ts"
@@ -11,6 +12,8 @@ import { lanePaint } from "../../studio/lanes.ts"
 import { LANES } from "../../studio/lanes.ts"
 import { regenerateLayer, renderCurrent } from "../../studio/renderSession.ts"
 import { layerTitle } from "../../studio/output.ts"
+import { traceSentence } from "../../studio/traceMark.ts"
+import type { SongBrief } from "../../types/song_brief.ts"
 import { useStudio } from "../../state/studio.ts"
 import type { RenderResult } from "../../types/render_result.ts"
 import { Button } from "../Button.tsx"
@@ -56,7 +59,7 @@ export function LayersView() {
 
   return (
     <div id="results" ref={results} tabIndex={-1} className="flex flex-col gap-3 outline-none" aria-busy={status === "working" || undefined}>
-      <h2 className="text-secondary">Your layers</h2>
+      <h2 className="section-title">Alternatives</h2>
       {lanes.length === 0 ? (
         <div className="flex flex-col gap-3" aria-hidden="true">
           <span className="skeleton h-14 w-full" />
@@ -85,8 +88,11 @@ const LayerCard = memo(function LayerCard({ layer, reduce }: { layer: string; re
   const paint = lanePaint(layer)
   const variations = renders.filter((item) => item.layer === layer).sort((left, right) => left.variant - right.variant)
   const unavailable = useStudio((state) => state.missing.includes(layer))
-  const [tab, setTab] = useState(1)
+  const [inspect, setInspect] = useState<number | null>(null)
   const isMuted = muted.includes(layer)
+  const pickedVariant = useStudio((state) => state.picks[layer])
+  const board = pickedVariant ? variations.filter((item) => item.variant === pickedVariant) : variations
+  const history = pickedVariant ? variations.filter((item) => item.variant !== pickedVariant) : []
 
   function onKey(event: ReactKeyboardEvent<HTMLElement>) {
     if (!features.soloMute) return
@@ -117,7 +123,7 @@ const LayerCard = memo(function LayerCard({ layer, reduce }: { layer: string; re
         if (next instanceof Node && event.currentTarget.contains(next)) return
         if (useStudio.getState().focusedLane === layer) setFocusedLane(null)
       }}
-      className="lane outline-none"
+      className="alt-lane outline-none"
       style={{ color: paint.ink }}
       initial={reduce ? false : { opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -168,29 +174,39 @@ const LayerCard = memo(function LayerCard({ layer, reduce }: { layer: string; re
         </div>
       ) : null}
       {unavailable ? null : variations.length > 0 ? (
-        <div role="tablist" aria-label={`${title} variations`} className="flex gap-2">
-          {variations.map((item) => (
-            <button
-              key={item.variant}
-              type="button"
-              role="tab"
-              aria-selected={tab === item.variant}
-              className={`pad ${tab === item.variant ? "is-on" : ""}`}
-              style={{ borderColor: tab === item.variant ? paint.wave : undefined, color: paint.ink }}
-              onClick={() => setTab(item.variant)}
-            >
-              {item.variant}
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="alt-board">
+            {board.map((item) => (
+              <Variation
+                key={item.variant}
+                result={item}
+                take={take}
+                ink={paint.ink}
+                onInspect={() => setInspect(item.variant)}
+              />
+            ))}
+          </div>
+          {history.length > 0 ? (
+            <div className="alt-history">
+              <p className="section-title">History</p>
+              <div className="alt-board">
+                {history.map((item) => (
+                  <Variation
+                    key={item.variant}
+                    result={item}
+                    take={take}
+                    ink={paint.ink}
+                    onInspect={() => setInspect(item.variant)}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {inspect ? <InspectPanel key={`${layer}-${inspect}`} layer={layer} variant={inspect} onClose={() => setInspect(null)} /> : null}
+        </>
       ) : (
         <p>Each layer comes back as three variations.</p>
       )}
-      {unavailable
-        ? null
-        : variations.map((item) => (
-            <Variation key={item.variant} result={item} take={take} selected={tab === item.variant} ink={paint.ink} />
-          ))}
     </motion.section>
   )
 })
@@ -263,18 +279,19 @@ async function unavailablePaths(sessionId: string, renders: RenderResult[]): Pro
 function Variation({
   result,
   take,
-  selected,
   ink,
+  onInspect,
 }: {
   result: RenderResult
   take: number
-  selected: boolean
   ink: string
+  onInspect: () => void
 }) {
   const id = `${result.layer}:${result.variant}`
   const picked = useStudio((state) => state.picks[result.layer] === result.variant)
   const togglePick = useStudio((state) => state.togglePick)
   const sessionId = useStudio((state) => state.sessionId)
+  const originalPath = useStudio((state) => state.originalPath)
   const playback = useSyncExternalStore(transport.subscribe, transport.getState, transport.getState)
   const seekRef = useRef<((seconds: number) => void) | null>(null)
   const sought = useRef<number | null>(null)
@@ -282,11 +299,18 @@ function Variation({
   const url = fileUrl(sessionId, result.path, take)
   const name = fileName(result.path)
   const title = layerTitle(result.layer)
+  const letter = "ABC"[result.variant - 1] ?? String(result.variant)
+  const originalId = `original:${result.layer}`
   const solo = playback.mode === "one" && playback.activeId === id
   const grouped = playback.mode === "together" && playback.togetherIds.includes(id)
   const moving = solo || grouped
+  const hearingOriginal = playback.mode === "one" && playback.activeId === originalId
 
   useEffect(() => transport.register(id, url), [id, url])
+  useEffect(() => {
+    if (!originalPath) return
+    return transport.register(originalId, fileUrl(sessionId, originalPath))
+  }, [originalId, originalPath, sessionId])
   useEffect(() => {
     transport.prefetch(url)
   }, [url])
@@ -336,15 +360,31 @@ function Variation({
     }
   }
 
+  async function compare() {
+    setProblem(null)
+    try {
+      await transport.playOne(hearingOriginal ? id : originalId)
+    } catch {
+      setProblem("The original did not play. Try again.")
+    }
+  }
+
   return (
-    <div hidden={!selected} data-layer={result.layer} data-variant={result.variant} data-seconds={moving ? playback.seconds.toFixed(3) : undefined}>
-      {selected ? (
-        <Waveform url={url} label={`${title} variation ${result.variant} waveform`} seek={seekRef} wave={["#8B5CF6", lanePaint(result.layer).wave]} progress={lanePaint(result.layer).wave} height={40} />
-      ) : null}
+    <article className="card alt-card" data-layer={result.layer} data-variant={result.variant} data-seconds={moving ? playback.seconds.toFixed(3) : undefined}>
+      <h3 className="section-title">{letter}</h3>
+      <Waveform url={url} label={`${title} variation ${result.variant} waveform`} seek={seekRef} wave={["#8B5CF6", lanePaint(result.layer).wave]} progress={lanePaint(result.layer).wave} height={40} />
       <p className="sr-only">{name}</p>
-      <div className="mt-2 flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button tone="secondary" aria-pressed={solo} aria-label={solo ? `Pause ${title} variation ${result.variant}` : `Play ${title} variation ${result.variant}`} onClick={() => void toggle()} style={{ color: ink }}>
           {solo ? "Pause" : "Play"}
+        </Button>
+        {originalPath ? (
+          <Button tone="secondary" aria-pressed={hearingOriginal} onClick={() => void compare()}>
+            Compare with original
+          </Button>
+        ) : null}
+        <Button tone="secondary" onClick={onInspect}>
+          Inspect
         </Button>
         <Button
           tone="secondary"
@@ -360,7 +400,125 @@ function Variation({
           <span className="sr-only">Download</span>
         </Button>
       </div>
-      {problem ? <p role="alert" className="mt-2">{problem}</p> : null}
+      {problem ? <p role="alert">{problem}</p> : null}
+    </article>
+  )
+}
+
+function InspectPanel({ layer, variant, onClose }: { layer: string; variant: number; onClose: () => void }) {
+  const sessionId = useStudio((state) => state.sessionId)
+  const brief = useStudio((state) => state.turn?.brief ?? null)
+  const prompts = useStudio((state) => (state.turn?.status === "ready" ? state.turn.prompts : undefined))
+  const trace = useStudio((state) => state.turn?.trace ?? [])
+  const renders = useStudio((state) => state.renders)
+  const result = renders.find((item) => item.layer === layer && item.variant === variant)
+  const prompt = prompts?.find((item) => item.layer === layer)
+  const [notes, setNotes] = useState<RollNote[] | null>(null)
+  const bars = barCount(brief?.slots.structure?.value, result)
+  const kind = midiKind(layer)
+
+  useEffect(() => {
+    if (!result || !kind) return
+    let cancel = false
+    const path = `midi/verse_${kind}_${result.bpm}bpm_${bars}bars.mid`
+    void fetch(fileUrl(sessionId, path))
+      .then(async (response) => {
+        if (!response.ok) return []
+        return readRoll(new Uint8Array(await response.arrayBuffer()))
+      })
+      .then((roll) => {
+        if (!cancel) setNotes(roll)
+      })
+      .catch(() => {
+        if (!cancel) setNotes([])
+      })
+    return () => {
+      cancel = true
+    }
+  }, [bars, kind, result, sessionId])
+
+  const details = detailLines(brief, layer)
+  const reasoning = trace.map((step) => traceSentence(step)).filter((line) => line.length > 0)
+
+  return (
+    <aside className="card inspect-panel" aria-label="Inspect">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="section-title">
+          {layerTitle(layer)} {"ABC"[variant - 1] ?? variant}
+        </h3>
+        <Button tone="ghost" onClick={onClose}>
+          Close
+        </Button>
+      </div>
+      <h4 className="section-title">MIDI</h4>
+      <PianoRoll notes={kind ? notes : []} />
+      <h4 className="section-title">Prompt</h4>
+      <p>{prompt?.prompt || "The prompt appears after the review is written."}</p>
+      <h4 className="section-title">Chosen details</h4>
+      {details.length > 0 ? (
+        <ul>
+          {details.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-secondary">Details appear as the brief fills in.</p>
+      )}
+      <h4 className="section-title">Reasoning</h4>
+      {reasoning.length > 0 ? (
+        <ul>
+          {reasoning.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-secondary">The trace appears as the idea is read.</p>
+      )}
+    </aside>
+  )
+}
+
+function PianoRoll({ notes }: { notes: RollNote[] | null }) {
+  if (!notes) return <p className="text-secondary">Reading the MIDI.</p>
+  if (notes.length === 0) return <p className="text-secondary">This alternative has no MIDI file.</p>
+  const low = Math.min(...notes.map((note) => note.pitch))
+  const high = Math.max(...notes.map((note) => note.pitch))
+  const span = Math.max(1, high - low)
+  const end = Math.max(...notes.map((note) => note.end), 1)
+  return (
+    <div className="piano-roll" role="img" aria-label={`Piano roll, ${notes.length} notes`}>
+      {notes.map((note, index) => (
+        <span
+          key={`${note.pitch}-${note.start}-${index}`}
+          className="piano-note"
+          style={{
+            left: `${(note.start / end) * 100}%`,
+            width: `${Math.max(1.2, ((note.end - note.start) / end) * 100)}%`,
+            bottom: `${((note.pitch - low) / (span + 1)) * 100}%`,
+            height: `${100 / (span + 1)}%`,
+          }}
+        />
+      ))}
     </div>
   )
+}
+
+function midiKind(layer: string): "chords" | "bass" | null {
+  const name = layer.replace(/_[ab]$/, "")
+  if (name === "chords" || name === "bass") return name
+  return null
+}
+
+function barCount(structure: string | undefined, result: RenderResult | undefined): number {
+  const named = structure?.match(/\d+/)
+  if (named) return Number(named[0])
+  if (!result || result.bpm <= 0) return 8
+  return Math.max(1, Math.round(result.seconds / ((60 / result.bpm) * 4)))
+}
+
+function detailLines(brief: SongBrief | null, layer: string): string[] {
+  if (!brief) return []
+  const lines = Object.entries(brief.slots).flatMap(([name, slot]) => (slot?.value ? [`${name.replaceAll("_", " ")}: ${slot.value}`] : []))
+  const facets = (brief.facets ?? []).filter((facet) => facet.layer === layer || facet.layer === layer.replace(/_[ab]$/, ""))
+  return [...lines, ...facets.map((facet) => `${facet.id.replaceAll("_", " ")}: ${facet.value}`)]
 }

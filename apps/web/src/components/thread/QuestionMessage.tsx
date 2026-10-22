@@ -55,7 +55,7 @@ export function QuestionMessage({ question, reflection, draft, locked = false, o
 
   return (
     <article aria-live="polite">
-      {reflection ? <p className="text-ink">{reflection}</p> : null}
+      {reflection ? <p className="direction-line">{reflection}</p> : null}
       {draft ? <p className={`text-secondary ${reflection ? "mt-2" : ""}`}>{draft}</p> : null}
       <p className={`text-ink ${reflection || draft ? "mt-6" : ""}`}>{question.text}</p>
       {question.why ? <p className="mt-1 text-secondary">Why I am asking: {question.why}</p> : null}

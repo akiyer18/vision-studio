@@ -53,6 +53,8 @@ type StudioState = {
   layerChoice: OutputChoice
   reference: SlotReference
   reading: Reading | null
+  originalPath: string | null
+  originalName: string
   setLayerChoice: (choice: OutputChoice) => void
   setTurn: (turn: TurnResponse | null) => void
   setReading: (reading: Reading | null) => void
@@ -75,6 +77,7 @@ type StudioState = {
   toggleMute: (layer: string) => void
   setFocusedLane: (layer: string | null) => void
   hear: () => void
+  rememberOriginal: (path: string, name: string) => void
   resetSession: () => void
   restoreSession: (entry: RecentIdea) => void
   setMissing: (layers: string[]) => void
@@ -109,6 +112,8 @@ export const useStudio = create<StudioState>((set) => ({
   layerChoice: "all_layers",
   reference: {},
   reading: null,
+  originalPath: null,
+  originalName: "",
   setLayerChoice: (layerChoice) => set({ layerChoice }),
   setTurn: (turn) => set({ turn }),
   setReading: (reading) =>
@@ -211,6 +216,7 @@ export const useStudio = create<StudioState>((set) => ({
     })),
   setFocusedLane: (layer) => set({ focusedLane: layer }),
   hear: () => set({ heard: true }),
+  rememberOriginal: (path, name) => set({ originalPath: path, originalName: name }),
   resetSession: () =>
     set((state) => ({
       sessionId: crypto.randomUUID(),
@@ -238,6 +244,8 @@ export const useStudio = create<StudioState>((set) => ({
       layerChoice: "all_layers",
       reference: {},
       reading: null,
+      originalPath: null,
+      originalName: "",
     })),
   restoreSession: (entry) =>
     set((state) => ({
@@ -273,6 +281,8 @@ export const useStudio = create<StudioState>((set) => ({
       layerChoice: entry.layers.length === 1 ? (entry.layers[0] as OutputChoice) : "all_layers",
       reference: {},
       reading: null,
+      originalPath: null,
+      originalName: "",
     })),
   setMode: (mode) => set({ mode }),
   showReference: (prefill, line) =>
@@ -287,6 +297,8 @@ export const useStudio = create<StudioState>((set) => ({
         prompts: [],
         trace: [{ step: "reference", detail: line }],
       },
+      originalPath: null,
+      originalName: "",
     }),
   setMissing: (layers) =>
     set((state) => {

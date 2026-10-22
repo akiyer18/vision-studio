@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState, type ReactNode } from "react"
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react"
 
 import { ApiError, sessionDebug } from "../../api/client.ts"
 import { inFlight } from "../../conversation/flight.ts"
@@ -15,7 +15,6 @@ import type { SlotName } from "../../types/slot_name.ts"
 import type { SongBrief } from "../../types/song_brief.ts"
 import { Button } from "../Button.tsx"
 import { DemoMenu } from "../DemoMenu.tsx"
-import { Logo } from "../Logo.tsx"
 import { QuestionMessage } from "./QuestionMessage.tsx"
 
 const LayersView = lazy(() => import("../layers/stage.tsx").then((module) => ({ default: module.LayersView })))
@@ -117,51 +116,50 @@ export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
       <p className="sr-only">Your song</p>
       <div className="messages" role="log" aria-relevant="additions">
         {fresh ? (
-          <Agent>
+          <article className="card direction-card">
             <p>I ask a few short questions. Your details stay as you said them. Press Build now at any time.</p>
-          </Agent>
+          </article>
         ) : null}
-        {intro && bubbles.length === 0 ? <Agent>{intro}</Agent> : null}
+        {intro && bubbles.length === 0 ? (
+          <article className="card direction-card">
+            <p>{intro}</p>
+          </article>
+        ) : null}
         {earlier.map((bubble) => (
           <Exchange key={bubble.id} bubble={bubble} />
         ))}
         {reading ? (
-          <Agent>
+          <article className="card direction-card">
             <ReadingMessage />
-          </Agent>
+          </article>
         ) : null}
         {later.map((bubble) => (
           <Exchange key={bubble.id} bubble={bubble} />
         ))}
         {question && !layersQuestion ? (
-          <div className="bubble-row">
-            <span className="vs-mark" aria-hidden="true">
-              <Logo />
-            </span>
-            <div className="rich-card">
-              <QuestionMessage
-                question={question}
-                reflection={askedBefore ? undefined : reflect(idea)}
-                draft={askedBefore ? undefined : draftLine(brief)}
-                locked={working}
-                onAnswer={(action, value) => void send(action, value)}
-              />
-            </div>
+          <div className="card direction-card">
+            <QuestionMessage
+              question={question}
+              reflection={askedBefore ? latestReflection(trace) : reflect(idea)}
+              draft={draftLine(brief)}
+              locked={working}
+              onAnswer={(action, value) => void send(action, value)}
+            />
           </div>
         ) : null}
         {!question && turnStatus === "question" ? (
-          <Agent>
+          <article className="card direction-card">
             <p>Nothing to ask.</p>
             <p className="mt-1 text-secondary">Skip all and build from what is already known.</p>
             <Button tone="ghost" className="mt-2" disabled={working} onClick={() => void send("skip_all")}>
               Skip all and build
             </Button>
-          </Agent>
+          </article>
         ) : null}
         {working ? (
-          <Agent>
+          <div className="card direction-card">
             <Thinking latest={trace?.length ? traceSentence(trace[trace.length - 1]) : "Thinking"} />
-          </Agent>
+          </div>
         ) : null}
         {fresh ? (
           <div className="flex flex-wrap gap-2" role="group" aria-label="Quick start">
@@ -178,7 +176,7 @@ export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
           </div>
         ) : null}
         {error ? (
-          <Agent>
+          <article className="card direction-card">
             <p className="text-danger" role="alert">
               {error}
             </p>
@@ -187,7 +185,7 @@ export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
                 Try again
               </Button>
             ) : null}
-          </Agent>
+          </article>
         ) : null}
       </div>
       {showLayers ? (
@@ -212,33 +210,19 @@ export function Thread({ bubbles, onExchange, showLayers, showDemo }: Props) {
   )
 }
 
-function Agent({ children }: { children: ReactNode }) {
-  return (
-    <div className="bubble-row">
-      <span className="vs-mark" aria-hidden="true">
-        <Logo />
-      </span>
-      <div className="bubble">{children}</div>
-    </div>
-  )
-}
-
-function User({ children }: { children: ReactNode }) {
-  return (
-    <div className="bubble-row is-user">
-      <div className="bubble">{children}</div>
-    </div>
-  )
-}
-
 function Exchange({ bubble }: { bubble: Bubble }) {
-  if (!bubble.prompt) return <User>{bubble.text}</User>
+  if (!bubble.prompt) return null
   return (
-    <>
-      <Agent>{bubble.prompt}</Agent>
-      <User>{bubble.text}</User>
-    </>
+    <article className="card direction-card">
+      <p className="direction-line">{bubble.text}</p>
+      <p>{bubble.prompt}</p>
+    </article>
   )
+}
+
+function latestReflection(trace: { detail: string; step: string }[] | undefined): string | undefined {
+  if (!trace?.length) return undefined
+  return traceSentence(trace[trace.length - 1])
 }
 
 function DebugPanel() {

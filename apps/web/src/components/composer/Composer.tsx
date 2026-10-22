@@ -71,7 +71,6 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
   const onBeginRef = useRef(onBegin)
   const onBubbleRef = useRef(onBubble)
   const onExchangeRef = useRef(onExchange)
-  const turned = useStudio((state) => state.turn !== null)
   const working = useStudio((state) => state.status === "working")
 
   function markRecording(value: boolean) {
@@ -93,6 +92,7 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
   function rememberFeatures(next: AudioFeatures | null) {
     featuresRef.current = next
     setFeatures(next)
+    if (next?.path) useStudio.getState().rememberOriginal(next.path, heldRef.current?.file.name || "Uploaded track")
   }
 
   function release() {
@@ -473,7 +473,7 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
     <div className={`canvas-column flex flex-col gap-4 ${started ? "pb-4" : ""}`}>
       <form
         data-tour="composer"
-        className={`composer-shell flex flex-col gap-2 p-2 ${dragging ? "outline outline-1 outline-accent" : ""}`}
+        className={`composer-shell flex flex-col gap-2 p-2 ${page === "home" ? "" : "is-slim"} ${dragging ? "outline outline-1 outline-accent" : ""}`}
         onSubmit={(event) => {
           event.preventDefault()
           void submit()
@@ -522,8 +522,8 @@ export function Composer({ started, onBegin, onBubble, onExchange }: Props) {
             ref={areaRef}
             id="idea"
             value={text}
-            rows={2}
-            placeholder={turned ? "Answer, or add a detail" : "a rainy night drive, missing someone"}
+            rows={page === "home" ? 2 : 1}
+            placeholder={page === "home" ? "a rainy night drive, missing someone" : "Ask the assistant"}
             aria-invalid={hint ? true : undefined}
             aria-describedby={hint ? "idea-hint" : undefined}
             onChange={(event) => {

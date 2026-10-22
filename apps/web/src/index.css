@@ -632,6 +632,74 @@ button.bg-accent:hover:not(:disabled) {
   overflow: auto;
 }
 
+.composer-shell.is-slim .composer-input {
+  min-height: calc(16px * 1.45);
+}
+
+.workspace {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.directions-card,
+.goal-card,
+.direction-card,
+.alt-card,
+.inspect-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+}
+
+.directions-card {
+  min-height: 0;
+  flex: 1;
+}
+
+.direction-line {
+  margin: 0;
+  color: var(--secondary);
+}
+
+.goal-fields,
+.alt-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.goal-input {
+  min-height: 36px;
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+}
+
+.alt-lane,
+.alt-history {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.piano-roll {
+  position: relative;
+  height: 140px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--raised);
+}
+
+.piano-note {
+  position: absolute;
+  min-height: 6px;
+  border-radius: 3px;
+  background: var(--accent-deep);
+}
+
 .segment {
   display: inline-flex;
   padding: 2px;
@@ -1701,7 +1769,9 @@ button.bg-accent:hover:not(:disabled) {
 
 @media (max-width: 800px) {
   .train-readouts,
-  .train-chords {
+  .train-chords,
+  .goal-fields,
+  .alt-board {
     grid-template-columns: 1fr;
   }
 }

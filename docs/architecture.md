@@ -72,15 +72,16 @@ All of these are mounted from the shell, Home, or the styleguide.
 | `components/layout/PreviewCard.tsx` | Floating demo cards on Home. |
 | `components/layout/Transport.tsx` | Brief button, Build now, session status. |
 | `components/layout/BriefDrawer.tsx` | Brief, layers, and trace. |
-| `components/layout/Readouts.tsx` | Fact row: tempo, key, bars, coverage. |
+| `components/layout/GoalCard.tsx` | Goal, with editable tempo, key, and bars. |
+| `components/layout/Readouts.tsx` | Coverage and fact display used by the brief. |
 | `components/layout/PageHeader.tsx` | Create and genre titles. |
 | `components/composer/Composer.tsx` | Idea field, attach, record, send. |
-| `components/thread/Thread.tsx` | Conversation, including the one live question. |
+| `components/thread/Thread.tsx` | Direction cards, including the one live question. |
 | `components/thread/QuestionMessage.tsx` | Answer pills and quiet actions. |
 | `components/thread/ReviewStage.tsx` | Review, Write prompts, Build. |
 | `components/brief/BriefCard.tsx` | Slot list inside the drawer. |
 | `components/layers/LayersCard.tsx` | Layer choice. |
-| `components/layers/LayersView.tsx` | Rendered layers. |
+| `components/layers/LayersView.tsx` | Alternatives A, B, and C, inspect, and history. |
 | `components/layers/stage.tsx` | Lazy player and waveform. |
 | `components/player/Player.tsx` | `PlayerBar`. |
 | `components/reasoning/ReasoningCard.tsx` | Trace. Stays mounted when the drawer is closed. |

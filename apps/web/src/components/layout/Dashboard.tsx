@@ -21,7 +21,7 @@ import { Home } from "./Home.tsx"
 import { PageHeader } from "./PageHeader.tsx"
 import { TrainRoom } from "../train/TrainRoom.tsx"
 import { PagePane } from "./PagePane.tsx"
-import { Readouts } from "./Readouts.tsx"
+import { GoalCard } from "./GoalCard.tsx"
 import { SessionStatus, Transport } from "./Transport.tsx"
 
 const PlayerBar = lazy(() => import("../layers/stage.tsx").then((module) => ({ default: module.PlayerBar })))
@@ -158,9 +158,10 @@ export function Dashboard() {
             <main className={`studio-main ${stage === "review" ? "is-scroll" : ""}`}>
               <div className="studio-frame is-focus" hidden={stage !== "talk"}>
                 <Transport filled={filledDetails(turn?.brief)} briefOpen={briefOpen} onBrief={() => setBriefOpen((value) => !value)} />
-                <div className="focus-column">
-                  <Readouts />
-                  <section className={`card conversation-card p-5 ${hot ? "is-hot" : ""}`} aria-label="Conversation">
+                <div className="workspace">
+                  <GoalCard idea={bubbles.find((bubble) => !bubble.prompt)?.text} />
+                  <section className={`card directions-card ${hot ? "is-hot" : ""}`} aria-label="Directions">
+                    <h2 className="section-title">Directions</h2>
                     <Thread bubbles={bubbles} onExchange={addExchange} showLayers={false} showDemo={demoQuery} />
                     <div className="studio-composer" ref={setCreateSlot} />
                   </section>
@@ -179,7 +180,7 @@ export function Dashboard() {
               ) : null}
               {stage === "results" ? (
                 <div className="results-stage">
-                  <PageHeader eyebrow="Results" title="Your layers" subtitle="Listen, pick a take, then export to Logic.">
+                  <PageHeader eyebrow="Create" title="Alternatives" subtitle="Listen and compare, inspect the changes, then choose what to apply.">
                     <SessionStatus />
                   </PageHeader>
                   <section className={`card results-card p-5 ${hot ? "is-hot" : ""}`} aria-label="Results">
