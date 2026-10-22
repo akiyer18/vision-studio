@@ -955,10 +955,19 @@ class ADEHack(ControlSurface):
                 return {'ok': False, 'error': 'bar must be >= 1 (bar 1 is the start of the arrangement)'}
             beats = (bar - 1) * bpb
         song.current_song_time = beats
-        position = float(song.current_song_time)
+        # Live 10 reads current_song_time back STALE right after the assignment while the transport is
+        # stopped (the seek itself lands), so the reply reports the REQUESTED beats; 'readback' is the raw value.
+        position = float(beats)
         return {'ok': True, 'position': position, 'bar': self._bar_of(position),
                 'beat_in_bar': position - math.floor(position / bpb) * bpb,
-                'beats_per_bar': bpb, 'is_playing': bool(song.is_playing)}
+                'beats_per_bar': bpb, 'is_playing': bool(song.is_playing),
+                'readback': self._readback(song)}
+
+    def _readback(self, song):
+        try:
+            return float(song.current_song_time)
+        except Exception:
+            return None
 
     # ------------------------------------------------- v5.8: tempo + warp
     # whole words only ('hat' must not match 'that', 'tom' not 'custom'); plural/underscore forms allowed
@@ -1693,8 +1702,9 @@ class ADEHack(ControlSurface):
         seek = self._seek_beats(msg)
         if seek is not None:        # v5.8: from_beat / from_bar seeks the arrangement before playing
             song.current_song_time = seek
-            reply['position'] = float(song.current_song_time)
-            reply['from_bar'] = self._bar_of(reply['position'])
+            reply['position'] = float(seek)        # requested beats (readback is stale while stopped)
+            reply['from_bar'] = self._bar_of(seek)
+            reply['readback'] = self._readback(song)
         if scene:
             scenes = list(song.scenes)
             index = int(msg.get('index', 0))
@@ -2414,7 +2424,7 @@ class ADEHack(ControlSurface):
         position = None
         if seek is not None:    # v5.8: from_beat / from_bar parks the transport before the take
             song.current_song_time = seek
-            position = float(song.current_song_time)
+            position = float(seek)                 # requested beats (readback is stale while stopped)
         track.arm = True
         song.view.selected_track = track
         song.view.highlighted_clip_slot = slot

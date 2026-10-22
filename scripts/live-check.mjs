@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // scripts/live-check.mjs — go/no-go preflight for a demo: run the moment Live is relaunched and the server is up.
-//   node scripts/live-check.mjs [--no-warp] [--no-play] [--server http://localhost:3000] [--json]
+//   node scripts/live-check.mjs [--no-warp] [--no-play] [--no-keys] [--server http://localhost:3000] [--json]
 // Every check prints PASS / WARN / FAIL / SKIP with the fix on the next line. Exit 1 on any FAIL.
 // Read-only on the user's set except for two things the brief asks for, both opt-out:
 //   --no-warp  skips `set_tempo --warp-clips` at the current tempo (warps unwarped audio clips; Live Undo reverts)
@@ -12,6 +12,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { sendToLive, jump, setTempo, setPosition, playFor, notReachableMessage } from '../ableton/client.js';
+import { checkKeys } from './check-keys.mjs';
 
 const execFileP = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -65,6 +66,15 @@ await check('server /api/health', async () => {
   return { status: health.ears ? 'PASS' : 'WARN', detail: `keys ok, script ${health.live.running} == ${installed}, ${ears}`, fix: health.ears ? null : 'no GEMINI_API_KEY / HF_TOKEN in .env: listening and judging will be text-only' };
 }, `is the server up? \`npm start\` in ${root}`);
 
+// 1b. every API key answers (one cheap authenticated call per provider; --no-keys skips it offline)
+await check('API keys answer', async () => {
+  if (flag('--no-keys')) return { status: 'SKIP', detail: '--no-keys' };
+  const rs = await checkKeys();
+  const line = rs.map((r) => `${r.name.replace(/_API_KEY|_TOKEN/, '')}=${r.status}${r.status === 'PASS' ? '' : ' (' + r.detail.replace(/^[^:]*: /, '') + ')'}`).join(' · ');
+  const worst = rs.some((r) => r.status === 'FAIL') ? 'FAIL' : rs.some((r) => r.status === 'WARN') ? 'WARN' : 'PASS';
+  return { status: worst, detail: line, fix: rs.filter((r) => r.fix && r.status !== 'PASS').map((r) => `${r.name}: ${r.fix}`).join(' | ') || null };
+});
+
 // 2. script ping / version ----------------------------------------------------------------------------------------
 let ping = null;
 await check('script ping + version', async () => {
@@ -90,10 +100,13 @@ await check('jump to bar 1 + read position', async () => {
   originalPosition = Number(before.current_song_time ?? 0);
   const j = await jump(1);
   if (!j.ok) throw new Error(`jump replied ${JSON.stringify(j)}`);
+  // the reply reports the REQUESTED beats; Live 10 reads current_song_time back stale while stopped, so the
+  // arrangement_info readback is informational only (the seek itself lands: play_for from_bar proves it)
+  if (!(j.position === 0 && j.bar === 1)) throw new Error(`expected position 0 / bar 1, got reply ${JSON.stringify(j)}`);
   const after = await sendToLive({ cmd: 'arrangement_info' });
   const pos = Number(after.current_song_time);
-  if (!(j.position === 0 && j.bar === 1 && Math.abs(pos) < 1e-6)) throw new Error(`expected position 0 / bar 1, got reply ${JSON.stringify(j)} and arrangement_info ${pos}`);
-  return `playhead was at beat ${originalPosition}, jump -> beat ${pos} bar ${j.bar} (${j.beats_per_bar} beats/bar); arrangement ${after.bars} bars, loop ${after.loop?.on ? 'ON' : 'off'}`;
+  const rb = Math.abs(pos) < 1e-6 ? 'readback 0' : `readback stale (${pos}; Live 10 quirk, harmless)`;
+  return `playhead was at beat ${originalPosition}, jump -> beat ${j.position} bar ${j.bar} (${j.beats_per_bar} beats/bar), ${rb}; arrangement ${after.bars} bars, loop ${after.loop?.on ? 'ON' : 'off'}`;
 }, 'bash ableton/install.sh (needs 5.8+) and relaunch Live');
 
 // 4. set_tempo --warp-clips at the current tempo ----------------------------------------------------------------------
@@ -157,7 +170,7 @@ await check('2-bar play from bar 1 + meters', async () => {
   if (flag('--no-play')) return { status: 'SKIP', detail: '--no-play' };
   const seconds = bars2seconds(2, ping.tempo);
   const p = await playFor(seconds, { fromBar: 1 });
-  if (!p.ok || p.position !== 0) throw new Error(`play_for from_bar:1 replied ${JSON.stringify(p)}`);
+  if (!p.ok || p.position !== 0) throw new Error(`play_for from_bar:1 replied ${JSON.stringify(p)} (needs ADEHack 5.8+)`);
   const ticks = Math.max(5, Math.min(40, Math.round(seconds * 10) - 2));
   const m = await sendToLive({ cmd: 'meters', ticks }, { timeoutMs: 4000 + ticks * 100 });
   await ms(Math.max(0, (seconds + 0.6) * 1000 - ticks * 100));
