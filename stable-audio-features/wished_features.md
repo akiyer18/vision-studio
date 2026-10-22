@@ -1,0 +1,42 @@
+## UI
+
+Tabs list:
+
+- create from scratch (prompt text, sound)
+	- TODO ask if we can do both text and sound simultaneously
+- analyse uploaded track / from DAW to suggest improvements and generate alternatives
+	- comparative analysis of new alternatives, ai should describe changes made
+	- analyse genre history, suggest artists to listen to as reference (maybe use Soundcharts API for that?)
+- tweak on a sample to create a new sample (suggest samples?)
+
+different levels of musicians - select your level?
+
+
+
+
+## Requests and discussion paper trail
+
+AI generates - instructions how to make it
+
+writing music, the producer visualizes it in the head. implementation in DAW can then be painful, describing with words might be easier
+
+starting
+
+specific notes - instead of cold drum beat
+snare drum beat - sound exactly like i want
+some snare edm, another 
+splice librarz -  genre, duration of the sound, mood
+brightness - frequencies that are in the beat - 
+
+sometimes people describe the beat with their mouth. or play an analog instrument for description
+
+logic daw - mac users
+
+explain how AI arrived to a track, so one can use this knowledge to learn and get new ideas about production
+
+gemini does a good job comparing tracks with minimal prompt ("you are a music production explainer. please analyse the beginning beat and the resulting lo fi prod and explain the changes made"). what would be useful is when the genre detected, **giving a brief history of the genre, and some artists samples to understand the style**
+
+Valentina requested workflow: upload a track, then analyse the possible improvements and generate alternatives *with AI* 
+
+
+feedback on instrument, rhythm

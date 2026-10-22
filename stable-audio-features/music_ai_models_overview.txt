@@ -1,0 +1,14 @@
+Google Gemini - seems to be all rounder with music history, but no deep technical information
+
+https://huggingface.co/collections/projectlosangeles/amazing-music-spaces
+https://huggingface.co/collections/musicgowdam/audio-spaces
+
+- free HuggingFace space collections for different purposes
+
+
+https://huggingface.co/spaces/nvidia/Nemotron-Labs-Audex
+https://huggingface.co/spaces/projectlosangeles/midi-moss-music-8b-thinking
+
+https://huggingface.co/nvidia/music-flamingo-hf - good technical music descrption (rhythm, instruments, tonality)
+
+https://huggingface.co/spaces/Mansuba/AI-Powered-Music-Analysis - all rounder. uses lib for instrument detection, uses an llm like groq, openai etc for all the improvements and understanding

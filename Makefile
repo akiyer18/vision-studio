@@ -1,4 +1,4 @@
-.PHONY: dev test contracts
+.PHONY: dev test lint typecheck build contracts
 
 # The web app is served on port 5173. The API on port 8000 starts once it exists.
 dev:
@@ -17,6 +17,16 @@ test:
 	npm --prefix apps/web test
 	npm --prefix apps/web run typecheck
 	npm --prefix apps/web run lint
+
+lint:
+	uv run ruff check services packages
+	npm --prefix apps/web run lint
+
+typecheck:
+	npm --prefix apps/web run typecheck
+
+build:
+	npm --prefix apps/web run build
 
 contracts:
 	node packages/contracts/generate.mjs

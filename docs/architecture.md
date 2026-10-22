@@ -129,3 +129,10 @@ Python: `uv run pytest` (`services/`).
 | `services/api/tests/test_security.py` | Session ids, magic bytes, limits, boot check. |
 
 Web: `npm --prefix apps/web test` runs `apps/web/src/recentIdeas.test.ts`. Lint is oxlint (`npm run lint`). Typecheck is `tsc -b`. Python lint is `ruff check` with the `F` and `E9` rules in `pyproject.toml`. The web app does not use eslint.
+
+## Stable Audio features
+
+The separate Stable Audio project is kept under `stable-audio-features/`. Its internal
+paths remain relative to that directory, so its Node, Python, Ableton, knowledge, and
+audio tooling can be run from there without becoming part of the Vision Studio
+workspace packages.

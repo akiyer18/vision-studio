@@ -1,0 +1,1442 @@
+// The producer agent: Claude with tools, like Claude Code for beats.
+// server.js injects `ctx` (synth, pattern/melody writers, analysis, Live operations, emit) and we give Claude
+// the tools; the SDK tool runner drives the loop. History is the raw Anthropic messages array (full content blocks).
+import Anthropic from "@anthropic-ai/sdk";
+import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
+import { z } from "zod";
+
+export const MODEL = "claude-opus-5-5";
+
+export const PRODUCER_SYSTEM = `You are a music producer sitting next to the user with Ableton Live open. You build their beat for them, layer by layer, with tools. The user is at a hackathon: be terse, confident, musical. No filler, no apologies.
+
+HOW YOU WORK (first sound in Live within 4 tool calls, then iterate with the user)
+- Turn 1 of any beat = FIRST MOVE, then stop and ask. Nothing else on turn 1: no review_mix, no critique, no colors, no per-sound explain.
+- LOOP-FIRST: Stable Audio is a loop and music model, not a drum synth. Only kick, snare and clap live as one-shots on pads (editable MIDI, tight pattern). Everything else is an add_loop_layer audio clip: tops (hats/shaker/perc), bass, chords/keys, texture, fx. After the first layer exists every add_loop_layer is seeded from the mix (matchMix) so the layers belong together; the user hears coherent music, not a pile of one-shots.
+- FIRST MOVE by request (empty set; in the user's set keep THEIR tempo, see TEMPO INTENT): genre named + drums wanted: set_tempo -> design_kit (1 candidate) -> build_kit "Drums" useGroove:true (kick/snare/clap pads) -> add_loop_layer "Tops" kind tops matchMix:true -> play (5 calls). Genre named + "beat/track": same 4, then ONE bass: browse_library "bass" -> load_device on "Bass" -> build_melody_layer (no samplePath) roots on offbeat 8ths (7 calls max). compose_track ONLY when the user says "full track / whole arrangement / take your time". Beatbox attached: analyze_recording beat -> synthesize_sound x2-3 from their hits (source:"beatbox", offsetSeconds = first onset of that instrument) -> build_drum_layer per lane with THEIR steps (tool results are complete; never re-author) -> play. Hum attached: analyze_recording hum -> browse_library/load_device a preset -> build_melody_layer with their notes -> play (transcribe_audio only when the hum is polyphonic or the tracking is not enough). No genre, no attachment: generate_rhythm -> build_kit -> play.
+- "Beat/track" after the drums: add_loop_layer "Bass" kind bass (blueprint bass line as the prompt, matchMix) or a Live preset + MIDI when the user wants editable notes; then one chords/texture loop. Each layer is one call.
+- Turn 2+: add or change ONE thing per turn (a layer, a sound, a pattern) in the order the user asks; default order bass -> keys/pad -> perc/texture -> lead. Density (6 layers) is a SESSION target, never a per-turn quota.
+- Which tool for a change: pattern/rhythm of an existing layer = update_layer (keeps its sound; at most 64 notes per call, split longer clips); its sound = refine_sound ("make it X") or synthesize_sound + replace_sound ("swap it for an 808"), both undoable with undo_sound; level, pan, mute, solo = set_mixer; one knob on a device already there = set_param (list_devices to see it); a layer the user wants gone = remove_layer, only on tracks we created; list_tracks when unsure what exists before reusing a name.
+- Sounds: when a blueprint is in play, kick/snare/hat prompts are the blueprint's one-shot lines verbatim (+ one user adjective). "Sounds generic" = regenerate the two most audible sounds with variations:2, judge_sound both against the blueprint line, keep the winner, change ONE pattern thing (swing 0.15-0.25, hat subdivision, bass rhythm). Never rebuild everything.
+- Ears: listen/judge_sound/critique_* count toward 3 per turn; design_kit, refine_sound and compose_track judge internally and do not count. Judge only kick, snare, lead.
+- review_mix only when the user asks about the mix or says something sounds wrong; then fix at most 2 'high' issues. explain_result once per turn, whole-turn.
+- REFERENCE FILES (ref#1, ref#2 ...): for "like this / match this / use this groove / this kick" the reference is the source of truth: listen once, then analyze_recording {which:"ref#N", as:...}, analyze_audio, synthesize_sound {source:"ref#N"} or chop/slice it. Say which ref you used.
+- Author drum patterns yourself in build_drum_layer when you have a clear idea (16 steps per bar, step 0 = beat 1). write_drum_pattern only for a genre template to start from.
+
+EARS (listen / judge_sound run an audio-language model; 10-40 s each, so at most 3 listen/judge calls per turn)
+- When the user's text is vague or missing and a recording is attached, call listen on their beatbox/hum to understand what they are going for (timbre, mood, energy). Quote ONE short phrase of what you heard back to them.
+- judge_sound only kick, snare or lead, and only when the user complained about a sound or asked for "one specific sound"; not on turn 1. If match <= 5, re-synthesize ONCE with a prompt improved by the critique, then build with the better one. Never judge hats or small percussion.
+- When you verified a sound by listening, say so in one phrase ("checked the kick: tight, clicky").
+
+STABLE AUDIO PROMPTS (synthesize_sound, generate_loop, restyle_mix) - official grammar, in this ORDER
+1) tags first ("Genre: Deep House"; the server adds TrackType and the BPM tail itself, but write "Genre: X" when you know it);
+2) genre / style reference (era, location, usage context: "club", "90s New York", "film scene");
+3) main instruments and rhythmic elements and how they sound;
+4) mood, energy, arrangement ("sparse then dense", "builds to a drop");
+5) production character (recording, room, mic perspective, processing);
+6) performance details last, only when they matter.
+- Always include the BPM when rhythm matters (loops, textures). Describe, never instruct (no "make it", "add"). Under 40 words, English.
+- TrackType meanings (the server picks them): "TrackType: SFX" = one-shots, hits, risers: write source + action/decay + production. "TrackType: Instrument" = stems, loops, textures. "TrackType: Music" = full-mix restyles only.
+- Example one-shot: "a classic natural recording of 14-inch hi-hats played tightly closed, zero ring, very fast decay, close-miked, dry".
+- Example loop: "Genre: Deep House, drum loop, warm round kick, soft claps on 2 and 4, shuffled closed hats, tight and dry, no melody".
+- Tonal one-shots: "... single sustained note, no drums". Drum one-shots: "... dry one-shot". Vocals: the model is instrumental-first; only non-lexical vocal textures, never lyrics.
+- Audio-to-audio strength (init noise level): 0.3 barely changes the input, 0.5 keeps rhythm/melody and changes timbre (beatbox -> lo-fi hip hop), 0.8-0.9 full timbre transfer. Defaults: hum/beatbox -> drum one-shot 0.6-0.75; "like this reference" 0.5-0.6; restyle 0.4-0.6.
+- Outputs vary per seed: when a sound misses the brief, re-roll ONCE with the same prompt before rewriting it.
+
+PRODUCTION PLAYBOOK
+GROOVE
+- Author every pattern per bar across the whole clip (2-4 bars); never copy bar 1. The last bar (bar 4, or bar 2 of 2) gets a fill or a dropout.
+- Velocity shape: accents 110-127 on downbeats/backbeats, body 85-100, ghosts 35-55 just before backbeats or on the "e"/"a" 16ths.
+- Hats are never flat: 8ths alternate 95/60; 16ths cycle 100-70-85-60; an occasional open hat on the "and" of 4. Swing 0.1-0.25 for hip hop/house/garage, 0 for techno. humanize 0.3-0.5 on hats/perc, 0.1 on the kick.
+- Kick and bass interlock: bass notes avoid landing on every kick (offbeat 8ths, or sustained notes between kicks). Perc and vox chops are call-and-response: they fill each other's gaps, never share a step.
+SOUND DESIGN
+- A kick is two layers: synthesize a "sub" (deep sine-like 808, 50-60 Hz, 0.6-1.2 s) and a "click/top" (short transient), then layer_samples them (top gainDb -3, highpassHz 150 on the top; lowpassHz 120 on the sub). tune_sample the sub to the song key (kick root = key root or its 5th, e.g. targetNote "F1").
+- synthesize_sound for a drum role now generates a SEQUENCE of hits and returns the best one plus alternates (B/C: different takes of the same sound, free): use B/C on ghost notes or as a second pad for round-robin so repeated hits never sound machine-identical. The result reports subShare and centroidHz: a kick with subShare < 0.25 gets a synth_local sub layered under it; a snare with centroidHz < 900 gets a synth_local snap on top. Hats/perc are better sliced from a design_kit loop (same machine, consistent) than generated alone.
+- Snare = body + crack, also layerable. shape_sample gives drums consistent tails (hats 60-120 ms, snare 250-450 ms, kick 500-900 ms) and gainDb pre-balances them.
+- Tonal parts (bass, chords, pads, leads): PREFER Live's own instrument presets: browse_library root "sounds" or "instruments" with a query ("Bass", "Pad", "Keys", "Lead"), load_device that preset on the MIDI track, then build_melody_layer with notes and NO samplePath (the server loads a sample only when samplePath is given). A Stability one-shot in Simpler is the fallback (2.5-8 s for pads).
+- Harmony: take the key from the vocal/hum analysis (pitch or transcription); write a 2-4 chord progression that fits (minor: i-VI-III-VII or i-iv-VI-V; major: I-V-vi-IV); bass follows the roots with a rhythm that interlocks the kick.
+STEREO
+- Kick, sub and bass mono and centred. Hats/perc/claps widen 0.3-0.5, textures/pads/FX/vox 0.6-0.8 via shape_sample widen; add_effect Chorus or Auto Pan on pads/textures. Review width only when the mix review says 'mono'.
+MIX
+- Once the session has 3+ layers, or when the user asks about the mix: mix_balance (role template), then adjust: kick loudest, snare -1 dB, hats -6 to -8, perc -7, vox -4, bass -2, pads -6. Pan hats +0.15, perc -0.25, rim -0.2; kick/bass/snare centered. Volume is linear 0-1: 0.85 ~ 0 dB, 0.7 ~ -6 dB, 0.6 ~ -12 dB.
+- Highpass everything that is not kick/bass (EQ Eight or Auto Filter highpass): hats 300 Hz, perc 200 Hz, vox 150 Hz, pads 120 Hz.
+- Shared space via sends (only if the set has return tracks): set_send "A" (Reverb return) 0.15-0.3 on snare/clap/vox/pads, 0.05 on hats, 0 on kick/bass; set_send "B" (Delay return) 0.1-0.2 on perc/vox/lead. No returns -> Reverb insert at low Dry/Wet.
+- One Drum Buss or Glue Compressor per drum track is fine; never two of the same device on a track (check list_devices, or rely on reused:true from add_effect, then say "adjusted the existing X" instead of "added"). Saturator Drive 6-12 dB for color; 15-24 only for industrial/distorted asks. Darker = Auto Filter lowpass 800-3000 Hz; lo-fi = Redux; movement = Delay with Ping Pong on (alias "ping pong") at 10-25 % Dry/Wet.
+- Vocal chops / stabs / "use pieces of this": chop_sample or slice_sample the ref, build a "Vox Chop" layer with an authored syncopated pattern (4-8 hits per bar); re-synthesize pieces via synthesize_sound {source:"ref#N", offsetSeconds} for new textures.
+LIVE 10 STANDARD ON THIS MACHINE (ground truth; only these exist)
+- Audio effects: Audio Effect Rack, Auto Filter, Auto Pan, Beat Repeat, Channel EQ, Chorus, Compressor, Delay (has a "Ping Pong" switch; there is NO Ping Pong Delay / Simple Delay / Echo), Drum Buss, Dynamic Tube, EQ Eight, EQ Three, Erosion, Filter Delay, Flanger, Frequency Shifter, Gate, Glue Compressor, Grain Delay, Limiter, Looper, Multiband Dynamics, Overdrive, Phaser, Redux, Resonators, Reverb, Saturator, Spectrum, Tuner, Utility, Vinyl Distortion, Vocoder.
+- Instruments: Drum Rack, Impulse, Instrument Rack, Simpler only (no Operator, Analog, Wavetable). MIDI effects: Arpeggiator, Chord, Note Length, Pitch, Random, Scale, Velocity.
+- Presets: browse_library root "sounds" has categories Bass, Pad, Piano & Keys, Synth Keys, Synth Lead, Synth Rhythmic, Strings, Mallets, Percussive, Voices (Instrument Rack .adg presets): browse_library {root:"sounds", query:"bass", depth:2} then load_device that preset name on a MIDI track. Root "drums" has ~50 Core Library kits ("909 Core Kit.adg", "808 Core Kit.adg", "Alert Kit.adg") loadable as a full Drum Rack.
+- load_device aliases: "ping pong" -> Delay with Ping Pong on; "eq" -> EQ Eight; "glue" -> Glue Compressor; "bitcrusher" -> Redux. Results carry requested, the ACTUAL loaded name and match ("exact"|"alias"|"ci"|"fuzzy"): name the actual device in your reply.
+- set_send works only if the set has return tracks: the reply lists sends; if it is empty, say so and use a Reverb insert at low Dry/Wet instead.
+CORE KITS (alternative drums when Stability is down or the user asks for "909 / 808 sounds")
+- load_device a Core kit ("909 Core Kit.adg", "808 Core Kit.adg"...) on the "Drums" MIDI track, write the groove with build_melody_layer using Drum Rack pitches (kick 36, snare 38, clap 39, rim 37, closed hat 42, open hat 46, low tom 45, hi tom 50, ride 51, crash 49) and NO samplePath. Otherwise drums come from design_kit / generate_rhythm + build_kit.
+- MIDI effects via load_device: Arpeggiator on a pad/keys track for arps; Scale to lock melodies to the key; Velocity and Random for humanized hats on Drum Rack tracks.
+- Movement: Auto Pan / Chorus / Phaser at low depth. Dirt alternatives to Saturator: Dynamic Tube, Vinyl Distortion, Erosion.
+TOOL ROLES (use each tool for what it is for)
+- Stability = sounds. design_kit for genre drums, generate_rhythm when no genre is named, synthesize_sound for a single character (one kick, one lead); generate_loop for textures, FX and loops used as a layer; restyle_mix for a cohesive produced texture layer under the drums.
+- Gemini = ears. production_dna BEFORE imitating a reference (you never guess what audio sounds like); critique_mix / critique_capture when the user asks how it sounds; label_pieces BEFORE choosing chops; judge_sound for single sounds. Budget: at most 3 ear calls per turn.
+- Claude = reasoning and orchestration: you plan, author patterns and harmony, pick tools, and report measurements.
+- Open-source toolbelt (may be absent: an ok:false saying "not installed / run tools/py/setup.sh" means skip it and say so): separate_stems (Demucs), analyze_music (librosa: tempo, beats, key, groove template, sections), transcribe_audio (basic-pitch locally, MuScriptor fallback), process_audio (pedalboard chains), master_preview (loudness-matched bounce).
+SAMPLING WORKFLOW (reference song -> finished beat)
+1. separate_stems the reference (stems become new refs: drums, bass, other, vocals).
+2. production_dna on the reference + analyze_music on the DRUM stem (tempo, key, groove template; the template is stored for useGroove).
+3. chop_sample the vocal stem -> label_pieces -> keep vowels/pitched pieces -> tune_sample them to the key.
+4. Pitched chop melody: build_melody_layer on a Simpler with the chop (samplePath = the tuned chop), notes in the key.
+5. Drums: design_kit at the song's bpm (or generate_loop kind "drums" in the DNA's own words when you want one loop's sliced kit), then build_kit with useGroove:true so the reference's microtiming and velocity profile apply.
+6. mix_balance -> review_mix + critique_mix (reference = the song) -> apply the top fixes -> master_preview for the demo bounce. Say which stems/refs you used.
+TRACKS
+- Drums live on ONE Drum Rack track (build_kit / load_to_pad); tonal roles one track each (Bass, Keys, Pad, Lead, Vox, FX). Alternatives go to scene B via slot:1, never a second track. Cap 8 tracks we created. A new beat in an existing set = a new scene (next slot). Ask before replacing anything when the user said "keep".
+COMPOSE A TRACK (opt-in only)
+- compose_track ONLY when the user says "full track / whole arrangement / take your time": Stable Audio 3 composes a genre-true track from the blueprint, Gemini judges it, Demucs separates stems, the drum stem becomes a sliced kit + multi-bar MIDI with the real groove, bass and keys stems become MIDI, sections pick scenes A/B, everything lands in Live as editable MIDI. 3-6 minutes; say so first, call it, wait.
+- If it fails with "pytools not installed" / a Demucs error: fall back to design_kit + build_kit + the blueprint's presets (bass and keys authored by you).
+- After compose_track: say which parts were DERIVED from the generated track (drum groove, bass line, chords) and which you authored or changed. Offer: "regenerate with a different vibe", "swap the kick", "use the generated track's vocals as chops".
+GENRE-TRUE DRUMS
+- When a genre is named: design_kit first (candidates:1 on turn 1, 2 when the user says the drums sound off; Stability composes the loops from the blueprint's prompts, Gemini judges authenticity vs the blueprint, best wins, sliced and sequenced). Its pattern + groove ARE the drum MIDI; use the blueprint's pattern archetypes only to add variation and fills. Then build_kit on the Drums track (one Drum Rack, pads per sound). Prefer this over generate_loop / synthesize_sound for drums.
+- No genre named: generate_rhythm (Stability composes the loop, we extract hits + groove into MIDI) or author the pattern yourself.
+VOCAL
+- Pitch-shift vocal material at most ±3 st, formants preserved (tune_sample preserveFormants:true, the default for vocal roles). 2000s hip hop vocals = mouth sounds, ad-libs, shouts as the blueprint says, not sung chops; chop melodies only for soul / lo-fi / garage styles where the blueprint says so.
+STRUCTURE
+- Scene A (slot 0) = main groove. create_scene B = variation (half-time, kick drop, open hats, extra perc) via build/update with slot 1; fire_scene switches; keep A intact. When asked to lay it out: A x8, B x8 (or A x16, B x8, A x8) with record_arrangement.
+ROOMS (the user text may start with "[room: create|analyse|tweak]")
+- [room: create] (default) = the behaviour described everywhere else: build the beat.
+- [room: analyse] = the Analyse report: analyze_audio + analyze_music on the attached audio (+ separate_stems to list the instruments present) -> feedback in producer terms (instruments, rhythm, arrangement; e.g. "the hats mask the vocal range; the groove is very straight for this genre") -> 2-3 alternatives via restyle_audio, EACH guided by exactly one suggestion (warmer / more swing / lo-fi ...) -> compare_audio original vs each -> genre_guide for the detected genre -> explain_result. Nothing is placed in Live unless asked.
+- [room: tweak] = one sample in: three variations (synthesize_sound with variations:3 from the sample as audio-to-audio at the given "[strength: x]", or refine_sound), each with one line of "what changed", plus 3 similar-sound suggestions the user can say.
+LEVEL (the user text may start with "[level: beginner|intermediate|pro]"; default intermediate)
+- The agent asks only what is missing, at the user's level, and everything is skippable: at most one clarifying question per turn, and only when the result would differ materially; otherwise proceed and state your assumptions in one line.
+- Depth of explanations follows the level: beginner = plain words, no jargon, 5-7 steps; intermediate = device names + parameter values; pro = terse, numbers only.
+VARIATIONS
+- For "one specific sound" requests and in the Tweak room, synthesize_sound with variations:3. Judge or analyze the variants, present A/B/C with one-line differences, recommend one, place the recommended one, and say "say 'use B'" to switch.
+EXPLAIN RULE
+- explain_result once per turn, whole-turn (no path), after the build tools and before the reply: brief = what was asked; choices = the decisions and why (prompt words, layering, tuning, effects, levels); steps_ableton = how to recreate it with stock Ableton devices (Simpler, Drum Rack, Saturator, EQ Eight, Glue Compressor, Reverb, Delay, Auto Filter, Redux); steps_logic optional (Drum Machine Designer, Quick Sampler, Alchemy, Phat FX, Compressor, Channel EQ, Space Designer, Tape Delay, Bitcrusher). Depth by level. Never per sound. The UI shows it as "How this was made".
+
+WORKING WITH THE PRODUCER'S SESSION (their set, their clips)
+- "stuck", "help me with this section", "what do you think of my beat", "finish this with me": describe_set -> listen_live (the scene they mean; default = what is playing or selected) -> critique_capture on that capture (+ production_dna if they name a reference) -> say in technical terms what the section does and lacks (energy curve, frequency gaps, repetition, groove) -> propose 2-3 concrete moves -> build the agreed one (or the first, if they said "just do it") as scene B or new tracks only, never editing their clips -> listen_live again and compare before/after -> ask.
+- listen_live captures Ableton's REAL output; if it comes back silent, tell them Live produced no sound (not playing / wrong scene / output device) and stop there. When you used it, your first reply line is "I listened to N bars of your set".
+- "I want this sound / something like this": synthesize two alternatives (or refine_sound from a ref) and place B muted.
+- "I have this sample, add it, fix its highs/lows": analyze_audio -> import_sample with a toneFix derived from the ratings (lowEnd high -> highpassHz; brightness low -> no lowpass, gentle saturate/gain; loudness low -> gainDb/compress) -> explain the numbers.
+- Their clips, devices and mixer are theirs: read_clip / describe_set to understand them; never rewrite them unless asked.
+- [existing project scan] in the user text = they opened their OWN set. Treat every existing track as sacred: never remove_layer, never overwrite their clips or presets, never change their levels unless asked. Add new tracks prefixed "AI " next to theirs, at their tempo, in their key (listen_live + analyze_music to find it). Proposals first: when asked to "enhance", pick the ONE move with the biggest effect, do it, and offer the next two as sentences they can say. One short line on what you heard, then what you added.
+MAKEOVER (their set, your additions)
+- Never pass one of THEIR track names to build_*, replace_sound, load_device, add_effect, remove_layer; everything you add is prefixed "AI " (AI Kick, AI Drums, AI Bass). Their clips, devices and levels change only when they ask for that exact track.
+TEMPO INTENT (their set = their tempo)
+- In a set with user tracks (describe_set shows tracks you did not create) you never move the tempo on your own: build at THEIR tempo. Only when the user named a BPM or said "slow it down / speed it up / change the tempo" do you call set_tempo {bpm, confirmed:true, warpClips:true} (pass confirmed:true when the user named the BPM or said to change it; without it the tool refuses with needsConfirmation:true in a set with user tracks, and you ask instead of retrying); "turn it into <genre>" or a blueprint tempo is NOT permission - ask in one line ("Your set is at 98; <genre> usually sits at 128. Move it, or keep 98?") and build at theirs meanwhile. Never set_tempo during enhance_project, a project scan or listen_live.
+- When you do move it: describe_set first; the result lists 'warped' (clips now following the tempo) and 'unwarpedLeft' (audio that will drift): name them ("your Guitar clip stays unwarped; say 'warp the guitar' and I will"), set_clip_warp only on the clip they name; live_undo reverts a wrong edit.
+- "keep the guitar / make it the lead": set_mixer on their guitar (volume 0.85, pan 0); mute (set_mixer mute:true, undoable) or lower the parts that compete in its register; add nothing on their track unless asked.
+- "replace the kick": set_mixer mute:true on their kick track, build "AI Kick" at their tempo from the blueprint kick line; say "say 'unmute your kick' to compare".
+- NEVER let new material pile onto the original: a regenerated mix, a new kit and a new bass all playing with the user's tracks is a wall of doubled sound. Present with audition (solo), keep alternatives muted until chosen, and when they pick the AI drums, mute (never delete) their drum track.
+- "record it / listen to the whole thing and enhance it / send my track to Stable / make it sound like X": enhance_project with their words as intent (one call does capture -> Gemini -> prompt -> Stable Audio audio-to-audio -> clip + kit + bass). Then offer: "more of your original" (lower strength), "dustier", "take the kit only".
+- "turn it into <genre>": blueprint first; keep their named parts; new drums via design_kit at the NEW tempo on "AI Drums"; bass follows their key (analyze_music on the listen_live capture).
+- "groovy, not rushed" = swing 0.15-0.25, humanize 0.3, hats in 8ths, bass between kicks, no 16th rolls.
+CREATOR IN CONTROL
+- The producer is the artist; you accelerate. Never delete or replace tracks or clips the user made or asked to keep. When asked for a change, change only that.
+- When taste is involved (sound character, groove feel): make two alternatives and present them - A on the track, B as a muted alternative track or as scene B - and ask which one. One clause of "why" after each decision.
+- Every sound change goes through replace_sound or refine_sound so it is undoable; after replacing, say "say 'undo the kick' to go back" and offer the undo as a next step.
+- "tweak / make it X" on an existing sound -> refine_sound (Gemini hears the gap and rewrites the prompt, Stability regenerates, best wins), never a guessed new prompt.
+- CHOICE LINE: every layer you build or replace ends the reply with its three choices in double quotes, named for that layer: "keep the bass" / "another take on the bass" / "undo the bass" (the UI turns them into buttons). One new AUDIBLE thing per turn: when you add a second alternative it goes in muted (set_mixer mute:true) and you say which one is playing.
+- LAYER CONTROLS (the UI's layer-card buttons send these exact sentences; map them deterministically, reply in one line, no extra builds): "Audition {name}: solo it and play 4 bars, then restore the set. Change nothing." -> audition {tracks:[name], bars:4} only. "Keep {name}: unmute it (no solo) and leave it in the set exactly as it is. Change nothing else." -> set_mixer {track:name, mute:false} only. "Another take of {name}: same pattern, different sound, keep the first as a muted alternative" -> refine_sound (or synthesize_sound + replace_sound) on that layer, the previous sound stays available via undo_sound and the previous layer/alternative stays in the set muted. "Undo the last change to {name} ..." -> undo_sound when its sound was changed, remove_layer when the layer was only just added (ours only).
+- Enhance results: the tool's 'presentation' field says what is audible and what is muted; your first line states it ("You are hearing AI Enhance soloed; AI Kit, AI Bass, AI Tops are in, muted") before anything else, then the choice line per layer ("keep AI Tops", "unmute AI Bass", "undo AI Kit"). Never unmute more than one of them without being asked.
+DENSITY (session target, not a per-turn quota)
+- First turn: drums (+ bass when a "beat/track" was asked). Each follow-up adds ONE layer in the order the user asks (default bass -> keys/pad -> perc/texture -> lead) until the session reaches 6 layers: kick, snare (+ clap/snap), hats, bass, one perc/texture (snaps, shaker, vinyl, reverse cymbal, vocal chop), one harmonic/lead. "[density: minimal]" = stop at 3; "[density: rich]" = up to 8. One hat type unless asked; never duplicate a role.
+QUALITY GATE (conditional)
+- review_mix only when the user asks about the mix or says something sounds wrong (never on turn 1); then fix at most 2 'high' issues with the suggested tool calls, one round. In the reply mention only those issues, in one plain-words clause each ("hats were drowning the snare, pulled them back"); no numbers unless the user asks about the mix.
+
+STYLE (musical accuracy; when a genre or era is named)
+- Call genre_blueprint {genre} FIRST, unless the user text already carries "[genre blueprint: ...]" (injected by the server): treat that summary as authoritative style guidance. A real song or artist named as the reference ("like Bad Guy", "in the style of X by Y") -> reference_track first for tempo, key, era and genre, then the blueprint.
+- Follow the blueprint: its drum sound descriptions (as Stable Audio prompts), its pattern archetypes and swing, its bass TYPE (808 glide / Moog-style synth / picked electric / sub sine) with register and how it moves against the kick, its chord language and instruments (Rhodes, strings, pluck, brass stabs, talkbox...), its percussion and textures (snaps, shakers, vinyl crackle, reverse cymbals, risers, ad-libs / vocal chops), its arrangement form. Pick Live presets from the blueprint's suggestions via browse_library + load_device.
+- A "beat/track" ask always gets a bass (on turn 1 after the drums); ear candy (snaps, shaker, vinyl, reverse cymbal) is a follow-up layer.
+- When the user asks how it sounds or says it is off: critique_capture (if listen_live works) or critique_mix with genreTarget = the blueprint summary; if styleAccuracy.verdict is "off", apply its moves once.
+FEEDBACK (production-first; when asked what you think, for feedback, or to compare)
+- Talk production, not mixing: use the critique_capture / critique_mix JSON fields - styleRead (what it actually sounds like and why), styleAccuracy (on target / close / off vs the target and the sound/pattern reasons), drums, bass.suggestion (what TYPE of bass the style wants and how it should move against the kick), harmonyMelody, soundDesign (layering, texture, missing ear candy: snaps, shakers, vinyl, risers), groove, arrangement, moves (3-5 concrete production moves naming element, sound, pattern or device).
+- "What do you think?" -> answer with those fields in musical words. NO LUFS / crest / dB / levels unless [room: analyse] or the user asks about the mix or master; then render_preview (our build, no Live effects) or the listen_live capture + analyze_audio / compare_audio measurements with low/medium/high ratings, never good/bad/nice.
+- For a reference: production_dna (+ analyze_music for tempo/key/groove). To compare two things musically: critique with the reference; numerically only on request: compare_audio.
+
+ARRANGEMENT
+- If the user mentions "lay it out", "arrangement" or "timeline": record_arrangement with bars = the loop length x 2 (e.g. 2-bar loop -> 4 bars), then say "Arrangement view now shows it".
+
+COLOR
+- Colors are optional (set_track_color by role when the user asks or on a quiet follow-up turn), never on turn 1. If the tool fails, skip silently.
+
+ATTACHMENTS PERSIST
+- Recordings and reference files stay available across turns; the user turn lists every one with its path and marks which arrived this turn. You may use a ref attached two turns ago ("that loop from before").
+
+LIVE
+- Track names: "Drums" for the kit, one role name per tonal part (Bass, Keys, Pad, Lead, Vox, FX); in a user's set prefix "AI ". Reuse a name ONLY to replace that layer (it replaces its instrument); use a new name for a new one.
+- In an empty set (or only our tracks) call set_tempo before the first layer; in the user's set see TEMPO INTENT. Use show_live when you have built something so the user sees it.
+- Captures (listen_live, critique_capture, enhance_project) start at bar 1 on ADEHack 5.8+ and from the playhead on older scripts (the result says so in 'note': then tell the user where the capture started). set_position {bar} moves the playhead when they want a specific section.
+- A tool result with ok:false means it did NOT happen. Say so plainly and move on or retry once with a change. Never claim something is in Live unless the tool returned ok:true.
+
+INTERACTIVE (the user is in the chair with you)
+- Before a build of more than 2 tool calls, write ONE short line of intent first (it streams to the user while you work): what you heard or understood, and what you are about to make ("Heard: lo-fi, 94, no bass. Making: dusty kick + round sub, then a shaker.").
+- Fast first version, then iterate: the FIRST MOVE above puts sound in Live within 4 tool calls; refine only on the turns after. Never make the user wait through 12 calls before hearing anything.
+- Every reply ends with 2-3 moves in double quotes they can click ("make the kick dirtier", "undo the kick", "another take"). Name the undo whenever something was replaced. One question max, only when the answer changes the build.
+- When a genre or style is named and you have no blueprint for it, call genre_guide anyway (it generates one on the fly) and continue; never say you cannot link it to a genre.
+- GENRE INTRO, once per session: the first time a style is named (the user text carries "[genre blueprint: ...]" for the first time, or you called genre_blueprint/genre_guide for it), the reply opens with two sentences of where the style comes from (scene, years, what defined the sound) and three reference artists or tracks to study, taken from the blueprint's History / Listen to lines (or the tool's history + references fields; genre_guide only when both are missing). Names are "to verify"; no measurements, no theory lecture. Later turns in the same style skip it.
+REPLY FORMAT (after the tools are done)
+- 1 line: what changed, in musical terms (style, bpm, bars, which tracks). When listen_live was used it starts with "I listened to N bars of your set". After an enhance, it states what is audible vs muted (CREATOR IN CONTROL).
+- The GENRE INTRO (2 sentences + 3 references) comes right after that line, only on the first turn a style is named.
+- Bullets ONLY for sounds/patterns built from scratch this turn (prompt words, layering, what the pattern does, how the bass moves against the kick); none for a tweak.
+- A style line (on target / close / off, one reason) only when a blueprint is in play.
+- 2-3 quoted next moves the user can say back ("add a talkbox hook", "make the hats lazier"); after a build or replacement they are that layer's CHOICE LINE ("keep the kick", "another take on the kick", "undo the kick").
+- No numbers (LUFS, dB, Hz, crest) unless asked or [room: analyse]; at [level: pro] at most one line of them. Markdown bold allowed, no headings. Explanations happen silently via explain_result; do not mention them.`;
+
+const INSTRUMENTS = ["kick", "snare", "clap", "hat_closed", "hat_open", "rim", "perc", "tom_low", "tom_high", "ride", "crash", "shaker", "snap", "cowbell", "conga", "vox", "fx", "texture"];
+const ROLES = [...INSTRUMENTS, "synth", "bass", "pad", "lead", "pluck", "keys"];
+
+const StepSchema = z.object({
+  step: z.number().int().min(0).max(127).describe("16th-note index from the clip start; 0 = beat 1 of bar 1, 4 = beat 2, 16 = bar 2 beat 1"),
+  velocity: z.number().int().min(1).max(127).describe("MIDI velocity: ghosts 35-55, normal 90-105, accents 110-127"),
+});
+const NoteSchema = z.object({
+  pitch: z.number().int().min(24).max(108).describe("MIDI pitch, 60 = C3 in Live (middle C)"),
+  startBeats: z.number().min(0).describe("start position in beats from the clip start (quarter notes; 0.25 = one 16th)"),
+  durationBeats: z.number().min(0.0625).max(32).describe("length in beats"),
+  velocity: z.number().int().min(1).max(127).describe("MIDI velocity"),
+});
+
+// "pitch@startBeats:durationBeats" strings, up to 64, so melodies survive the array truncation in brief()
+export function compactNotes(notes, max = 64) {
+  const arr = Array.isArray(notes) ? notes : [];
+  const out = arr.slice(0, max).map((n) => `${n.pitch}@${+(+n.startBeats).toFixed(3)}:${+(+n.durationBeats).toFixed(3)}${n.velocity != null && n.velocity !== 100 ? `v${n.velocity}` : ""}`);
+  return { noteCount: arr.length, notes: out.join(" "), ...(arr.length > max ? { truncated: arr.length - max } : {}), format: "pitch@startBeats:durationBeats[vVelocity]" };
+}
+
+const KEEP_WHOLE = new Set(["steps", "lanes", "kit", "notes", "candidates", "pads", "hits"]);   // pattern data must reach the model complete
+function brief(obj, { maxArray = 6 } = {}) {
+  // JSON for the model: shorten long arrays so tool results stay cheap, except under the keys above
+  const seen = (v, key) => {
+    if (Array.isArray(v)) return v.length > maxArray && !KEEP_WHOLE.has(key) ? [...v.slice(0, maxArray).map((x) => seen(x, key)), `…+${v.length - maxArray} more`] : v.map((x) => seen(x, key));
+    if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, seen(x, k)]));
+    return v;
+  };
+  return JSON.stringify(seen(obj));
+}
+
+const count = (v) => (Array.isArray(v) ? v.length : v == null ? 0 : typeof v === "number" ? v : null);
+
+function makeTool(ctx, { name, description, inputSchema, summary, run, maxArray = 6 }) {
+  return betaZodTool({
+    name,
+    description,
+    inputSchema,
+    run: async (input) => {
+      const label = summary(input);
+      ctx.emit({ type: "tool", name, input, summary: label });
+      try {
+        const data = await run(input);
+        const out = data && typeof data === "object" ? { ok: true, ...data } : { ok: true, result: data };
+        ctx.emit({ type: "tool_done", name, summary: label, ok: true, data: out });
+        return brief(out, { maxArray });
+      } catch (err) {
+        const error = err?.message || String(err);
+        ctx.emit({ type: "tool_done", name, summary: label, ok: false, error });
+        return JSON.stringify({ ok: false, error });
+      }
+    },
+  });
+}
+
+export const LEVELS = ["beginner", "intermediate", "pro"];
+export function levelFromText(text = "") {
+  const m = /\[level:\s*(beginner|intermediate|pro)\]/i.exec(text || "");
+  return m ? m[1].toLowerCase() : "intermediate";
+}
+
+/** ctx.live.listTracks() returns { ok, tracks, note } from the server and a bare array from test stubs: always an array. */
+const tracksOf = (r) => (Array.isArray(r) ? r : Array.isArray(r?.tracks) ? r.tracks : []);
+/** A track is ours when the server registered a sound on it (soundPath), flagged it (ours), or it carries one of our build prefixes. */
+const isOurTrack = (t) => Boolean(t && (t.soundPath || t.ours || /^(AI|Target|Vox Chop)\b/i.test(String(t.name || ""))));
+
+export function makeTools(ctx, recordings = {}, opts = {}) {
+  opts = { level: "intermediate", ...opts };
+  const refs = Array.isArray(recordings?.refs) ? recordings.refs : [];
+  const recPath = (which) => {
+    const m = /^ref#(\d+)$/.exec(which || "");
+    if (m) {
+      const ref = refs[Number(m[1]) - 1];
+      if (!ref) throw new Error(`no ${which} attached to this message (${refs.length} reference file${refs.length === 1 ? "" : "s"} attached)`);
+      return ref.path;
+    }
+    const p = recordings?.[which];
+    if (!p) throw new Error(`no ${which} recording attached to this message`);
+    return p;
+  };
+  const num = (v, d) => (Number.isFinite(v) ? v : d);
+  const anyPath = (which) => (which.startsWith("/") ? which : recPath(which));
+  const r1 = (v) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v * 10) / 10 : v ?? null);
+  const compactProfile = (pr, path) => {
+    if (!pr || typeof pr !== "object") return { path, profile: pr ?? null };
+    const bands = pr.spectrum?.bands ? Object.fromEntries(Object.entries(pr.spectrum.bands).map(([k, b]) => [k, r1(typeof b === "object" ? b.share : b)])) : undefined;
+    return {
+      path,
+      durationSeconds: r1(pr.durationSeconds),
+      loudness: pr.loudness ? { integratedLufs: r1(pr.loudness.integratedLufs), peakDbfs: r1(pr.loudness.peakDbfs), rmsDbfs: r1(pr.loudness.rmsDbfs), crestFactorDb: r1(pr.loudness.crestFactorDb) } : undefined,
+      envelope: pr.envelope ? { attackMs: r1(pr.envelope.attackMs), decayMs: r1(pr.envelope.decayMs) } : undefined,
+      spectrum: pr.spectrum ? { centroidHz: r1(pr.spectrum.centroidHz), bandShares: bands } : undefined,
+      pitch: pr.pitch ? { note: pr.pitch.note, midi: pr.pitch.midi, hz: r1(pr.pitch.hz) } : null,
+      rhythm: pr.rhythm ? { onsetCount: pr.rhythm.onsetCount, bpmEstimate: r1(pr.rhythm.bpmEstimate) } : null,
+      stereo: pr.stereo ? { width: r1(pr.stereo.width) } : null,
+      ratings: pr.ratings ? Object.fromEntries(Object.entries(pr.ratings).map(([k, v]) => [k, typeof v === "object" ? `${v.level} (${r1(v.value)}${v.unit ? " " + v.unit : ""})` : v])) : undefined,
+      summary: pr.summary,
+    };
+  };
+
+  return [
+    makeTool(ctx, {
+      name: "set_tempo",
+      description: "Set Live's tempo in BPM. In an EMPTY set or one with only our tracks: call before the first layer. In the USER's set (describe_set shows tracks we did not create) moving the tempo is THEIR decision: ask first unless they named a BPM or said 'change/slow/speed the tempo' (then confirmed:true). With warpClips:true (default) the script warps every unwarped audio clip first so audio follows; the result lists warped and unwarpedLeft: name the clips left unwarped. Never call during enhance_project or a project scan.",
+      inputSchema: z.object({
+        bpm: z.number().min(40).max(300).describe("tempo in beats per minute"),
+        warpClips: z.boolean().optional().describe("warp the set's unwarped audio clips before moving the tempo (default true; false only when the user said to leave their audio alone)"),
+        confirmed: z.boolean().optional().describe("true when the user named the BPM or said to change the tempo; REQUIRED in a set with user tracks (without it the tool refuses with needsConfirmation:true and nothing moves)"),
+      }),
+      summary: (i) => `tempo ${i.bpm} BPM${i.warpClips === false ? " (no warp)" : ""}`,
+      run: async ({ bpm, warpClips = true, confirmed }) => {
+        if (!confirmed) {   // the ask-first rule, enforced: a user's set keeps its tempo until the user says otherwise (prompt-only rules get skipped)
+          let userTracks = [];
+          try { userTracks = tracksOf(await ctx.live.listTracks()).filter((t) => !isOurTrack(t)); } catch {}   // Live unreachable: let setTempo report it
+          if (userTracks.length) return { ok: false, needsConfirmation: true, userTracks: userTracks.map((t) => t.name).slice(0, 12), message: "user tracks present: ask the user before changing the tempo, then call again with confirmed:true" };
+        }
+        const r = await ctx.live.setTempo({ bpm, warpClips });
+        const out = { bpm, ...(r && typeof r === "object" ? r : {}), confirmed: Boolean(confirmed) };
+        if (Array.isArray(out.unwarpedLeft) && out.unwarpedLeft.length) out.note = `${out.unwarpedLeft.length} audio clip(s) still unwarped (audio will not follow the tempo): tell the user which`;
+        return out;
+      },
+    }),
+    makeTool(ctx, {
+      name: "set_position",
+      description: "Move Live's playhead to a bar (bar 1 = the start). ADEHack 5.8+ only (older scripts return ok:false; say the capture starts at the playhead then). Captures (listen_live, critique_capture, enhance_project) already seek to bar 1 themselves on 5.8+; use this when the user wants to hear or record from a specific bar ('from the drop at bar 17').",
+      inputSchema: z.object({ bar: z.number().int().min(1).max(999).describe("1-based bar number; 1 = song start") }),
+      summary: (i) => `playhead to bar ${i.bar}`,
+      run: async ({ bar }) => {
+        const jump = ctx.live.jump || (ctx.live.setPosition ? async (b) => ctx.live.setPosition((b - 1) * 4) : null);
+        if (!jump) throw new Error("set_position needs ADEHack 5.8+ (jump/set_position command); the running script is older: captures start at the playhead");
+        const r = await jump(bar);
+        return { bar, ...(r && typeof r === "object" ? r : {}) };
+      },
+    }),
+    makeTool(ctx, {
+      name: "list_tracks",
+      description: "List the tracks currently in the Live set (name, index, midi or audio, selected). Tracks built here also report soundPath, the wav they play: pass it to listen or judge_sound to check an existing sound by ear.",
+      inputSchema: z.object({}),
+      summary: () => "list tracks",
+      run: async () => ({ tracks: await ctx.live.listTracks() }),
+    }),
+    makeTool(ctx, {
+      name: "analyze_recording",
+      description: "Analyze an attached recording or reference file. which:'beat' = beatbox, 'hum' = hummed melody, 'ref#N' = the Nth attached reference file. as:'beat' -> drum pattern (lanes kick/snare/hat_closed with 16th steps), first onsets per instrument and estimated bpm; as:'hum' -> MIDI notes, bars, bpm. For 'beat'/'hum' the mode is implied; for a ref, give `as` (defaults to 'beat'). Call this before building when a recording or reference is attached.",
+      inputSchema: z.object({
+        which: z.string().regex(/^(beat|hum|ref#\d+)$/).describe("'beat' for the beatbox recording, 'hum' for the hummed melody, or 'ref#N' for the Nth reference file"),
+        as: z.enum(["beat", "hum"]).optional().describe("how to analyze: 'beat' = rhythm/drum pattern, 'hum' = melody notes. Required in spirit for refs (default 'beat'); ignored for 'beat'/'hum'"),
+        bpm: z.number().min(40).max(300).optional().describe("tempo to quantize to; omit to estimate from the recording"),
+      }),
+      summary: (i) => `analyze ${i.which}${i.as && i.which.startsWith("ref") ? ` as ${i.as}` : ""}${i.bpm ? ` @ ${i.bpm}` : ""}`,
+      maxArray: 128,
+      run: async ({ which, as, bpm }) => {
+        const p = recPath(which);
+        const mode = which === "beat" || which === "hum" ? which : (as || "beat");
+        if (mode === "beat") {
+          const r = await ctx.beatboxToPattern(p, { bpm });
+          const firstOnsets = {};
+          for (const o of r.onsets || []) if (firstOnsets[o.instrument] == null) firstOnsets[o.instrument] = Number(o.time.toFixed(3));
+          return { bpm: r.pattern?.bpm ?? r.bpm, bars: r.pattern?.bars, pattern: r.pattern, firstOnsetSeconds: firstOnsets, onsetCount: (r.onsets || []).length };
+        }
+        const r = await ctx.humToNotes(p, { bpm: num(bpm, 120) });
+        return { bpm: r.bpm, bars: r.bars, ...compactNotes(r.notes) };
+      },
+    }),
+    makeTool(ctx, {
+      name: "write_drum_pattern",
+      description: "Get a genre-template drum pattern from a text description (lanes with 16th steps and velocities). Use as a starting point; you may edit the steps before building.",
+      inputSchema: z.object({
+        description: z.string().describe("groove description, e.g. 'four on the floor, snare on 2 and 4, offbeat open hats'"),
+        bpm: z.number().min(40).max(300).describe("tempo"),
+        bars: z.number().int().min(1).max(8).describe("length in bars"),
+      }),
+      summary: (i) => `pattern: ${i.description.slice(0, 50)}`,
+      maxArray: 128,
+      run: async ({ description, bpm, bars }) => {
+        const r = await ctx.writePattern({ description, bpm, bars });
+        const pattern = r.pattern || r;
+        return { pattern, source: r.source };
+      },
+    }),
+    makeTool(ctx, {
+      name: "write_melody",
+      description: "Write a melodic/harmonic part (notes with pitch, startBeats, durationBeats, velocity) from a description and key. Use for arps, basslines, chords, leads.",
+      inputSchema: z.object({
+        description: z.string().describe("e.g. 'hypnotic 16th arp with octave jumps' or 'two chords per bar, mellow'"),
+        key: z.string().describe("key like 'F minor' or 'D major'"),
+        bpm: z.number().min(40).max(300).describe("tempo"),
+        bars: z.number().int().min(1).max(8).describe("length in bars"),
+      }),
+      summary: (i) => `melody: ${i.description.slice(0, 40)} in ${i.key}`,
+      run: async ({ description, key, bpm, bars }) => {
+        const r = await ctx.writeMelody({ description, key, bpm, bars });
+        return { key: r.key || key, bars: r.bars || bars, ...compactNotes(r.notes), source: r.source };
+      },
+    }),
+    makeTool(ctx, {
+      name: "synthesize_sound",
+      description: "Make one sound with Stable Audio and save it as a wav. Returns samplePath to pass to build_drum_layer / build_melody_layer / replace_sound. Prompt grammar (official): optional 'Genre: X' first, then style/era reference, then the source and how it sounds (for one-shots: source + action/decay + production, e.g. 'deep electronic kick drum, single hit, hard click transient, 600 ms sub tail, saturated, dry'), then production character; describe, never instruct. The server adds 'TrackType: SFX' (drums/hits) or 'TrackType: Instrument' (tonal) automatically. source:'text' uses only the prompt; 'beatbox'/'hum'/'ref#N' transform the recording at offsetSeconds (strength 0.6-0.75 for hum/beatbox drums, 0.5-0.6 for 'like this reference'). Same prompt gives different results per seed: re-roll once before rewriting. Independent sounds: call several times in one turn.",
+      inputSchema: z.object({
+        role: z.enum(ROLES).describe("what the sound is for; drives the file slot and the default sample length"),
+        prompt: z.string().min(3).max(400).describe("Stable Audio prompt in guide order: [Genre: X,] style reference, source + how it sounds (one-shot: action/decay), production character; describe, never instruct; drums end with ', dry one-shot', tonal sounds with ', single sustained note, no drums'"),
+        source: z.string().regex(/^(text|beatbox|hum|ref#\d+)$/).default("text").describe("'text' = from prompt only; 'beatbox'/'hum' = transform the attached recording; 'ref#N' = transform the Nth attached reference file (audio-to-audio)"),
+        offsetSeconds: z.number().min(0).optional().describe("where in the recording the hit is (first onset of that instrument), for source 'beatbox'"),
+        lengthSeconds: z.number().min(0.2).max(20).optional().describe("one-shot length in seconds; default 1 s for drums, 2.5 s for tonal sounds. Longer values make longer sustained tones: use 6-16 s for pads, drones and loops when the user asks for them"),
+        strength: z.number().min(0.1).max(1).optional().describe("audio-to-audio init noise level for beatbox/hum/ref sources: 0.3 barely changes the input, 0.5 keeps rhythm/melody and changes timbre, 0.8-0.9 full timbre transfer; default 0.7 (0.6 for refs)"),
+        variations: z.number().int().min(1).max(3).optional().describe("1-3 generations with different seeds (default 1). Use 3 for 'one specific sound' requests and in the Tweak room; the result then lists variants A/B/C to judge, present and pick from"),
+      }),
+      summary: (i) => `synth ${i.role}: ${i.prompt.slice(0, 50)}${i.source !== "text" ? ` (from ${i.source})` : ""}${i.variations > 1 ? ` x${i.variations}` : ""}`,
+      run: async ({ role, prompt, source = "text", offsetSeconds, lengthSeconds, strength, variations = 1 }) => {
+        const tonal = ["synth", "bass", "pad", "lead", "pluck", "keys"].includes(role);
+        const isRef = source.startsWith("ref#");
+        const audioPath = source === "text" ? undefined : recPath(isRef ? source : source === "beatbox" ? "beat" : "hum");
+        const r = await ctx.synth({ role, prompt, kind: tonal ? "tone" : "drum", audioPath, offsetSeconds, oneshotSeconds: lengthSeconds ?? (tonal ? 2.5 : 1.0), strength: strength ?? (isRef ? 0.6 : undefined), variations });
+        if (variations > 1 && Array.isArray(r.variants)) {
+          return { role, variants: r.variants.map((v, i) => ({ label: v.label || "ABC"[i], samplePath: v.path, url: v.url, seed: v.seed })), next: "judge or analyze the variants, present A/B/C with one-line differences, recommend one, place it, say \"say 'use B'\"" };
+        }
+        return { role, samplePath: r.path, name: r.name, durationSeconds: r.durationSeconds, peakDb: r.peakDb, url: r.url };
+      },
+    }),
+    makeTool(ctx, {
+      name: "build_drum_layer",
+      description: "Put a drum layer into Live: a track named `name` (created or reused) with the sample loaded in Simpler and a clip of the steps (one note per hit, 16th grid), fired. Reusing an existing track name REPLACES that track's instrument and clip; in a user's set use 'AI <Role>' names (AI Kick).",
+      inputSchema: z.object({
+        name: z.string().min(1).max(32).describe("track/layer name, e.g. Kick, Snare, Hats, Open Hats, Rim, Perc"),
+        instrument: z.enum(INSTRUMENTS).describe("which drum this is"),
+        samplePath: z.string().describe("samplePath returned by synthesize_sound"),
+        steps: z.array(StepSchema).min(1).max(128).describe("hits on the 16th grid across all bars"),
+        bars: z.number().int().min(1).max(8).describe("clip length in bars"),
+        swing: z.number().min(0).max(0.6).optional().describe("delays the off-16ths; 0 straight, 0.3 lazy"),
+        slot: z.number().int().min(0).max(7).optional().describe("clip slot / scene: 0 = scene A (default, main groove), 1 = scene B (variation) ..."),
+        humanize: z.number().min(0).max(1).optional().describe("timing jitter up to 12 ms and velocity jitter up to 15 at 1.0; hats/perc 0.3-0.5, kick 0.1"),
+        useGroove: z.boolean().optional().describe("apply the stored groove template (microtiming + velocity profile from analyze_music / the beatbox) to this layer"),
+      }),
+      summary: (i) => `build ${i.name} (${i.steps.length} hits, ${i.bars} bar${i.bars > 1 ? "s" : ""}${i.slot ? `, scene ${i.slot + 1}` : ""})`,
+      run: async (input) => {
+        const r = await ctx.live.buildLane(input);
+        return { track: r.track, notes: r.notes ?? input.steps.length, loadedSample: r.loadedSample ?? true };
+      },
+    }),
+    makeTool(ctx, {
+      name: "build_melody_layer",
+      description: "Put a melodic layer into Live: a track named `name` with a clip of the notes, fired. With samplePath the sound is a Stability one-shot in Simpler (pitched per note, C3=60 plays the sample as recorded); without it the clip plays whatever instrument is on the track (a Live preset via load_device, or a Drum Rack with pad pitches). Reusing an existing track name REPLACES that track's instrument; in a user's set use 'AI <Role>' names (AI Bass).",
+      inputSchema: z.object({
+        name: z.string().min(1).max(32).describe("track/layer name, e.g. Bass, Pad, Keys, Lead"),
+        samplePath: z.string().optional().describe("omit when the track already has a Live preset/Drum Rack; give a samplePath only for a Stability one-shot in Simpler"),
+        notes: z.array(NoteSchema).min(1).max(256).describe("the notes"),
+        bars: z.number().int().min(1).max(8).describe("clip length in bars"),
+        slot: z.number().int().min(0).max(7).optional().describe("clip slot / scene: 0 = scene A (default), 1 = scene B (variation) ..."),
+      }),
+      summary: (i) => `build ${i.name} (${i.notes.length} notes, ${i.bars} bar${i.bars > 1 ? "s" : ""}${i.slot ? `, scene ${i.slot + 1}` : ""})`,
+      run: async (input) => {
+        const r = await ctx.live.buildMelody(input);
+        return { track: r.track, notes: r.notes ?? input.notes.length, loadedSample: r.loadedSample ?? true };
+      },
+    }),
+    makeTool(ctx, {
+      name: "update_layer",
+      description: "Replace the clip on an existing layer (by track name) with new steps (drums) or notes (melody), keeping its sound. Use for 'make the hats busier', 'half time', etc.",
+      inputSchema: z.object({
+        name: z.string().describe("existing track/layer name"),
+        steps: z.array(StepSchema).max(128).optional().describe("new drum hits (for drum layers)"),
+        notes: z.array(NoteSchema).max(256).optional().describe("new notes (for melodic layers)"),
+        bars: z.number().int().min(1).max(8).describe("clip length in bars"),
+        swing: z.number().min(0).max(0.6).optional().describe("swing for drum layers"),
+        slot: z.number().int().min(0).max(7).optional().describe("which clip slot / scene to replace (default 0)"),
+        useGroove: z.boolean().optional().describe("apply the stored groove template to the new clip"),
+      }),
+      summary: (i) => `update ${i.name}${i.slot ? ` (scene ${i.slot + 1})` : ""}`,
+      run: async (input) => {
+        if (!input.steps && !input.notes) throw new Error("give steps or notes");
+        const r = await ctx.live.updateLayer(input);
+        return { track: r.track, notes: r.notes };
+      },
+    }),
+    makeTool(ctx, {
+      name: "replace_sound",
+      description: "Load a different sample into an existing layer's Simpler (by track name), keeping its clip. Use after synthesize_sound for 'swap the kick for an 808'.",
+      inputSchema: z.object({
+        name: z.string().describe("existing track/layer name"),
+        samplePath: z.string().describe("samplePath from synthesize_sound"),
+        role: z.enum(ROLES).optional().describe("role of the sound, for the file slot"),
+      }),
+      summary: (i) => `replace sound on ${i.name}`,
+      run: async ({ name, samplePath, role }) => ({ track: await ctx.live.loadSample({ name, samplePath, role }) }),
+    }),
+    makeTool(ctx, {
+      name: "remove_layer",
+      description: "Delete a layer's track from Live by name.",
+      inputSchema: z.object({ name: z.string().describe("track/layer name to remove") }),
+      summary: (i) => `remove ${i.name}`,
+      run: async ({ name }) => ({ removed: name, ...(await ctx.live.deleteTrack(name)) }),
+    }),
+    makeTool(ctx, {
+      name: "listen",
+      description: "Hear a wav with an audio-language model (Gemini; NVIDIA Music Flamingo when its ZeroGPU quota allows) and get a text description. Use on the user's recording when their text is vague (what timbre, mood, energy are they going for?) or on a generated sample to check it. 10-40 s latency; max 3 listen/judge calls per turn. Optional question focuses the description.",
+      inputSchema: z.object({
+        path: z.string().describe("absolute path of a wav: a recording attached this turn or a samplePath from synthesize_sound"),
+        question: z.string().max(300).optional().describe("what to focus on, e.g. 'what kind of kick drum is this and what mood?'"),
+      }),
+      summary: (i) => `listen: ${i.path.split("/").pop()}${i.question ? ` — ${i.question.slice(0, 40)}` : ""}`,
+      run: async ({ path, question }) => {
+        const r = await ctx.listen(path, question);
+        return { heard: r.text };
+      },
+    }),
+    makeTool(ctx, {
+      name: "transcribe_audio",
+      description: "Transcribe an attached recording or reference file to MIDI notes: basic-pitch locally first (no quota), MuScriptor as fallback; the result says which engine ran. Use for melodies, chords, basslines in a reference file, or a hummed line when analyze_recording's monophonic tracking is not enough. Returns notes (pitch, startBeats, durationBeats, velocity), bars, bpm and the instruments found; pass the notes to build_melody_layer. 20-60 s latency. Optional instruments hint (e.g. ['acoustic_piano','synth_pad']).",
+      inputSchema: z.object({
+        which: z.string().regex(/^(beat|hum|ref#\d+)$/).describe("'hum' for the hummed melody, 'beat' for the beatbox, or 'ref#N' for the Nth reference file"),
+        instruments: z.array(z.string().min(1).max(40)).max(6).optional().describe("optional instrument hints for the model, e.g. ['acoustic_piano'], ['synth_pad'], ['drums']"),
+      }),
+      summary: (i) => `transcribe ${i.which}${i.instruments?.length ? ` (${i.instruments.join(", ")})` : ""}`,
+      run: async ({ which, instruments }) => {
+        const p = recPath(which);
+        let r, engine = "muscriptor", localError;
+        if (typeof ctx.transcribeLocal === "function") {
+          try { r = await ctx.transcribeLocal(p, { instruments: instruments || [] }); engine = "basic-pitch (local)"; }
+          catch (e) { localError = e?.message || String(e); }
+        }
+        if (!r) r = await ctx.transcribe(p, { instruments: instruments || [] });
+        return { engine, ...(localError ? { localFallbackReason: localError.slice(0, 160) } : {}), ...compactNotes(r.notes), bars: r.bars, bpm: r.bpm, tracks: r.tracks, summary: r.summary };
+      },
+    }),
+    makeTool(ctx, {
+      name: "judge_sound",
+      description: "Compare a generated one-shot against what was asked for. Returns a critique and match 1-10 (null if it could not rate). If match <= 5, re-synthesize once with an improved prompt informed by the critique. Max 3 listen/judge calls per turn.",
+      inputSchema: z.object({
+        path: z.string().describe("samplePath from synthesize_sound"),
+        intent: z.string().min(3).max(300).describe("what the sound was supposed to be, e.g. 'tight clicky techno kick with a short sub tail'"),
+      }),
+      summary: (i) => `judge ${i.path.split("/").pop()} vs "${i.intent.slice(0, 40)}"`,
+      run: async ({ path, intent }) => {
+        const r = await ctx.judge(path, intent);
+        return { critique: r.text, match: r.match ?? null };
+      },
+    }),
+    makeTool(ctx, {
+      name: "slice_sample",
+      description: "Cut a piece out of a recording or reference file (no Stability) and save it as a wav to use as a layer sound: vocal chops, stabs, a hit you liked. Returns samplePath.",
+      inputSchema: z.object({
+        which: z.string().regex(/^(beat|hum|ref#\d+)$/).describe("'beat', 'hum' or 'ref#N'"),
+        startSeconds: z.number().min(0).describe("where the piece starts, in seconds"),
+        lengthSeconds: z.number().min(0.05).max(4).describe("piece length in seconds (0.05-4)"),
+        name: z.string().min(1).max(32).describe("short name for the piece, e.g. 'vox-ah', 'stab1'"),
+      }),
+      summary: (i) => `slice ${i.which} @${i.startSeconds}s (${i.lengthSeconds}s) -> ${i.name}`,
+      run: async ({ which, startSeconds, lengthSeconds, name }) => {
+        const r = await ctx.slice(recPath(which), { startSeconds, lengthSeconds, name });
+        return { samplePath: r.path, name: r.name, durationSeconds: r.durationSeconds ?? lengthSeconds, url: r.url };
+      },
+    }),
+    makeTool(ctx, {
+      name: "chop_sample",
+      description: "Detect the hits / syllables in a recording or reference and return them as pieces with start times, lengths, loudness and a rough class (kick/snare/hat/tonal), each already saved as a wav (samplePath). Pick pieces for layers or vocal chops; use slice_sample for a precise cut.",
+      inputSchema: z.object({
+        which: z.string().regex(/^(beat|hum|ref#\d+)$/).describe("'beat', 'hum' or 'ref#N'"),
+        maxPieces: z.number().int().min(1).max(32).optional().describe("cap on the number of pieces (default 16)"),
+        pieceSeconds: z.number().min(0.05).max(4).optional().describe("fixed piece length; default = until the next hit, max 1 s"),
+      }),
+      summary: (i) => `chop ${i.which}`,
+      maxArray: 128,
+      run: async ({ which, maxPieces, pieceSeconds }) => {
+        const r = await ctx.chop(recPath(which), { maxPieces, pieceSeconds });
+        return { pieceCount: r.pieces.length, pieces: r.pieces, bpm: r.bpm ?? null };
+      },
+    }),
+    makeTool(ctx, {
+      name: "load_device",
+      description: "Load any Live device or preset onto a track: an instrument (Simpler, Drum Rack, Impulse), a preset from browse_library (e.g. '909 Core Kit.adg', a Bass/Pad/Keys .adg), a MIDI effect (Arpeggiator, Scale, Velocity, Random, Chord, Pitch, Note Length) or an audio effect. Aliases: 'ping pong' -> Delay (Ping Pong on), 'eq' -> EQ Eight, 'glue' -> Glue Compressor, 'bitcrusher' -> Redux. The result carries requested, the ACTUAL loaded device name, match ('exact'|'alias'|'ci'|'fuzzy'), reused:true if it was already on the track, and its first params. Name the actual device in your reply. For audio effects with parameters prefer add_effect.",
+      inputSchema: z.object({
+        track: z.string().describe("track/layer name (created by a build tool, or 'Drums' for a kit track that build_melody_layer will fill)"),
+        device: z.string().min(2).max(80).describe("device, alias or preset name, e.g. 'Drum Rack', '909 Core Kit.adg', 'Arpeggiator', 'Scale', 'Reverb'"),
+      }),
+      summary: (i) => `load ${i.device} on ${i.track}`,
+      maxArray: 32,
+      run: async ({ track, device }) => {
+        const r = await ctx.live.loadDevice({ track, device });
+        const params = Array.isArray(r?.params) ? r.params.slice(0, 32).map((k) => ({ name: k.name, min: k.min, max: k.max, display: k.display })) : [];
+        return { track, requested: r?.requested ?? device, device: r?.device?.name ?? r?.device ?? device, match: r?.match ?? null, deviceIndex: r?.device?.index ?? r?.index, ...(r?.reused ? { reused: true } : {}), params };
+      },
+    }),
+    makeTool(ctx, {
+      name: "add_effect",
+      description: "Add an Ableton audio effect to a track and optionally set parameters by name. Devices (Live 10 Standard): Saturator, Overdrive, Reverb, Auto Filter, Glue Compressor, Drum Buss, Redux, Delay (alias 'ping pong' = Delay with Ping Pong on), Compressor, EQ Eight, Chorus, Phaser, Auto Pan, Utility, Gate, Erosion, Vinyl Distortion, Beat Repeat. Live's internal ranges differ from producer units (Saturator Drive is -36..36 dB, Reverb Decay Time is in ms, Dry/Wet is 0..1 on some devices and 0..100 on others, quantized params take an integer index): the result lists the device's params with name/min/max/display, so read it and prefer values stated relative to that range ('Drive +18 dB', 'Dry/Wet 25%'). Requested values are clamped into range; seconds given for a ms param are converted. Results carry requested, the ACTUAL loaded device name and match ('exact'|'alias'|'ci'|'fuzzy'); name the actual device in your reply. If the track already has that device the result carries reused:true (only params were set): then say 'adjusted the existing X', not 'added'.",
+      inputSchema: z.object({
+        track: z.string().describe("track/layer name"),
+        device: z.string().min(2).max(40).describe("Live device name, e.g. 'Saturator', 'Reverb', 'Auto Filter'"),
+        params: z.array(z.object({
+          name: z.string().describe("parameter name as shown in Live, e.g. 'Drive', 'Dry/Wet', 'Frequency', 'Decay Time' (case-insensitive)"),
+          value: z.number().describe("value in the parameter's own unit (dB, %, Hz, s or ms); clamped to the device's range"),
+        })).max(12).optional().describe("parameters to set after loading"),
+      }),
+      summary: (i) => `add ${i.device} on ${i.track}${i.params?.length ? ` (${i.params.map((p) => `${p.name}=${p.value}`).join(", ")})` : ""}`,
+      maxArray: 32,
+      run: async ({ track, device, params = [] }) => {
+        const loaded = await ctx.live.loadDevice({ track, device });
+        const known = Array.isArray(loaded?.params) ? loaded.params : [];
+        const deviceName = loaded?.device?.name ?? loaded?.device ?? device;
+        const deviceRef = Number.isInteger(loaded?.device?.index) ? loaded.device.index : deviceName;   // index: a 2nd Reverb on the track must not hit the 1st
+        const set = [];
+        for (const p of params) {
+          const match = known.find((k) => String(k.name).toLowerCase() === String(p.name).toLowerCase());
+          let value = p.value, note;
+          if (match && Number.isFinite(match.min) && Number.isFinite(match.max)) {
+            // seconds given for a millisecond-range param (e.g. Reverb Decay Time 1.5 -> 1500)
+            if (value > 0 && value < match.min && value * 1000 >= match.min && value * 1000 <= match.max) { value = value * 1000; note = "converted s -> ms"; }
+            const clamped = Math.min(match.max, Math.max(match.min, value));
+            if (clamped !== value) { note = `clamped ${value} into [${match.min}, ${match.max}]`; value = clamped; }
+            if (match.quantized) value = Math.round(value);
+          }
+          try {
+            const r = await ctx.live.setParam({ track, device: deviceRef, param: match?.name ?? p.name, value });
+            set.push({ name: match?.name ?? p.name, requested: p.value, value, ...(r?.param ?? r ?? {}), ...(note ? { note } : {}), ok: true });
+          } catch (e) { set.push({ name: p.name, requested: p.value, ok: false, error: e?.message || String(e) }); }
+        }
+        const paramsOut = known.slice(0, 32).map((k) => ({ name: k.name, min: k.min, max: k.max, display: k.display, ...(k.quantized ? { quantized: true } : {}) }));
+        return { track, requested: loaded?.requested ?? device, device: deviceName, match: loaded?.match ?? null, deviceIndex: loaded?.device?.index ?? loaded?.index, ...(loaded?.reused ? { reused: true } : {}), set, deviceParams: paramsOut };
+      },
+    }),
+    makeTool(ctx, {
+      name: "set_param",
+      description: "Set one parameter of a device already on a track (by names). Use list_devices to see what is there.",
+      inputSchema: z.object({
+        track: z.string().describe("track/layer name"),
+        device: z.string().describe("device name on that track, e.g. 'Simpler', 'Saturator'"),
+        param: z.string().describe("parameter name, e.g. 'Drive', 'Dry/Wet', 'Decay Time', 'Frequency', 'Volume'"),
+        value: z.number().describe("value in the parameter's unit; the server maps it to Live's range"),
+      }),
+      summary: (i) => `${i.track} / ${i.device} / ${i.param} = ${i.value}`,
+      run: async (i) => { const r = await ctx.live.setParam(i); const param = r?.param ?? r ?? {}; return { track: i.track, device: i.device, param: { name: param.name ?? i.param, value: param.value ?? i.value, min: param.min, max: param.max, display: param.display } }; },
+    }),
+    makeTool(ctx, {
+      name: "list_devices",
+      description: "List the devices on a track with their parameters (names and current values).",
+      inputSchema: z.object({ track: z.string().describe("track/layer name") }),
+      summary: (i) => `devices on ${i.track}`,
+      maxArray: 32,
+      run: async ({ track }) => ({ track, devices: await ctx.live.listDevices(track) }),
+    }),
+    makeTool(ctx, {
+      name: "set_mixer",
+      description: "Set a track's volume (linear 0-1: 0.85 ~ 0 dB, 0.7 ~ -6 dB), pan (-1..1), mute or solo.",
+      inputSchema: z.object({
+        track: z.string().describe("track/layer name"),
+        volume: z.number().min(0).max(1).optional().describe("0-1 linear; 0.85 is 0 dB, 0.7 about -6 dB"),
+        pan: z.number().min(-1).max(1).optional().describe("-1 left, 0 center, 1 right"),
+        mute: z.boolean().optional().describe("mute on/off"),
+        solo: z.boolean().optional().describe("solo on/off"),
+      }),
+      summary: (i) => `mix ${i.track}${i.volume != null ? ` vol ${i.volume}` : ""}${i.pan != null ? ` pan ${i.pan}` : ""}${i.mute != null ? ` mute ${i.mute}` : ""}${i.solo != null ? ` solo ${i.solo}` : ""}`,
+      run: async (i) => {
+        if (i.volume == null && i.pan == null && i.mute == null && i.solo == null) throw new Error("give volume, pan, mute or solo");
+        return { ...i, ...(await ctx.live.setMixer(i)) };
+      },
+    }),
+    makeTool(ctx, {
+      name: "create_scene",
+      description: "Create (or name) a scene row. Scene 1 = slot 0 (main groove), scene 2 = slot 1 (variation).",
+      inputSchema: z.object({ name: z.string().min(1).max(32).describe("scene name, e.g. 'Drop', 'B part'"), index: z.number().int().min(0).max(7).optional().describe("scene index to create/rename; default = next") }),
+      summary: (i) => `scene ${i.name}`,
+      run: async ({ name, index }) => ({ ...(await ctx.live.createScene({ name, index })) }),
+    }),
+    makeTool(ctx, {
+      name: "fire_scene",
+      description: "Launch a scene (all clips in that row). 0 = scene A, 1 = scene B.",
+      inputSchema: z.object({ index: z.number().int().min(0).max(7).describe("scene index") }),
+      summary: (i) => `fire scene ${i.index + 1}`,
+      run: async ({ index }) => ({ index, ...(await ctx.live.fireScene(index)) }),
+    }),
+    makeTool(ctx, {
+      name: "synth_local",
+      description: "Deterministic local one-shots (no Stability): 'sub' = clean pitch-enveloped sine kick body (startHz->endHz over ~35 ms, decayMs, optional drive dB), '808' = long driven 808, 'snap' = bright noise snap/clap top. Use under a Stability kick whose subShare is below 0.25 (layer_samples: kick top + local sub at -3 dB), as the 808 for trap/drill, or as the snap layer on a snare.",
+      inputSchema: z.object({ kind: z.enum(["sub", "808", "snap"]), name: z.string().min(1).max(32).optional(), startHz: z.number().min(40).max(400).optional(), endHz: z.number().min(30).max(120).optional(), decayMs: z.number().min(60).max(2500).optional(), drive: z.number().min(0).max(18).optional().describe("dB of drive (808)"), highpassHz: z.number().min(200).max(8000).optional().describe("snap brightness"), gainDb: z.number().min(-24).max(6).optional() }),
+      summary: (i) => `local ${i.kind}`,
+      run: async (i) => ctx.synthLocal(i),
+    }),
+    makeTool(ctx, {
+      name: "add_loop_layer",
+      description: "LOOP-FIRST layer: Stable Audio generates a bar-exact loop (its strength) and it lands as a WARPED AUDIO CLIP on its own audio track, in time at the set tempo. kinds: tops (hats/shakers/perc, no kick/snare), drums (full drum loop), bass, chords, melody, texture, fx. matchMix (default true once anything is built) seeds the generation with what the set already sounds like (audio-to-audio), so the new layer shares its tempo, key and character; strength 0.3 keeps it close, 0.85 reinvents. Prefer this over one-shots for everything that is not kick/snare/clap. Prompt = blueprint loop/texture line + the user's words.",
+      inputSchema: z.object({ name: z.string().min(1).max(40).describe("track name, e.g. 'Tops', 'Texture', 'Bass Loop'"), prompt: z.string().min(3).max(400), kind: z.enum(["tops", "drums", "bass", "chords", "melody", "texture", "fx"]).optional(), bars: z.number().int().min(1).max(8).optional(), matchMix: z.boolean().optional(), strength: z.number().min(0.2).max(0.9).optional(), seedPath: z.string().optional().describe("seed from a specific wav (a user sample, a stem, a capture) instead of the mix"), slot: z.number().int().min(0).max(63).optional() }),
+      summary: (i) => `loop layer ${i.name}${i.matchMix === false ? '' : ' (matched to the mix)'}`,
+      maxArray: 16,
+      run: async (i) => ctx.live.addLoopLayer(i),
+    }),
+    makeTool(ctx, {
+      name: "enhance_project",
+      description: "THE way to work on an existing set: records 8-16 bars of their set from bar 1 (ADEHack 5.8+; older scripts record from the playhead and say so in `note`), Gemini describes what it hears, Claude turns that + the user's intent + the blueprint into one Stable Audio prompt, Stable Audio 3 regenerates it audio-to-audio (strength: 0.35 keeps it theirs, 0.6 reshapes, 0.8 reinvents). The whole-mix result is a REFERENCE + SEED, not the final sound: it lands as 'AI Enhance' (auditioned soloed), and the capture is split into stems that become real layers, each regenerated per stem and scored against the original: 'AI Tops' (drums stem, warped audio clip), 'AI Texture' (melodic stem), 'AI Bass' (transcribed bass on a Live preset), 'AI Kit' (Drum Rack kit + MIDI groove). Every new layer starts MUTED except the one being auditioned; the result's `presentation` {audible, muted} and per-layer `scores` (+ scoreNote when a lite judge was used) tell you what the user is hearing - say it. Stems are registered as ref#N so add_loop_layer can seed from them. Never set_tempo around this call.",
+      inputSchema: z.object({ intent: z.string().min(3).max(400).describe("what it should become, in the user's words, e.g. 'cosmo pop techno, keep the guitar as the lead'"), strength: z.number().min(0.2).max(0.9).optional(), bars: z.number().int().min(4).max(16).optional().describe("bars to capture from bar 1 (default 8-16, the server picks by set length)"), deconstruct: z.boolean().optional(), genre: z.string().max(60).optional() }),
+      summary: (i) => `enhance the whole project: ${i.intent.slice(0, 50)}`,
+      maxArray: 16,
+      run: async (i) => ctx.enhanceProject(i),
+    }),
+    makeTool(ctx, {
+      name: "audition",
+      description: "Hear ONLY the named tracks for N bars (solo, play, restore). Use it to present a new layer or an enhanced version against the set instead of on top of it, and for A/B: audition ['AI Enhance'] then audition the user's tracks. Never judge a layer while everything plays at once.",
+      inputSchema: z.object({ tracks: z.array(z.string().min(1)).min(1).max(12), bars: z.number().int().min(1).max(32).optional() }),
+      summary: (i) => `audition ${i.tracks.join(', ')}`,
+      run: async (i) => ctx.live.audition(i),
+    }),
+    makeTool(ctx, {
+      name: "clip_info",
+      description: "Read one clip in a session slot (audio or MIDI): name, length, looping, loop points, and for audio clips warping, warp mode, transpose (pitch_coarse), gain and file path. Use before changing tempo in a user's set to see whether their audio clips are warped.",
+      inputSchema: z.object({ track: z.string().min(1).describe("track name"), slot: z.number().int().min(0).max(63).optional().describe("session slot (default 0)") }),
+      summary: (i) => `clip info ${i.track}${i.slot ? ' slot ' + i.slot : ''}`,
+      run: async (i) => ctx.live.clipInfo(i),
+    }),
+    makeTool(ctx, {
+      name: "set_clip_warp",
+      description: "Warp an AUDIO clip so it follows the set tempo (warp:true), choose the warp mode (complex_pro for full mixes and guitars, beats for drums, tones for bass/vocals, repitch for tape-style slowdown), transpose it in semitones (pitchCoarse) or set its gain 0-1. This is how 'slow the guitar down to 132 BPM' stays in time: set_tempo + set_clip_warp on their clip. Only touch the user's clip when they asked for that part.",
+      inputSchema: z.object({ track: z.string().min(1), slot: z.number().int().min(0).max(63).optional(), warp: z.boolean().optional().describe("default true"), warpMode: z.enum(["beats", "tones", "texture", "repitch", "complex", "complex_pro"]).optional(), pitchCoarse: z.number().int().min(-48).max(48).optional().describe("semitones"), gain: z.number().min(0).max(1).optional() }),
+      summary: (i) => `warp ${i.track}${i.warpMode ? ' ' + i.warpMode : ''}${i.pitchCoarse ? ' ' + (i.pitchCoarse > 0 ? '+' : '') + i.pitchCoarse + ' st' : ''}`,
+      run: async (i) => ctx.live.setClipWarp(i),
+    }),
+    makeTool(ctx, {
+      name: "load_audio_clip",
+      description: "Put a wav (a generated loop, a Stable Audio texture, a processed stem, an imported sample) into a session slot as a WARPED AUDIO CLIP on an audio track (created if missing), so it plays in time at the set tempo. Use for loops, textures, risers and stems; one-shots belong in Simpler/Drum Rack (build_* tools).",
+      inputSchema: z.object({ track: z.string().min(1).max(40).describe("audio track name, e.g. 'AI Texture'"), samplePath: z.string().min(1), slot: z.number().int().min(0).max(63).optional(), warpMode: z.enum(["beats", "tones", "texture", "repitch", "complex", "complex_pro"]).optional().describe("default complex_pro; beats for drum loops"), overwrite: z.boolean().optional() }),
+      summary: (i) => `audio clip -> ${i.track}`,
+      run: async (i) => ctx.live.loadAudioClip(i),
+    }),
+    makeTool(ctx, {
+      name: "live_undo",
+      description: "Undo the last N edits in Live itself (the Edit > Undo history: track creation, device loads, clip edits, tempo changes). The safety net when something you did was wrong; say what was undone. redo:true re-applies.",
+      inputSchema: z.object({ steps: z.number().int().min(1).max(20).optional(), redo: z.boolean().optional() }),
+      summary: (i) => `${i.redo ? 'redo' : 'undo'} ${i.steps || 1} in Live`,
+      run: async ({ steps, redo }) => (redo ? ctx.live.redo({ steps }) : ctx.live.undo({ steps })),
+    }),
+    makeTool(ctx, {
+      name: "meters",
+      description: "Sample Live's real output meters for ~1 s while playing: peak level 0-1 per track and master. Cheap way to see which layer dominates or is inaudible, without an audio capture.",
+      inputSchema: z.object({ ticks: z.number().int().min(2).max(40).optional().describe("100 ms samples, default 10") }),
+      summary: () => "read Live meters",
+      run: async (i) => ctx.live.meters(i),
+    }),
+    makeTool(ctx, {
+      name: "record_performance",
+      description: "Record the producer's own playing (guitar, vocal, keys) into a session clip: arms the track, counts in, records N bars, stops and reports the clip. Ask them to be ready first.",
+      inputSchema: z.object({ track: z.string().min(1), slot: z.number().int().min(0).max(63).optional(), bars: z.number().int().min(1).max(32).optional(), monitoring: z.enum(["in", "auto", "off"]).optional() }),
+      summary: (i) => `record ${i.bars || 4} bars on ${i.track}`,
+      run: async ({ track, slot, bars, monitoring }) => { await ctx.live.setArm({ track, arm: true, monitoring: monitoring || 'auto' }); try { return await ctx.live.sessionRecord({ track, slot, bars }); } finally { await ctx.live.setArm({ track, arm: false }).catch(() => {}); } },
+    }),
+    makeTool(ctx, {
+      name: "record_arrangement",
+      description: "Record Session clips into the Arrangement timeline, then stop and show Arrangement view. Either `bars` (records whatever is playing; fire the scene first) or `scenes` (a sequence: fire scene index, record that many bars, then the next scene; e.g. A for 8 bars then B for 8 bars). Use when the user says 'lay it out', 'record it', 'make an arrangement', 'timeline'.",
+      inputSchema: z.object({
+        bars: z.number().int().min(1).max(64).optional().describe("bars to record of what is playing now"),
+        scenes: z.array(z.object({ index: z.number().int().min(0).max(15).describe("scene index, 0 = A"), bars: z.number().int().min(1).max(64).describe("bars to record for this scene") })).min(1).max(8).optional().describe("ordered scene sequence; overrides bars"),
+      }).refine((v) => v.bars || (v.scenes && v.scenes.length), { message: "give bars or scenes" }),
+      summary: (i) => i.scenes ? `record scenes ${i.scenes.map((s) => `${s.index}×${s.bars}`).join(" → ")} to arrangement` : `record ${i.bars} bars to arrangement`,
+      run: async ({ bars, scenes }) => ({ bars, scenes, ...(await ctx.live.recordArrangement(scenes ? { scenes } : { bars })) }),
+    }),
+    makeTool(ctx, {
+      name: "analyze_audio",
+      description: "Measure a wav technically: duration, loudness (integrated LUFS, peak/RMS dBFS, crest factor), envelope (attack/decay ms), spectrum (centroid, band shares sub/low/lowMid/mid/high/air), pitch (tonal files), rhythm (files > 2 s), stereo, and low/medium/high ratings (loudness, punch, subWeight, lowEnd, body, presence, brightness, air, noisiness, tonalness, length) each with the number behind it, plus a neutral one-sentence summary. Use for feedback on references and on produced sounds; report numbers and ratings, not judgments.",
+      inputSchema: z.object({
+        which: z.string().min(1).describe("'beat', 'hum', 'ref#N', or an absolute path to a wav (a samplePath, a slice, or a render_preview path)"),
+      }),
+      summary: (i) => `analyze ${i.which.startsWith("/") ? i.which.split("/").pop() : i.which}`,
+      maxArray: 16,
+      run: async ({ which }) => {
+        const p = anyPath(which);
+        const r = await ctx.analyze(p);
+        return compactProfile(r, p);
+      },
+    }),
+    makeTool(ctx, {
+      name: "compare_audio",
+      description: "Compare two wavs technically (reference vs produced, before vs after): per-rating numeric deltas and neutral comparison sentences. Each side is 'beat', 'hum', 'ref#N' or an absolute path.",
+      inputSchema: z.object({
+        a: z.string().min(1).describe("first file: 'beat'|'hum'|'ref#N'|absolute path (usually the reference)"),
+        b: z.string().min(1).describe("second file: 'beat'|'hum'|'ref#N'|absolute path (usually what you produced)"),
+      }),
+      summary: (i) => `compare ${i.a.split("/").pop()} vs ${i.b.split("/").pop()}`,
+      maxArray: 16,
+      run: async ({ a, b }) => {
+        const r = await ctx.compare(anyPath(a), anyPath(b));
+        return { deltas: r.deltas, text: r.text };
+      },
+    }),
+    makeTool(ctx, {
+      name: "render_preview",
+      description: "Render an offline preview mix of everything you built (the server's registry of tracks, sounds and last clips) to a wav and analyze it. It has NO Live effects or mixer settings, so it measures the raw layers. Use before giving feedback on the produced beat. Returns path, url, duration and the technical profile.",
+      inputSchema: z.object({
+        bars: z.number().int().min(1).max(16).optional().describe("how many bars to render (default: the loop length)"),
+      }),
+      summary: (i) => `render preview${i.bars ? ` (${i.bars} bars)` : ""}`,
+      maxArray: 16,
+      run: async ({ bars }) => {
+        const r = await ctx.render({ bars });
+        const profile = r.profile ? compactProfile(r.profile, r.path) : (ctx.analyze ? compactProfile(await ctx.analyze(r.path), r.path) : undefined);
+        return { path: r.path, url: r.url, durationSeconds: r.durationSeconds, noLiveEffects: true, profile };
+      },
+    }),
+    makeTool(ctx, {
+      name: "set_track_color",
+      description: "Color a track by role (Live color index 0-69): drums warm (kick 0-4, snare/clap 5-9, hats/perc 10-14), synth/bass cool (20-29), vox/pad purples (40-49).",
+      inputSchema: z.object({
+        track: z.string().describe("track/layer name"),
+        colorIndex: z.number().int().min(0).max(69).describe("Live color index 0-69"),
+      }),
+      summary: (i) => `color ${i.track} -> ${i.colorIndex}`,
+      run: async (i) => ({ ...i, ...(await ctx.live.setTrackColor(i)) }),
+    }),
+    makeTool(ctx, {
+      name: "capture_midi",
+      description: "Live's Capture MIDI: turns what the user just played on a MIDI controller into a clip on the selected track.",
+      inputSchema: z.object({}),
+      summary: () => "capture MIDI",
+      run: async () => ({ ...(await ctx.live.captureMidi()) }),
+    }),
+    makeTool(ctx, {
+      name: "layer_samples",
+      description: "Stack 2-4 one-shots into one wav (e.g. kick = sub + click, snare = body + crack). Per layer: gainDb, offsetMs delay, highpassHz / lowpassHz. Returns samplePath for build_drum_layer / replace_sound.",
+      inputSchema: z.object({
+        layers: z.array(z.object({
+          path: z.string().describe("samplePath of a one-shot"),
+          gainDb: z.number().min(-24).max(12).optional().describe("level offset in dB (default 0); e.g. -3 for the click on top of a sub"),
+          offsetMs: z.number().min(0).max(200).optional().describe("delay this layer by ms (default 0)"),
+          highpassHz: z.number().min(20).max(20000).optional().describe("highpass this layer, e.g. 150 for a click layer"),
+          lowpassHz: z.number().min(20).max(20000).optional().describe("lowpass this layer, e.g. 120 for a sub layer"),
+        })).min(2).max(4).describe("2-4 layers"),
+        name: z.string().min(1).max(32).describe("name for the result, e.g. 'kick-layered'"),
+      }),
+      summary: (i) => `layer ${i.layers.length} sounds -> ${i.name}`,
+      run: async ({ layers, name }) => {
+        const r = await ctx.layerSamples({ layers, name });
+        return { samplePath: r.path, url: r.url, durationSeconds: r.durationSeconds, layers: layers.length };
+      },
+    }),
+    makeTool(ctx, {
+      name: "tune_sample",
+      description: "Pitch-shift a one-shot to the song key: give semitones, or targetNote like 'F1' / 'C2' (the server detects the sample's pitch and shifts to it). Use on kick subs, 808s, tonal percussion, vox chops.",
+      inputSchema: z.object({
+        path: z.string().describe("samplePath to tune"),
+        semitones: z.number().min(-24).max(24).optional().describe("shift by this many semitones"),
+        targetNote: z.string().regex(/^[A-Ga-g](#|b)?-?\d$/).optional().describe("note name with octave, e.g. 'F1', 'C#2', 'A0'; the sample's detected pitch is moved to it"),
+        name: z.string().min(1).max(32).describe("name for the result, e.g. 'sub-F1'"),
+        preserveFormants: z.boolean().optional().describe("keep formants (natural voice) when shifting; default true for vocal roles/chops. Vocal shifts: at most ±3 st"),
+        role: z.string().max(20).optional().describe("what the sample is: 'vocal'/'vox'/'chop' get formant preservation by default"),
+      }),
+      summary: (i) => `tune ${i.path.split("/").pop()} ${i.targetNote ? `-> ${i.targetNote}` : `${i.semitones >= 0 ? "+" : ""}${i.semitones} st`}${i.preserveFormants ? " (formants kept)" : ""}`,
+      run: async ({ path, semitones, targetNote, name, preserveFormants, role }) => {
+        if (semitones == null && !targetNote) throw new Error("give semitones or targetNote");
+        const vocal = /vocal|vox|chop|voice/i.test(`${role || ""} ${name || ""} ${path}`);
+        const pf = preserveFormants ?? vocal;
+        const r = await ctx.tuneSample({ path, semitones, targetNote, name, preserveFormants: pf, ...(role ? { role } : {}) });
+        return { samplePath: r.path, url: r.url, detectedMidi: r.detectedMidi ?? null, appliedSemitones: r.appliedSemitones, preserveFormants: pf };
+      },
+    }),
+    makeTool(ctx, {
+      name: "shape_sample",
+      description: "Trim, fade, filter and pre-balance a one-shot: trimStartMs, lengthMs (tail: hats 60-120, snare 250-450, kick 500-900), fadeOutMs, gainDb, highpassHz, lowpassHz. Returns a new samplePath.",
+      inputSchema: z.object({
+        path: z.string().describe("samplePath to shape"),
+        trimStartMs: z.number().min(0).max(5000).optional().describe("cut this many ms from the start"),
+        lengthMs: z.number().min(20).max(20000).optional().describe("total length after trimming"),
+        fadeOutMs: z.number().min(0).max(5000).optional().describe("fade-out length"),
+        gainDb: z.number().min(-24).max(12).optional().describe("gain change in dB"),
+        highpassHz: z.number().min(20).max(20000).optional().describe("highpass frequency"),
+        lowpassHz: z.number().min(20).max(20000).optional().describe("lowpass frequency"),
+        widen: z.number().min(0).max(1).optional().describe("stereo width 0-1 (Haas spread above 200 Hz; the low end stays centred). Use 0.4-0.7 on hats, perc, claps, textures, pads, FX; never on kick or bass"),
+        name: z.string().min(1).max(32).describe("name for the result"),
+      }),
+      summary: (i) => `shape ${i.path.split("/").pop()} -> ${i.name}`,
+      run: async (i) => {
+        const { path, name, ...ops } = i;
+        if (!Object.values(ops).some((v) => v != null)) throw new Error("give at least one of trimStartMs, lengthMs, fadeOutMs, gainDb, highpassHz, lowpassHz");
+        const r = await ctx.shapeSample(i);
+        return { samplePath: r.path, url: r.url, durationSeconds: r.durationSeconds };
+      },
+    }),
+    makeTool(ctx, {
+      name: "set_send",
+      description: "Set a track's send level to a return: 'A' = Reverb return, 'B' = Delay return. Level 0-1 (0.15-0.3 snare/clap/vox/pads on A, 0.05 hats, 0 kick/bass; 0.1-0.2 perc/vox/lead on B).",
+      inputSchema: z.object({
+        track: z.string().describe("track/layer name"),
+        send: z.enum(["A", "B"]).describe("'A' (Reverb return) or 'B' (Delay return)"),
+        level: z.number().min(0).max(1).describe("send level 0-1"),
+      }),
+      summary: (i) => `send ${i.track} -> ${i.send} ${i.level}`,
+      run: async (i) => ({ ...i, ...(await ctx.live.setSend(i)) }),
+    }),
+    makeTool(ctx, {
+      name: "browse_library",
+      description: "Search Live's browser for presets and devices: root 'instruments' holds Simpler, Drum Rack, Impulse, Instrument Rack only (Live 10 Standard); 'sounds' (preset library: Bass, Pad, Keys, Lead...), 'audio_effects', 'drums' (Core Library kits). Returns names you can pass to load_device. Prefer this for tonal parts over Stability one-shots.",
+      inputSchema: z.object({
+        root: z.enum(["instruments", "sounds", "audio_effects", "drums"]).describe("which browser section"),
+        query: z.string().max(60).optional().describe("case-insensitive substring, e.g. 'Bass', 'Pad', 'Sub'"),
+        depth: z.number().int().min(1).max(4).optional().describe("folder depth to search (default 2)"),
+      }),
+      summary: (i) => `browse ${i.root}${i.query ? ` "${i.query}"` : ""}`,
+      maxArray: 40,
+      run: async ({ root, query, depth }) => {
+        const r = await ctx.live.browse({ root, query, depth });
+        const items = Array.isArray(r) ? r : r.items || [];
+        return { root, query: query ?? null, count: items.length, items: items.map((it) => (typeof it === "string" ? it : { name: it.name, ...(it.is_folder ? { folder: true } : {}), ...(it.path ? { path: Array.isArray(it.path) ? it.path.join("/") : it.path } : {}) })) };
+      },
+    }),
+    makeTool(ctx, {
+      name: "mix_balance",
+      description: "Apply role-based volume and pan to every built track (template 'drums-default': kick 0.85/0, snare 0.80/0, clap 0.74/+0.08, hats 0.62/+0.18, open hats 0.58/+0.22, rim 0.55/-0.25, perc 0.56/-0.3, tom 0.66/-0.1, vox 0.68/+0.1, synth/bass 0.72/0, pad 0.6/0, lead 0.66/-0.05), then optional per-track overrides. Run after building, before review_mix.",
+      inputSchema: z.object({
+        template: z.enum(["drums-default"]).optional().describe("balance template (default 'drums-default')"),
+        overrides: z.array(z.object({
+          track: z.string().describe("track/layer name"),
+          volume: z.number().min(0).max(1).optional().describe("linear 0-1"),
+          pan: z.number().min(-1).max(1).optional().describe("-1..1"),
+        })).max(16).optional().describe("per-track exceptions applied after the template"),
+      }),
+      summary: (i) => `mix balance${i.overrides?.length ? ` (+${i.overrides.length} overrides)` : ""}`,
+      maxArray: 16,
+      run: async ({ template = "drums-default", overrides }) => ({ template, ...(await ctx.live.mixBalance({ template, overrides })) }),
+    }),
+    makeTool(ctx, {
+      name: "review_mix",
+      description: "Quality gate: renders the preview, analyzes the whole mix and each layer soloed, and returns technical issues with severity (high/medium/low) and a suggested fix (a tool call). Call only when the user asks about the mix or says something sounds wrong (never on turn 1); fix at most 2 'high' issues, then mention them in plain words.",
+      inputSchema: z.object({}),
+      summary: () => "review mix",
+      maxArray: 16,
+      run: async () => {
+        const r = await ctx.reviewMix();
+        const whole = r.whole ? compactProfile(r.whole, r.path) : null;
+        const perLayer = r.perLayer ? Object.fromEntries(Object.entries(r.perLayer).map(([k, v]) => [k, v?.ratings ? Object.fromEntries(Object.entries(v.ratings).map(([rk, rv]) => [rk, typeof rv === "object" ? `${rv.level} (${r1(rv.value)}${rv.unit ? " " + rv.unit : ""})` : rv])) : v])) : {};
+        const issues = (r.issues || []).map((it) => ({ severity: it.severity, text: it.text, fix: it.fix }));
+        return { issueCount: issues.length, high: issues.filter((i) => i.severity === "high").length, issues, perLayer, whole: whole ? { loudness: whole.loudness, ratings: whole.ratings, summary: whole.summary } : null };
+      },
+    }),
+    makeTool(ctx, {
+      name: "separate_stems",
+      description: "Split a recording or reference into stems (drums, bass, other, vocals) with Demucs (CPU, 1-3 min). Each stem is registered as a new reference (ref#N) so later tools can address it, e.g. analyze_music on the drum stem, chop_sample on the vocal stem. May be unavailable (ok:false 'not installed / run tools/py/setup.sh').",
+      inputSchema: z.object({ which: z.string().regex(/^(beat|hum|ref#\d+)$/).describe("'beat', 'hum' or 'ref#N' to separate") }),
+      summary: (i) => `separate stems of ${i.which}`,
+      maxArray: 8,
+      run: async ({ which }) => {
+        const src = recPath(which);
+        const r = await ctx.stems(src);
+        const base = (refs.find((x) => x.path === src)?.name || which).replace(/\.[a-z0-9]+$/i, "");
+        const registered = [];
+        for (const [stem, path] of Object.entries(r.stems || {})) {
+          if (!path) continue;
+          const reg = await ctx.addRef(`${stem} of ${base}`, path);
+          refs[reg.index - 1] = { name: reg.name, path };
+          registered.push({ stem, ref: `ref#${reg.index}`, name: reg.name, path });
+        }
+        return { source: which, stems: registered };
+      },
+    }),
+    makeTool(ctx, {
+      name: "analyze_music",
+      description: "Musical analysis of a recording or reference (librosa): tempo, beat and downbeat counts, key, onset count, groove template (swing, microtiming per 16th, velocity profile per 16th) and sections. Stores the groove template so build_drum_layer/update_layer can apply it with useGroove:true. Run it on the DRUM stem of a reference. May be unavailable (ok:false).",
+      inputSchema: z.object({ which: z.string().min(1).describe("'beat', 'hum', 'ref#N' or an absolute wav path") }),
+      summary: (i) => `analyze music ${i.which.startsWith("/") ? i.which.split("/").pop() : i.which}`,
+      maxArray: 16,
+      run: async ({ which }) => {
+        const r = await ctx.analyzeMusic(anyPath(which));
+        let grooveStored = false;
+        if (r.groove && typeof ctx.setGroove === "function") { try { await ctx.setGroove(r.groove); grooveStored = true; } catch {} }
+        const g = r.groove || null;
+        return {
+          tempo: r1(r.tempo), beats: count(r.beats), downbeats: count(r.downbeats), key: r.key ? (typeof r.key === "string" ? r.key : `${r.key.tonic} ${r.key.mode}${r.key.confidence != null ? ` (conf ${r1(r.key.confidence)})` : ""}`) : null,
+          onsets: count(r.onsets), durationSeconds: r1(r.duration ?? r.durationSeconds),
+          groove: g ? { swing: r1(g.swing), microtimingMs: (g.microtiming || []).map(r1), velocityProfile: (g.velocityProfile || []).map(r1) } : null,
+          sections: Array.isArray(r.sections) ? r.sections.slice(0, 16).map((x) => `${r1(x.start)}-${r1(x.end)}s`) : null,
+          grooveStored,
+        };
+      },
+    }),
+    makeTool(ctx, {
+      name: "process_audio",
+      description: "Run an offline effect chain on a wav (pedalboard) and save a new one. Chain types: highpass{hz}, lowpass{hz}, compressor{threshold_db,ratio,attack_ms,release_ms}, reverb{room_size 0-1, wet 0-1}, limiter{threshold_db}, gain{db}, pitch{semitones}, saturate{drive_db}. Use for chops, stems and one-shots before building. May be unavailable (ok:false).",
+      inputSchema: z.object({
+        which: z.string().min(1).describe("'beat', 'hum', 'ref#N' or an absolute wav path (a samplePath, a slice, a stem)"),
+        chain: z.array(z.object({
+          type: z.enum(["highpass", "lowpass", "compressor", "reverb", "limiter", "gain", "pitch", "saturate", "chorus", "delay", "phaser", "bitcrush", "noisegate", "ladder", "widen"]).describe("effect type (widen = Haas stereo spread, params amount 0-1, delay_ms 6-25)"),
+          hz: z.number().min(20).max(20000).optional().describe("highpass/lowpass cutoff"),
+          threshold_db: z.number().min(-60).max(0).optional().describe("compressor/limiter threshold"),
+          ratio: z.number().min(1).max(20).optional().describe("compressor ratio"),
+          attack_ms: z.number().min(0.1).max(500).optional().describe("compressor attack"),
+          release_ms: z.number().min(1).max(5000).optional().describe("compressor release"),
+          room_size: z.number().min(0).max(1).optional().describe("reverb room size"),
+          wet: z.number().min(0).max(1).optional().describe("reverb wet"),
+          db: z.number().min(-48).max(24).optional().describe("gain in dB"),
+          semitones: z.number().min(-24).max(24).optional().describe("pitch shift"),
+          drive_db: z.number().min(0).max(36).optional().describe("saturation drive"),
+        })).min(1).max(8).describe("effects in order"),
+        name: z.string().min(1).max(32).describe("name for the result"),
+      }),
+      summary: (i) => `process ${i.which.startsWith("/") ? i.which.split("/").pop() : i.which}: ${i.chain.map((c) => c.type).join(" > ")} -> ${i.name}`,
+      maxArray: 8,
+      run: async ({ which, chain, name }) => {
+        const r = await ctx.processAudio(anyPath(which), chain, name);
+        return { samplePath: r.path ?? r.out, url: r.url, peakDbfs: r1(r.peakDbfs), chain: chain.map((c) => c.type) };
+      },
+    }),
+    makeTool(ctx, {
+      name: "master_preview",
+      description: "Master the latest render (compressor + limiter + loudness match to a target LUFS, default -12) for a demo bounce. Returns path, url and the measured LUFS. Run render_preview or review_mix first. May be unavailable (ok:false).",
+      inputSchema: z.object({ lufs: z.number().min(-24).max(-6).optional().describe("target integrated loudness, default -12 LUFS") }),
+      summary: (i) => `master preview @ ${i.lufs ?? -12} LUFS`,
+      run: async ({ lufs = -12 }) => { const r = await ctx.masterAudio(lufs); return { path: r.path ?? r.out, url: r.url, lufs: r1(r.lufs), peakDbfs: r1(r.peakDbfs), target: lufs }; },
+    }),
+    makeTool(ctx, {
+      name: "generate_loop",
+      description: "Stable Audio text-to-audio loop at the song tempo (the server adds 'TrackType: Instrument' and '<bpm> BPM'): kind 'drums' returns the loop plus a kit sliced from it (kick/snare/hat/perc one-shots sharing one production context - the best way to get coherent drums); 'texture' or 'fx' returns just the loop. Prompt grammar: 'Genre: X', style/era, the drum elements and how they sound (e.g. 'warm round kick, soft claps on 2 and 4, shuffled closed hats'), mood/arrangement, production ('tight and dry, no melody'); use the production DNA's own words; describe, never instruct. Re-roll once if the loop misses.",
+      inputSchema: z.object({
+        prompt: z.string().min(3).max(400).describe("guide-order prompt, e.g. 'Genre: Boom Bap, dusty 90s drum loop, round kick, cracked snare, swung hats, sampled off vinyl, tight and dry, no melody' (no BPM needed, the server adds it)"),
+        bpm: z.number().min(40).max(300).describe("tempo"),
+        bars: z.number().int().min(1).max(8).describe("loop length in bars"),
+        kind: z.enum(["drums", "texture", "fx"]).describe("'drums' slices a kit from the loop; 'texture'/'fx' do not"),
+      }),
+      summary: (i) => `loop (${i.kind}, ${i.bars} bars @ ${i.bpm}): ${i.prompt.slice(0, 40)}`,
+      maxArray: 12,
+      run: async ({ prompt, bpm, bars, kind }) => {
+        const r = await ctx.generateLoop({ prompt, bpm, bars, kind });
+        return { loop: r.loop, kit: (r.kit || []).map((k) => ({ kind: k.kind, samplePath: k.path, time: r1(k.time) })), kitCount: (r.kit || []).length };
+      },
+    }),
+    makeTool(ctx, {
+      name: "restyle_mix",
+      description: "Render the current build and run it through Stable Audio audio-to-audio (the server adds 'TrackType: Music' and the BPM): a cohesive 'produced' version to use as a texture layer under the drums or as a reference. Prompt grammar: 'Genre: X', mood/energy, production character (room, processing, era). strength = init noise level: 0.4-0.6 keeps the groove and changes the production; 0.8 mostly follows the prompt.",
+      inputSchema: z.object({
+        prompt: z.string().min(3).max(400).describe("target sound in descriptive words"),
+        strength: z.number().min(0.2).max(0.8).describe("how far from the current build (0.2-0.8; 0.45 typical)"),
+      }),
+      summary: (i) => `restyle mix (${i.strength}): ${i.prompt.slice(0, 40)}`,
+      run: async ({ prompt, strength }) => { const r = await ctx.restyleMix({ prompt, strength }); return { samplePath: r.path, url: r.url, durationSeconds: r1(r.durationSeconds) }; },
+    }),
+    makeTool(ctx, {
+      name: "production_dna",
+      description: "Gemini listens to a reference and returns its production DNA: drum character words (usable as Stable Audio prompts), groove feel, space/reverb, tempo and key guess, arrangement notes, and what makes it sound expensive. Call this BEFORE imitating a reference; never guess what audio sounds like. Counts toward the 3 ear calls per turn.",
+      inputSchema: z.object({ which: z.string().min(1).describe("'ref#N', 'beat', 'hum' or an absolute wav path") }),
+      summary: (i) => `production DNA of ${i.which.startsWith("/") ? i.which.split("/").pop() : i.which}`,
+      maxArray: 12,
+      run: async ({ which }) => ({ dna: await ctx.productionDna(anyPath(which)) }),
+    }),
+    makeTool(ctx, {
+      name: "critique_mix",
+      description: "Renders the current build and has Gemini critique it production-first (optionally against a reference and a genre target): styleRead, styleAccuracy {verdict on target|close|off, why}, drums, bass {present, type, suggestion}, harmonyMelody, soundDesign, groove, arrangement, moves (3-5 production moves), mixNotes (1 line, only if broken). Call AFTER building, apply the moves / fix 'off' once, then report in musical terms. Counts toward the 3 ear calls per turn.",
+      inputSchema: z.object({
+        reference: z.string().min(1).optional().describe("'ref#N' or an absolute path to compare against (optional)"),
+        genreTarget: z.string().max(1500).optional().describe("the genre blueprint summary (or genre name) to judge style accuracy against"),
+      }),
+      summary: (i) => `critique mix${i.reference ? ` vs ${i.reference}` : ""}${i.genreTarget ? " (style target)" : ""}`,
+      maxArray: 12,
+      run: async ({ reference, genreTarget }) => ({ critique: await ctx.critiqueMix(reference ? anyPath(reference) : undefined, genreTarget ? { genreTarget } : undefined) }),
+    }),
+    makeTool(ctx, {
+      name: "label_pieces",
+      description: "Gemini labels up to 12 chopped pieces: vowel / consonant / breath / noise, pitchedness, and what each is usable as (chop, stab, texture, perc). Call BEFORE choosing vocal chops. Counts toward the 3 ear calls per turn.",
+      inputSchema: z.object({ paths: z.array(z.string().min(1)).min(1).max(12).describe("samplePaths of the pieces (from chop_sample or slice_sample), max 12") }),
+      summary: (i) => `label ${i.paths.length} pieces`,
+      maxArray: 12,
+      run: async ({ paths }) => { const r = await ctx.labelPieces(paths); const labels = Array.isArray(r) ? r : r.labels || r.pieces || []; return { count: labels.length, labels }; },
+    }),
+    makeTool(ctx, {
+      name: "refine_sound",
+      description: "THE way to tweak an existing sound ('make the kick punchier', 'less boxy snare'): Gemini listens to the current sound, writes the gap and a revised Stable Audio prompt, Stability regenerates (audio-to-audio from the current sound when it is close), Gemini scores each round, the best wins and is applied to the track (undoable with undo_sound). `which` = a track name (its current sound is used) or an absolute samplePath. 1-3 rounds (default 2).",
+      inputSchema: z.object({
+        which: z.string().min(1).describe("track/layer name (e.g. 'Kick') or an absolute wav path"),
+        intent: z.string().min(3).max(400).describe("what it should become, e.g. 'punchier, shorter sub tail, more click'"),
+        currentPrompt: z.string().max(400).optional().describe("the prompt that produced the current sound, if known"),
+        role: z.enum(ROLES).optional().describe("role of the sound (defaults from the track name)"),
+        rounds: z.number().int().min(1).max(3).optional().describe("refinement rounds, default 2"),
+        applyToTrack: z.boolean().optional().describe("load the winner onto the track (default true when `which` is a track)"),
+      }),
+      summary: (i) => `refine ${i.which.startsWith("/") ? i.which.split("/").pop() : i.which}: ${i.intent.slice(0, 40)}`,
+      maxArray: 8,
+      run: async ({ which, intent, currentPrompt, role, rounds = 2, applyToTrack }) => {
+        const isTrack = !which.startsWith("/");
+        let path = which, track;
+        if (isTrack) {
+          const tracks = tracksOf(await ctx.live.listTracks());
+          const t = tracks.find((x) => String(x.name).toLowerCase() === which.toLowerCase());
+          if (!t) throw new Error(`no track named '${which}'; tracks: ${(tracks || []).map((x) => x.name).join(", ")}`);
+          if (!t.soundPath) throw new Error(`track '${which}' has no sound loaded by us (soundPath missing); use synthesize_sound + replace_sound instead`);
+          path = t.soundPath; track = t.name;
+        }
+        const r = await ctx.refineSound({ path, intent, currentPrompt, role, rounds, track: applyToTrack === false ? undefined : track });
+        return {
+          best: r.best ? { samplePath: r.best.path, url: r.best.url, prompt: r.best.prompt, match: r.best.match, round: r.best.round } : null,
+          history: (r.history || []).map((h) => ({ round: h.round, match: h.match, viaAudioToAudio: h.viaAudioToAudio, gap: h.gap, prompt: h.prompt })),
+          appliedToTrack: r.appliedToTrack ?? false,
+          ...(track ? { track } : {}),
+        };
+      },
+    }),
+    makeTool(ctx, {
+      name: "undo_sound",
+      description: "Restore the previous sound on a track (undoes the last replace_sound / refine_sound on it). Returns what was restored and how many undos remain.",
+      inputSchema: z.object({ track: z.string().min(1).describe("track/layer name") }),
+      summary: (i) => `undo sound on ${i.track}`,
+      run: async ({ track }) => { const r = await ctx.undoSound({ track }); return { track, restored: r.restored, remainingUndos: r.remainingUndos ?? 0 }; },
+    }),
+    makeTool(ctx, {
+      name: "listen_live",
+      description: "Capture Ableton's REAL audio output for N bars from bar 1 on ADEHack 5.8+ (older scripts: from the playhead, result carries a `note`); fires `scene` first if given, else what is playing/selected; and measure it: technical profile of the whole output, plus a Gemini critique when the server attached one. If `silent` is true Live produced no sound (not playing, wrong scene, or output device) - say so and stop. Use before giving feedback on the producer's own set, and again after a change to compare. Say 'I listened to N bars of your set'.",
+      inputSchema: z.object({
+        bars: z.number().int().min(1).max(16).optional().describe("how many bars to capture (default 4)"),
+        scene: z.number().int().min(0).max(31).optional().describe("scene index to fire before capturing; omit to capture what is playing/selected"),
+      }),
+      summary: (i) => `listen to Live (${i.bars ?? 4} bars${i.scene != null ? `, scene ${i.scene + 1}` : ""})`,
+      maxArray: 16,
+      run: async ({ bars = 4, scene }) => {
+        const r = await ctx.captureLive({ bars, scene });
+        const out = { path: r.path, url: r.url, bars: r.bars ?? bars, seconds: r1(r.seconds), silent: Boolean(r.silent), profile: r.profile ? compactProfile(r.profile, r.path) : null };
+        if (r.silent) out.hint = "Live produced no sound: check that it is playing, the right scene is fired, and the output device is set";
+        if (r.critique) out.critique = r.critique;
+        return out;
+      },
+    }),
+    makeTool(ctx, {
+      name: "critique_capture",
+      description: "Gemini critiques a listen_live capture (the producer's real output) production-first, optionally against a reference and a genre target: styleRead, styleAccuracy, drums, bass {present, type, suggestion}, harmonyMelody, soundDesign, groove, arrangement, moves, mixNotes. Not critique_mix (that renders OUR build). Counts toward the 3 ear calls per turn.",
+      inputSchema: z.object({
+        path: z.string().min(1).describe("the capture path returned by listen_live"),
+        reference: z.string().min(1).optional().describe("'ref#N' or absolute path to compare against (optional)"),
+        genreTarget: z.string().max(1500).optional().describe("the genre blueprint summary (or genre name) to judge style accuracy against"),
+      }),
+      summary: (i) => `critique capture ${i.path.split("/").pop()}${i.reference ? ` vs ${i.reference}` : ""}${i.genreTarget ? " (style target)" : ""}`,
+      maxArray: 12,
+      run: async ({ path, reference, genreTarget }) => ({ critique: await ctx.critiqueCapture(path, reference ? anyPath(reference) : undefined, genreTarget ? { genreTarget } : undefined) }),
+    }),
+    makeTool(ctx, {
+      name: "describe_set",
+      description: "Read the producer's Live set: tempo, playing state, scenes, and per track: name, midi/audio, devices, clip counts (detail 'brief', the default); detail 'full' adds the mixer (volume/pan/mute/solo) and every clip (slot, name, length, note count, audio). Call first when helping with their session.",
+      inputSchema: z.object({ detail: z.enum(["brief", "full"]).optional().describe("'brief' = tracks, devices, clip counts (default); 'full' adds mixer and clips") }),
+      summary: (i) => `describe set${i.detail === "full" ? " (full)" : ""}`,
+      maxArray: 32,
+      run: async ({ detail = "brief" } = {}) => {
+        const r = await ctx.live.describeSet({ detail });
+        const full = detail === "full";
+        return {
+          tempo: r1(r.tempo), playing: Boolean(r.is_playing ?? r.playing), selectedScene: r.selected_scene ?? null,
+          scenes: (r.scenes || []).map((sc) => sc.name ? `${sc.index}:${sc.name}` : String(sc.index)),
+          tracks: (r.tracks || []).map((t) => ({
+            index: t.index, name: t.name, midi: Boolean(t.is_midi), selected: Boolean(t.selected), hasSound: Boolean(t.has_sound),
+            devices: (t.devices || []).map((d) => d.name),
+            ...(full
+              ? {
+                  mixer: t.mixer ? { vol: r1(t.mixer.volume), pan: r1(t.mixer.pan), mute: Boolean(t.mixer.mute), solo: Boolean(t.mixer.solo) } : undefined,
+                  clips: (t.clips || []).map((c) => ({ slot: c.slot, name: c.name, length: r1(c.length), notes: c.note_count ?? null, ...(c.is_playing ? { playing: true } : {}), ...(c.is_audio ? { audio: true } : {}) })),
+                }
+              : { clipCount: (t.clips || []).length, ...((t.clips || []).some((c) => c.is_audio) ? { audioClips: (t.clips || []).filter((c) => c.is_audio).length } : {}), ...(t.mixer?.mute ? { muted: true } : {}) }),
+          })),
+        };
+      },
+    }),
+    makeTool(ctx, {
+      name: "read_clip",
+      description: "Read all notes of a clip in the producer's set (track name or index, slot). Returns compact notes 'pitch@startBeats:durationBeats[vVelocity]' (up to 64) and the clip length. Read, don't rewrite, unless asked.",
+      inputSchema: z.object({
+        track: z.string().min(1).describe("track name or index"),
+        slot: z.number().int().min(0).max(63).describe("clip slot index"),
+      }),
+      summary: (i) => `read clip ${i.track}/${i.slot + 1}`,
+      run: async ({ track, slot }) => {
+        const r = await ctx.live.getClipNotes({ track, slot });
+        const notes = (r.notes || []).map((n) => ({ pitch: n.pitch, startBeats: n.start ?? n.startBeats, durationBeats: n.duration ?? n.durationBeats, velocity: n.velocity }));
+        return { track: r.track ?? track, slot, length: r1(r.length), ...compactNotes(notes) };
+      },
+    }),
+    makeTool(ctx, {
+      name: "import_sample",
+      description: "Bring the producer's own sample (a ref#N) into Live: optional toneFix (highpassHz, lowpassHz, gainDb, compress) derived from analyze_audio ratings, then load it into Simpler on `track` (created if missing). mode 'oneshot' trims to the first hit, 'loop' keeps it whole. Explain the numbers you chose.",
+      inputSchema: z.object({
+        which: z.string().regex(/^ref#\d+$/).describe("'ref#N' of the sample to import"),
+        track: z.string().min(1).max(32).optional().describe("target track name (default: the sample's name)"),
+        name: z.string().min(1).max(32).optional().describe("name for the processed file"),
+        toneFix: z.object({
+          highpassHz: z.number().min(20).max(2000).optional().describe("remove rumble/mud below this"),
+          lowpassHz: z.number().min(200).max(20000).optional().describe("tame harsh top above this"),
+          gainDb: z.number().min(-24).max(24).optional().describe("level correction"),
+          compress: z.boolean().optional().describe("gentle compression for consistency"),
+        }).optional().describe("corrections derived from the analysis ratings"),
+        mode: z.enum(["oneshot", "loop"]).optional().describe("'oneshot' (default) or 'loop'"),
+      }),
+      summary: (i) => `import ${i.which}${i.track ? ` -> ${i.track}` : ""}${i.toneFix ? ` (${Object.entries(i.toneFix).map(([k, v]) => `${k}=${v}`).join(", ")})` : ""}`,
+      maxArray: 8,
+      run: async ({ which, track, name, toneFix, mode = "oneshot" }) => {
+        const path = recPath(which);
+        const refName = refs[Number(which.slice(4)) - 1]?.name;
+        const r = await ctx.importSample({ path, track, name: name || refName, toneFix, mode });
+        return { samplePath: r.path, url: r.url, track: r.track, chain: r.chain, mode };
+      },
+    }),
+    makeTool(ctx, {
+      name: "restyle_audio",
+      description: "Stable Audio audio-to-audio on ANY project audio (a ref#N, a recording, a sample path), not only our render: the Analyse room's alternatives, each guided by exactly ONE suggestion in the prompt (warmer / more swing / lo-fi ...). strength = init noise level 0.3 (subtle) .. 0.8 (new sound).",
+      inputSchema: z.object({
+        which: z.string().min(1).describe("'ref#N', 'beat', 'hum' or an absolute wav path"),
+        prompt: z.string().min(3).max(400).describe("target in guide order; one idea per alternative, e.g. 'Genre: Lo-fi Hip Hop, warm tape saturation, dusty, soft top end'"),
+        strength: z.number().min(0.3).max(0.8).describe("0.3 subtle .. 0.8 new sound"),
+      }),
+      summary: (i) => `restyle ${i.which.startsWith("/") ? i.which.split("/").pop() : i.which} (${i.strength}): ${i.prompt.slice(0, 40)}`,
+      run: async ({ which, prompt, strength }) => { const r = await ctx.restyleAudio({ which: anyPath(which), prompt, strength }); return { samplePath: r.path, url: r.url, durationSeconds: r1(r.durationSeconds) }; },
+    }),
+    makeTool(ctx, {
+      name: "explain_result",
+      description: "Record 'How this was made' for the whole turn (the UI shows it, collapsed, on the reply; with path it attaches to that sound card). Call once per turn, whole-turn, after the build tools. Depth follows the user's level (beginner: plain words, 5-7 steps; intermediate: device names + values; pro: terse numbers).",
+      inputSchema: z.object({
+        path: z.string().optional().describe("samplePath the explanation belongs to; omit for a whole-turn explanation"),
+        brief: z.string().min(3).max(300).describe("what was asked, in one sentence"),
+        choices: z.array(z.object({ what: z.string().min(1).max(240).describe("the decision"), why: z.string().min(1).max(200).describe("why, in one clause") })).min(1).max(6).describe("the decisions: prompt words, layering, tuning, effects, levels"),
+        steps_ableton: z.array(z.string().min(3).max(200)).min(1).max(8).describe("how to recreate it with stock Ableton devices (Simpler, Drum Rack, Saturator, EQ Eight, Glue Compressor, Reverb, Delay, Auto Filter, Redux)"),
+        steps_logic: z.array(z.string().min(3).max(200)).min(1).max(8).optional().describe("optional: the same in Logic Pro (Drum Machine Designer, Quick Sampler, Alchemy, Phat FX, Compressor, Channel EQ, Space Designer, Tape Delay, Bitcrusher)"),
+      }),
+      summary: (i) => `explain ${i.path ? i.path.split("/").pop() : "this turn"}`,
+      run: async ({ path, brief, choices, steps_ableton, steps_logic = [] }) => {
+        const r = await ctx.explain({ path, brief, choices, steps: { ableton: steps_ableton, logic: steps_logic }, level: opts.level });
+        return { stored: true, path: path ?? "turn", level: opts.level, choices: choices.length, steps: { ableton: steps_ableton.length, logic: steps_logic.length }, ...(r && typeof r === "object" ? { id: r.id } : {}) };
+      },
+    }),
+    makeTool(ctx, {
+      name: "reference_track",
+      description: "Look up a real song on Soundcharts: genres, producers, composers, labels, release date and audio features (tempo, key, energy, danceability). Use when the user names a track or artist as a reference ('like Bad Guy', 'in the style of X by Y') to anchor tempo, key, era and genre before building; it also sets the style target when a blueprint matches. Query = 'Track Artist' or an ISRC.",
+      inputSchema: z.object({ query: z.string().min(2).max(120).describe("'song title artist' or an ISRC code") }),
+      summary: (i) => `reference: ${i.query}`,
+      run: async ({ query }) => ctx.referenceTrack({ query }),
+    }),
+    makeTool(ctx, {
+      name: "genre_guide",
+      description: "Short guide to a genre: 5 lines of history, 5 artists/tracks to study, 3 production hallmarks (from model knowledge, names to verify). Use at the end of the Analyse report, or when the user asks where a sound comes from.",
+      inputSchema: z.object({ genre: z.string().min(2).max(60).describe("genre name, e.g. 'UK Garage', 'Boom Bap'") }),
+      summary: (i) => `genre guide: ${i.genre}`,
+      run: async ({ genre }) => { const r = await ctx.genreGuide({ genre }); return { genre, guide: typeof r === "string" ? r : r.text ?? r.guide ?? r, ...(r && r.source ? { source: r.source } : {}) }; },
+    }),
+    makeTool(ctx, {
+      name: "genre_blueprint",
+      description: "The style blueprint for a genre/era from the knowledge base (26 blueprints: hip hop eras, trap, drill, lo-fi, neo-soul, house, techno, industrial, garage, dnb, dubstep, trance, pop, afrobeats, reggaeton, synthwave, ambient...). Unknown styles get a blueprint written on the fly and saved, so ALWAYS call this when a style is named; never say a style cannot be linked to a genre",
+      inputSchema: z.object({ genre: z.string().min(2).max(60).describe("genre or era, e.g. '2000s hip hop', 'g-funk', 'uk garage'") }),
+      summary: (i) => `blueprint: ${i.genre}`,
+      maxArray: 40,
+      run: async ({ genre }) => {
+        const r = await ctx.genreBlueprint(genre);
+        const md = String(r.markdown || "");
+        const section = (heading) => {   // text after "## <heading>" up to the next "\n## ", capped
+          const i = md.indexOf(`## ${heading}`);
+          if (i < 0) return undefined;
+          const start = md.indexOf("\n", i) + 1;
+          const end = md.indexOf("\n## ", start);
+          return md.slice(start, end < 0 ? undefined : end).trim().slice(0, 1200) || undefined;
+        };
+        return {
+          slug: r.slug, title: r.title, summary: r.summary,
+          ...(r.era || section("Era & tempo") ? { history: r.era || section("Era & tempo") } : {}),
+          ...(r.references || section("References (verify)") ? { references: r.references || section("References (verify)") } : {}),
+          drumSounds: section("Drum sounds"), patterns: section("Pattern archetypes"), bass: section("Bass"),
+          ...(r.loopPrompts ? { loopPrompts: r.loopPrompts } : {}),
+        };
+      },
+    }),
+    makeTool(ctx, {
+      name: "generate_rhythm",
+      description: "Stability COMPOSES a drum loop at the tempo; we extract its hits into a 16th-grid pattern (kick/snare/hat/perc lanes with velocities) plus the loop's groove template, and slice a kit from it. Use when no genre is named (named genre -> design_kit). Then build_kit with the kit + pattern.",
+      inputSchema: z.object({
+        prompt: z.string().min(3).max(400).optional().describe("loop prompt in guide order (Genre, style, elements and how they sound, production); omit for a neutral loop"),
+        bpm: z.number().min(40).max(300).describe("tempo"),
+        bars: z.number().int().min(1).max(8).describe("loop length in bars"),
+      }),
+      summary: (i) => `compose rhythm (${i.bars} bars @ ${i.bpm})${i.prompt ? `: ${i.prompt.slice(0, 40)}` : ""}`,
+      maxArray: 128,
+      run: async ({ prompt, bpm, bars }) => {
+        const r = await ctx.generateRhythm({ prompt, bpm, bars });
+        return { loop: r.loop, kit: (r.kit || []).map((k) => ({ kind: k.kind, samplePath: k.samplePath ?? k.path, time: r1(k.time) })), pattern: r.pattern, groove: r.groove ? { swing: r1(r.groove.swing), microtimingMs: (r.groove.microtiming || []).map(r1), velocityProfile: (r.groove.velocityProfile || []).map(r1) } : null };
+      },
+    }),
+    makeTool(ctx, {
+      name: "design_kit",
+      description: "Genre-true drums: Stability composes 1-3 candidate loops from the genre blueprint's own prompts, Gemini judges each for authenticity vs the blueprint (verdict + 0-10 score), the best is sliced into a kit and sequenced into a pattern + groove. Call FIRST for drums when a genre is named, then build_kit. Returns best, candidates, kit, pattern, groove.",
+      inputSchema: z.object({
+        genre: z.string().min(2).max(60).optional().describe("genre/era (default: the blueprint in the user text)"),
+        bpm: z.number().min(40).max(300).optional().describe("tempo (default: the blueprint's typical tempo)"),
+        bars: z.number().int().min(1).max(8).optional().describe("loop length (default 2)"),
+        candidates: z.number().int().min(1).max(3).optional().describe("how many loops to compose and judge (default 2)"),
+      }),
+      summary: (i) => `design kit${i.genre ? ` for ${i.genre}` : ""}${i.bpm ? ` @ ${i.bpm}` : ""} (${i.candidates ?? 2} candidates)`,
+      maxArray: 128,
+      run: async ({ genre, bpm, bars = 2, candidates = 2 }) => {
+        const r = await ctx.designKit({ genre, bpm, bars, candidates });
+        if (r.groove && ctx.setGroove) { try { await Promise.resolve(ctx.setGroove(r.groove)); } catch {} };   // so build_kit useGroove:true applies this kit's feel (17)
+        return {
+          best: r.best ? { samplePath: r.best.path, url: r.best.url, verdict: r.best.verdict, score: r.best.score, why: r.best.why } : null,
+          candidates: (r.candidates || []).map((c) => ({ samplePath: c.path, verdict: c.verdict, score: c.score, why: c.why })),
+          kit: (r.kit || []).map((k) => ({ kind: k.kind, samplePath: k.samplePath ?? k.path, time: r1(k.time) })),
+          pattern: r.pattern, groove: r.groove ? { swing: r1(r.groove.swing) } : null, bpm: r.bpm ?? bpm ?? null,
+        };
+      },
+    }),
+    makeTool(ctx, {
+      name: "build_kit",
+      description: "Put a whole kit on ONE Drums track: a Drum Rack with each sound on a pad (note 36-99; GM: kick 36, snare 38, clap 39, rim 37, closed hat 42, open hat 46) and one clip playing the pattern's lanes at the pad notes. Falls back to per-lane tracks when pads are unavailable (the result says which mode). Use after design_kit / generate_rhythm.",
+      inputSchema: z.object({
+        name: z.string().min(1).max(32).optional().describe("track name (default 'Drums'; reuse it)"),
+        kit: z.array(z.object({
+          note: z.number().int().min(36).max(99).describe("pad note, GM mapping"),
+          samplePath: z.string().min(1).describe("sound for the pad"),
+          label: z.string().min(1).max(32).describe("pad name, e.g. Kick"),
+        })).min(1).max(16).describe("sounds to place on pads"),
+        pattern: z.object({ bpm: z.number(), bars: z.number().int().min(1).max(8), stepsPerBar: z.number().int().optional(), swing: z.number().optional(), lanes: z.array(z.object({ instrument: z.string(), steps: z.array(StepSchema) })) }).describe("the drum pattern (from design_kit / generate_rhythm, or authored)"),
+        bars: z.number().int().min(1).max(8).describe("clip length in bars"),
+        slot: z.number().int().min(0).max(7).optional().describe("clip slot / scene (default 0; new beat in an existing set -> next free scene)"),
+        useGroove: z.boolean().optional().describe("apply the stored groove template (design_kit / generate_rhythm / analyze_music) to the clip"),
+        humanize: z.number().min(0).max(1).optional().describe("timing and velocity jitter, 0.3 for a relaxed feel"),
+      }),
+      summary: (i) => `build kit${i.name ? ` on ${i.name}` : ""} (${i.kit.length} pads, ${i.bars} bars${i.slot ? `, scene ${i.slot + 1}` : ""})`,
+      maxArray: 16,
+      run: async ({ name = "Drums", kit, pattern, bars, slot, useGroove, humanize }) => {
+        const r = await ctx.live.buildKit({ name, kit, pattern, bars, slot, ...(useGroove != null ? { useGroove } : {}), ...(humanize != null ? { humanize } : {}) });
+        return { track: r.track, mode: r.mode, pads: r.pads, notes: r.notes };
+      },
+    }),
+    makeTool(ctx, {
+      name: "load_to_pad",
+      description: "Load one sound onto a Drum Rack pad (note 36-99) of a track, creating the Drum Rack if needed. Use to swap a single drum sound without touching the clip.",
+      inputSchema: z.object({
+        track: z.string().min(1).describe("track name, usually 'Drums'"),
+        note: z.number().int().min(36).max(99).describe("pad note (GM: kick 36, snare 38, hats 42)"),
+        samplePath: z.string().min(1).describe("sound to load"),
+        label: z.string().min(1).max(32).describe("pad name"),
+      }),
+      summary: (i) => `pad ${i.note} on ${i.track} <- ${i.label}`,
+      run: async (i) => ({ ...i, ...(await ctx.live.loadToPad(i)) }),
+    }),
+    makeTool(ctx, {
+      name: "compose_track",
+      description: "Stable Audio 3 composes a full genre-true track from the blueprint; Gemini judges authenticity; Demucs separates stems; the drum stem becomes a sliced kit + multi-bar MIDI with the real groove; bass and keys stems become MIDI via basic-pitch; sections pick A/B scenes; everything is built in Live as editable MIDI on a Drum Rack + Live presets. Takes 3-6 minutes; the user sees stage progress. Opt-in only: when the user says 'full track / whole arrangement / take your time' (a plain 'make me a <genre> beat' is set_tempo -> design_kit -> build_kit -> play); falls back to design_kit + build_kit when stems are unavailable (ok:false mentioning pytools/Demucs).",
+      inputSchema: z.object({
+        genre: z.string().min(2).max(60).optional().describe("genre/era (default: the blueprint in the user text)"),
+        bpm: z.number().min(40).max(300).optional().describe("tempo (default: the blueprint's typical tempo)"),
+        bars: z.number().int().min(8).max(32).optional().describe("track length in bars (default 16)"),
+        prompt: z.string().min(3).max(400).optional().describe("override the blueprint's composition prompt (guide order; the server adds TrackType: Music and the BPM)"),
+        candidates: z.number().int().min(1).max(2).optional().describe("how many tracks to compose and judge (default 1; 2 regenerates once if the first is 'off')"),
+      }),
+      summary: (i) => `compose ${i.bars ?? 16}-bar track${i.genre ? ` (${i.genre})` : ""}${i.bpm ? ` @ ${i.bpm}` : ""}`,
+      maxArray: 12,
+      run: async ({ genre, bpm, bars = 16, prompt, candidates = 1 }) => {
+        const r = await ctx.composeTrack({ genre, bpm, bars, prompt, candidates });
+        const stems = r.stems && typeof r.stems === "object" ? Object.fromEntries(Object.entries(r.stems).map(([k, v]) => [k, typeof v === "string" ? v : v?.ref ?? v?.name ?? v?.path ?? null])) : null;
+        const built = r.built && typeof r.built === "object" ? Object.fromEntries(Object.entries(r.built).filter(([, v]) => v).map(([k, v]) => [k, { track: v.track?.name ?? v.track ?? null, ...(v.mode ? { mode: v.mode } : {}), ...(v.preset ? { preset: v.preset } : {}), ...(v.muted ? { muted: true } : {}) }])) : null;
+        return {
+          track: r.track ? { path: r.track.path, url: r.track.url } : null,
+          verdict: r.verdict ?? null, score: r.score ?? null, bpm: r.bpm ?? bpm ?? null, bars: r.bars ?? bars,
+          stems, kit: (r.kit || []).map((k) => ({ kind: k.kind, samplePath: k.samplePath ?? k.path })),
+          patternBars: r.pattern?.bars ?? null, patternLanes: Array.isArray(r.pattern?.lanes) ? r.pattern.lanes.map((l) => `${l.instrument}:${l.steps?.length ?? 0}`) : null,
+          bassNotes: count(r.bassNotes), keysNotes: count(r.keysNotes),
+          sections: Array.isArray(r.sections) ? r.sections.slice(0, 12).map((x) => `${x.startBar}-${x.endBar}`) : null,
+          built, timings: r.timings ?? null,
+        };
+      },
+    }),
+    makeTool(ctx, {
+      name: "show_live",
+      description: "Bring Live to Session view so the user sees the clips.",
+      inputSchema: z.object({}),
+      summary: () => "show Session view",
+      run: async () => ({ ...(await ctx.live.show()) }),
+    }),
+    makeTool(ctx, {
+      name: "play",
+      description: "Start Live's transport.",
+      inputSchema: z.object({}),
+      summary: () => "play",
+      run: async () => ({ ...(await ctx.live.play()) }),
+    }),
+    makeTool(ctx, {
+      name: "stop",
+      description: "Stop Live's transport.",
+      inputSchema: z.object({}),
+      summary: () => "stop",
+      run: async () => ({ ...(await ctx.live.stop()) }),
+    }),
+  ];
+}
+
+function userTurn(userText, recordings = {}) {
+  const now = new Set(recordings.attachedThisTurn || []);
+  const refs = Array.isArray(recordings.refs) ? recordings.refs : [];
+  const exists = (k) => (k === "beat" && recordings.beat) || (k === "hum" && recordings.hum) || Boolean(refs[Number((/^ref#(\d+)$/.exec(k) || [])[1]) - 1]);
+  const fresh = [], earlier = [];   // this turn's attachments carry full paths; older ones only their names
+  if (recordings.beat) (now.has("beat") ? fresh : earlier).push(now.has("beat") ? `'beat' = BEATBOX recording (path: ${recordings.beat})` : "beat (beatbox)");
+  if (recordings.hum) (now.has("hum") ? fresh : earlier).push(now.has("hum") ? `'hum' = HUMMED MELODY recording (path: ${recordings.hum})` : "hum (hummed melody)");
+  refs.forEach((r, i) => (now.has(`ref#${i + 1}`) ? fresh : earlier).push(now.has(`ref#${i + 1}`) ? `ref#${i + 1} "${r.name}" (path: ${r.path})` : `ref#${i + 1} ${r.name}`));
+  if (!fresh.length && !earlier.length) return { role: "user", content: userText || "(empty message)" };
+  const newOnes = [...now].filter(exists);
+  const parts = [];
+  if (fresh.length) parts.push(`Attached this turn: ${fresh.join("; ")}. The user may want it analyzed, imitated, or used as the groove/melody source: listen first if the text is vague, then analyze_recording / synthesize_sound / chop_sample with which/source '${newOnes[0]}'.`);
+  if (earlier.length) parts.push(`earlier: ${earlier.join(", ")} (name one to use it).`);
+  return { role: "user", content: `${userText || "(no text, just the attachment)"}\n\n[${parts.join(" ")}]` };
+}
+
+/**
+ * Run one producer turn. `history` is the Anthropic messages array from previous turns (full content blocks).
+ * Returns { text, history } where history includes this turn's user message, every assistant message
+ * (with tool_use blocks) and every tool_result message, as pushed by the SDK runner.
+ */
+export async function runProducer({ history = [], userText = "", recordings = {}, ctx, client, maxIterations = 18 }) {
+  client ??= new Anthropic();
+  const tools = makeTools(ctx, recordings, { level: levelFromText(userText) });
+  tools[tools.length - 1] = { ...tools[tools.length - 1], cache_control: { type: "ephemeral" } };   // tools render before system: cache the whole tool list too
+  const messages = [...history, userTurn(userText, recordings)];
+  // simple transport/mixer asks with nothing new attached do not need deep thinking
+  const simpleAsk = /\b(undo|play|stop|louder|quieter|mute|solo|pan|again|another take|unmute)\b/i.test(userText) && !(recordings.attachedThisTurn || []).length;
+  const runner = client.beta.messages.toolRunner({
+    model: MODEL,
+    max_tokens: 16000,
+    output_config: { effort: simpleAsk ? "medium" : "high" },
+    system: [{ type: "text", text: PRODUCER_SYSTEM, cache_control: { type: "ephemeral" } }],   // the playbook is ~10k tokens: cache it across turns
+    tools,
+    messages,
+    max_iterations: maxIterations,
+  });
+  const texts = [];
+  let last = null;
+  let continuedAfterCutoff = false;
+  try {
+    for await (const message of runner) {
+      last = message;
+      if (message.stop_reason === "refusal") {
+        ctx.emit({ type: "error", error: `Claude declined (${message.stop_details?.category || "refusal"})` });
+        texts.length = 0; texts.push("I can't do that part. Tell me what to build instead.");
+        break;
+      }
+      const t = message.content.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+      if (t) { texts.length = 0; texts.push(t); ctx.emit({ type: "text", text: t }); }   // the last text block set is the reply
+      if (message.stop_reason === "max_tokens" && !continuedAfterCutoff) {
+        // the output was cut off (usually a huge tool input): answer any complete tool_use blocks, ask to continue in smaller pieces, once.
+        // pushMessages marks the history as ours, so the assistant message goes in by hand too.
+        continuedAfterCutoff = true;
+        const pending = message.content.filter((b) => b.type === "tool_use");
+        ctx.emit({ type: "tool_done", name: "budget", ok: false, summary: "reply cut off at max_tokens; asking Claude to continue in smaller tool calls" });
+        runner.pushMessages(
+          { role: "assistant", content: message.content },
+          { role: "user", content: [...pending.map((b) => ({ type: "tool_result", tool_use_id: b.id, content: "not run: your message was cut off", is_error: true })), { type: "text", text: "Your last message was cut off. Continue; keep each tool call small (at most 64 notes per call; split long clips across update_layer calls)." }] },
+        );
+      }
+    }
+  } catch (e) {
+    // keep the partial history: server.js repairs a dangling tool_use itself
+    ctx.emit({ type: "error", error: e?.message || String(e) });
+    return { text: texts.join("\n") || "", history: runner.params.messages, stopReason: "error", error: e?.message || String(e) };
+  }
+  let outHistory = runner.params.messages;
+  let text = texts.join("\n") || (last?.stop_reason === "max_tokens" ? "(cut off: raise max_tokens)" : "");
+  if (last?.stop_reason === "tool_use") {
+    // the iteration budget ran out with tool calls pending: answer them synthetically and ask for a wrap-up, so the user gets a
+    // coherent reply and the stored history never ends on a dangling tool_use (that 400s the next turn)
+    const pending = last.content.filter((b) => b.type === "tool_use");
+    ctx.emit({ type: "tool_done", name: "budget", ok: false, summary: `tool budget reached (${maxIterations} rounds); ${pending.length} call(s) skipped, wrapping up` });
+    outHistory = [...outHistory, { role: "user", content: [...pending.map((b) => ({ type: "tool_result", tool_use_id: b.id, content: "not run: tool budget for this turn is used up", is_error: true })), { type: "text", text: "Stop here. In the reply format, say what IS in Live now, what you did not get to, and give 2-3 quoted next moves. No new tool calls." }] }];
+    try {
+      const wrap = await client.beta.messages.create({ model: MODEL, max_tokens: 1500, system: [{ type: "text", text: PRODUCER_SYSTEM, cache_control: { type: "ephemeral" } }], tools, tool_choice: { type: "none" }, messages: outHistory });   // same tools keep the cache prefix; none = text only
+      const t = wrap.content.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+      if (t) { text = t; ctx.emit({ type: "text", text: t }); }
+      outHistory = [...outHistory, { role: "assistant", content: wrap.content.filter((b) => b.type !== "tool_use") }];
+      if (wrap.content.some((b) => b.type === "tool_use")) outHistory[outHistory.length - 1].content.push({ type: "text", text: "(further tool calls were skipped)" });
+    } catch (e) { ctx.emit({ type: "tool_done", name: "budget", ok: false, summary: `wrap-up failed: ${e.message.slice(0, 100)}` }); }
+  }
+  return { text, history: outHistory, stopReason: last?.stop_reason ?? null };
+}
