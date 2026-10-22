@@ -98,6 +98,7 @@ app.get('/api/health', async (_req, res) => {
     geminiStatus: (await import('./lib/ears.js')).geminiStatusText(),
     producer: process.env.PRODUCER || 'claude+gemini-fallback',
     geminiProducerModel: process.env.GEMINI_PRODUCER_MODEL || 'gemini-3.8-flash',
+    geminiProducerUsage: await import('./lib/agent-gemini.js').then((g) => g.producerUsage()).catch(() => null),
     outDir: OUT_DIR,
   });
 });

@@ -1,6 +1,7 @@
 // Offline checks for the Gemini producer fallback (schema conversion, history round trip, tool loop, key rotation).
 // Run: node tests/test-agent-gemini.mjs            (offline)
 //      LIVE=1 node tests/test-agent-gemini.mjs     (adds one real call on GEMINI_PRODUCER_MODEL || gemini-3.5-flash-lite)
+process.env.GEMINI_USAGE_FILE = "/tmp/ade-gemini-usage-test.json"; process.env.GEMINI_FLASH_PER_DAY = "1000";   // keep the fake calls out of the real daily ledger
 import "dotenv/config";
 import { makeTools } from "../lib/agent.js";
 import { toGeminiSchema, unsupportedKeys, functionDeclarations, toGeminiContents, fromGeminiParts, runProducerGemini, _setFetchImpl, _resetGemini } from "../lib/agent-gemini.js";
