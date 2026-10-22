@@ -112,5 +112,15 @@ const rh = repairHistory(h);
 ok(rh[2].content.length === 2 && rh[2].content.some((b) => b.tool_use_id === "t2"), "repairHistory fills a partial result message");
 ok(rh.at(-1).role === "user" && rh.at(-1).content[0].tool_use_id === "t3", "repairHistory appends results for a dangling tail");
 
+// ---- server.js: parses, ADEHack 5.8 protocol wrappers, enhance v2, slot pool
+try { await run("node", ["--check", "server.js"]); ok(true, "server.js parses"); } catch (e) { ok(false, "server.js parses", e.message.slice(0, 200)); }
+const versionAtLeast = new Function(src.match(/function versionAtLeast[\s\S]*?\n}\n/)[0] + "; return versionAtLeast;")();
+ok(versionAtLeast("5.8", "5.8") && versionAtLeast("5.10", "5.8") && versionAtLeast("6.0", "5.8"), "versionAtLeast accepts 5.8 / 5.10 / 6.0 for 5.8");
+ok(!versionAtLeast("5.7", "5.8") && !versionAtLeast("pre-5", "5.8") && !versionAtLeast(null, "5.8"), "versionAtLeast rejects 5.7 / pre-5 / null for 5.8");
+for (const [needle, what] of [["cmd: 'set_position'", "set_position wrapper"], ["cmd: 'jump'", "jump wrapper"], ["warp_clips: true", "set_tempo warp_clips on 5.8+"], ["set_clip_warp", "set_tempo warps clips on older scripts"], ["from_bar:", "captures/records pass from_bar"], ["capture from playhead (script < 5.8)", "capture notes the playhead fallback"], ["process.env.SLOT_POOL", "SLOT_POOL env"], ["recycling", "slot pool recycles retired slots"], ["'AI Tops'", "enhance v2 builds AI Tops"], ["'AI Texture'", "enhance v2 builds AI Texture"], ["compareAuthenticity(origPath, candPath", "enhance v2 scores layers vs the original stem"], ["out.presentation = { audible, muted", "enhance v2 verifies the no-stacking presentation"], ["fromBar: 1", "enhance captures from bar 1"]]) ok(src.includes(needle), `server.js has ${what}`);
+ok(!/clamp\(totalBars, 1, 64\)/.test(src), "enhance no longer captures 64 bars");
+const setTempoSrc = src.match(/setTempo: async \(arg\) => \{[\s\S]*?\n      \},/)?.[0] || "";
+ok(/typeof arg === 'object' && arg \? arg : \{ bpm: arg \}/.test(setTempoSrc), "setTempo keeps the positional bpm call shape");
+
 console.log(`\n${passes} passed, ${fails} failed`);
 process.exit(fails ? 1 : 0);

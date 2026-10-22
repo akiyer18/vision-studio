@@ -1,42 +1,78 @@
-# vision-studio — ADE Hack demo script (3 minutes)
+# vision-studio — ADE Hack final pitch (3 minutes, 22 Oct 2026)
 
-AI producing assistant for Ableton Live 10. You talk, beatbox and hum; it builds the track in Live, listens to its own output, and fixes what it doesn't like.
+AI producing assistant for Ableton Live 10. A Claude producer agent builds in your Live set, Stable Audio makes every
+sound, Gemini listens to the result and judges it, and you stay in the wheel: every move is auditioned alone with
+keep / another take / undo. Plus a Training mode that teaches production by ear.
 
-## Setup checklist (do this 15 min before, in order)
+## Setup checklist (15 min before, in order)
 
-1. `.env` has `STABILITY_API_KEY`, `ANTHROPIC_API_KEY`, `HF_TOKEN` (ears), `GEMINI_API_KEY` (ears fallback). Check: `GET http://localhost:3000/api/health`.
-2. `cd ~/ade-hack && npm start` -> "ADE Hack running at http://localhost:3000". Open it in the browser, zoom 125%.
-3. Live 10: fully quit and relaunch (remote scripts load at startup). Preferences > Link/MIDI > Control Surface = **ADEHack** (In/Out: None). Verify: `node ableton/client.js version` -> `5.0`. The UI shows "Live restart needed" if the running script is older than `ableton/VERSION`.
-4. Live browser: Places must contain the **ADE Hack** folder (`~/Music/Ableton/User Library/ADE Hack`). If missing: Places > Add Folder..., then restart Live once more.
-5. Live: new empty set, Session view, tempo 90, master at -6 dB, audio output to the room PA. Delete leftover tracks from rehearsals (`remove_layer` leaves nothing behind, but check).
-6. Mic: test "attach a beat" (beatbox 4 bars) and "attach a melody" (hum 2 bars) once; both should show a duration under the buttons. Prepare a vocal wav (record one now, save it as `demo/vox.wav`) as the reference attachment, so step 1 does not depend on the room mic.
-7. Ears: if the health line says "ZeroGPU quota exhausted", say so on stage and rely on the Gemini fallback. Never promise a listen.
-8. Reset the chat (Reset button) so the transcript on screen starts empty. Have Live and the browser side by side on the projector.
+1. `.env`: `STABILITY_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` (+ `GEMINI_API_KEYS=key2,key3` for quota
+   rotation, `GEMINI_PAID=1` if a paid key is in; `HF_TOKEN` optional). Check `GET http://localhost:3000/api/health`:
+   keys true, `live.running` = `5.8`, `earsStatus` = ok. (verify: `GEMINI_API_KEYS` / `GEMINI_PAID` names)
+2. `cd ~/ade-hack && npm start` -> open http://localhost:3000, switch on **Projector** mode in the header (big type
+   for the screen; it is remembered). (verify: projector toggle label)
+3. Live 10: `bash ableton/install.sh` once, then **fully quit and relaunch** Live. Preferences > Link/MIDI > Control
+   Surface = **ADEHack** (In/Out: None). `node ableton/client.js version` -> `5.8`. The health badge says
+   "restart to load script 5.8" until you do.
+4. Live browser: Places must contain **ADE Hack** (`~/Music/Ableton/User Library/ADE Hack`). If missing: Places >
+   Add Folder..., then restart Live once more. Slot pool: 8 files per role (`SLOT_POOL`) must be indexed.
+5. Open the teammate's real Live set (the 6-track deep house set works). Master at -6 dB, audio out to the PA.
+   Have Live and the browser side by side on the projector. Reset the chat so the transcript starts empty.
+6. Ears: if the health line says "lite judge", quota is gone on the flash models; swap in the second key or say it
+   on stage. Never promise a listen.
+7. Training mode: open http://localhost:3000/training.html in a second tab and pre-generate one beginner example
+   (Stable Audio takes ~20 s) so the audience never waits on a generation.
 
-## The sequence (type exactly this; the audience watches Live)
+## The sequence (what to type, what the audience sees)
 
-| # | You type / do | What the audience sees in Live |
+### A. Work on a real project (70 s)
+| # | You | Live / screen |
 |---|---|---|
-| 1 | Click **attach a beat**, beatbox 4 bars of boom-bap. Click **attach a melody**, hum a 2-bar bassline. Attach `vox.wav` as a reference. | Nothing yet. The UI lists beat, hum and ref#1 with durations. |
-| 2 | `build a dusty boom bap beat around my beatbox at 90 bpm, bass from my hum, and chop the vocal into a hook` | Tempo jumps to 90. Tracks appear one by one: Kick, Snare, Hats, Bass, Vox Chop. Each gets its own Stability-generated sample in a Simpler (watch the device chain fill), then a clip in scene 1. Session view switches on, the clip editor shows the notes. The loop plays. ~60-90 s. |
-| 3 | `make the kick dirtier and warmer` | A Saturator lands on the Kick track with Drive pushed up. The agent reads the real parameter ranges back from Live before setting them. |
-| 4 | `listen to the snare and tell me honestly if it fits, fix it if not` | Transcript shows the judge-by-ear loop: it renders the snare, asks the ears model, gets a score, and if the score is low it re-synthesizes and hot-swaps the sample inside the same Simpler (no second device appears). Say: "it just disagreed with itself and fixed it." |
-| 5 | `make a B scene with half-time drums and the hats opening up` | Scene 2 appears below, clips duplicated and edited in place, then scene 2 fires on the next bar, in sync. |
-| 6 | `lay it out: 8 bars of A then 8 bars of B` | Record mode turns on and scene A fires; after 8 bars scene B fires on the bar (the script fires it a hair early so Live's launch quantization snaps it), after 8 more it stops recording and playback and flips Live to Arrangement view. Press play in Live to prove there is real audio and MIDI in the timeline. |
-| 7 | `give me technical feedback on the mix, compared to the vocal reference` | Text only. The agent renders the built layers offline with ffmpeg (no Live effects in that render), measures them (integrated LUFS, crest factor, low/mid/high band shares, spectral centroid, attack and decay) with low/medium/high ratings, never good/bad, then calls production_dna on the reference (groove, tone, arrangement) and critique_mix on the render to say where ours differs. If you ask for "sample something from it", it chops the reference, labels the pieces by ear, and builds a layer from them. End here; it shows the system reads the set, not just writes to it. |
+| 1 | Click **Work on my Live project**. | The agent reads the set (describe_set), records 8 bars from bar 1, Gemini describes what it hears. The card lists the tracks, the genre it detected, and 3 production moves. No track is touched. |
+| 2 | `enhance it: make it feel like a late-night deep house record, keep my drums` | New tracks appear next to yours: **AI Enhance** (whole-mix audio-to-audio, the reference), **AI Tops**, **AI Texture**, **AI Bass**, **AI Kit**. Only AI Enhance is audible, soloed for a few bars; everything else starts muted. The reply says what is audible and ends with "keep / another take / undo". Per-layer scores vs your original, labelled when a lite judge answered. (verify: layer names AI Tops / AI Texture, per-layer scores) |
+| 3 | Click **Play** on AI Tops, then **Keep**. Click **Another** on AI Bass. | Tops are auditioned alone, then unmuted. The bass is regenerated and re-auditioned; nothing stacks. Say: "the creator decides, the agent proposes." |
+| 4 | `slow it to 118` | The agent ASKS before moving the tempo of your set. Answer `yes`: it warps your audio clips first (set_tempo warp_clips) and reports any it could not warp. (verify: tempo-intent question wording) |
 
-If a step fails live: say what failed, type `what is in my set right now?` (it reads the tracks and devices back from Live) and continue with the next step. The transcript shows every tool call with its result, so failures are visible and honest.
+### B. From scratch (60 s)
+| # | You | Live / screen |
+|---|---|---|
+| 5 | New empty set (Cmd+N in Live). `make me a UK garage beat at 132` | First reply opens with two sentences of genre history and 3 reference tracks (from the knowledge blueprint). Then set_tempo -> design_kit (Stable Audio candidates judged by Gemini against the blueprint) -> build_kit on one Drums track (Drum Rack pads, kick/snare/clap) -> add_loop_layer Tops seeded from the mix -> play. Playable within ~5 tool calls, under a minute. (verify: genre history line present) |
+| 6 | `add a bass that interlocks with the kick` | Live's own bass preset on a Bass track, MIDI roots on offbeat 8ths, auditioned, then "keep / another / undo" chips. |
+| 7 | `listen to the kick and be honest` | Judge-by-ear: it renders the kick, Gemini scores it against the blueprint line with the spread shown; low score -> regenerates once, hot-swaps the pad, says "checked the kick: tight, clicky". |
+
+### C. Training mode (45 s)
+| # | You | Screen |
+|---|---|---|
+| 8 | Training tab: level **Beginner**, genre **Deep House**, **Start**. | A 4-bar drum example plays (Stable Audio 3), with hints: BPM, drums only. Timer runs. |
+| 9 | The musician teammate recreates it in Live for ~30 s (kick, clap, hats on a Drum Rack). Click **Check**. | The tool records their 4 bars from bar 1 and compares: score, what is close (tempo, kick on the floor), what is off (clap late, hats too busy), one hint. (verify: check result fields) |
+| 10 | Click **Reveal**. | The target's parts land in Live on muted **Target Drums** / **Target Bass** tracks next to theirs, with a plain-language "how this was built". End on: "it generates, it listens, it judges, and it teaches." (verify: Target track names) |
+
+If a step fails live: say what failed, type `what is in my set right now?` and continue. Every tool call and its
+result is in the transcript; failures are visible and honest.
 
 ## 5 talking points (architecture)
 
-1. **Claude producer agent, 48 tools.** Claude runs the session as an agent with tools like `build_drum_layer`, `add_effect`, `judge_sound`, `record_arrangement`. Every action in Live is a tool result the audience can read in the transcript.
-2. **One Stability call per sound.** Each layer gets its own Stable Audio 2.5 audio-to-audio generation seeded by the beatbox hit or hum (short recordings are padded to the 6 s minimum), then sliced to a one-shot and dropped into a Simpler. No sample packs.
-3. **Ears: NVIDIA Music Flamingo, Gemini as fallback.** The agent renders what it built and asks an audio-language model to describe and score it, then acts on the score. That closes the loop between generation and judgment.
-4. **Live 10 remote script, no Max for Live.** A Python 2.7 control surface inside Live exposes a JSON-over-TCP protocol (36 commands: clips, devices, parameters, mixer, scenes, transport, arrangement record). Every API name was verified against Live's own bundled scripts.
-5. **Offline render for measurement.** Before judging, the server renders the current layers to a wav with ffmpeg so loudness and spectral checks are deterministic and the ears model hears exactly the mix, not whatever the room mic picks up.
+1. **Claude producer agent, 75 tools.** Claude Opus 5.5 runs the session as an agent: design_kit, add_loop_layer,
+   enhance_project, judge_sound, refine_sound / undo_sound, audition. Every action in Live is a tool result the
+   audience can read. A production playbook (groove, sound design, stereo, mix) and 25 genre blueprints with proven
+   Stable Audio prompts live in its system prompt and knowledge base; unknown genres get a blueprint written on the fly.
+2. **Stable Audio for every sound, used for what it is good at.** Loops and music via Stable Audio 3, one-shots from
+   hit sequences (not "a single kick", which returns a sub drone), audio-to-audio seeded by the mix so layers belong
+   together, per-stem audio-to-audio for enhancing a real project. No sample packs.
+3. **Ears that cannot cheat.** Gemini hears the render, markers are scored text-only, silence is gated, A/B
+   comparisons are order-swapped, and lite-judge answers are labelled. Key rotation keeps flash models in the demo.
+4. **Live 10 remote script, no Max for Live.** ADEHack 5.8: 54 JSON-over-TCP commands (clips, Drum Rack pads,
+   devices, mixer, scenes, warping, recording from bar 1, undo), every API name verified against Live's own bundled
+   scripts. Non-destructive by contract: user tracks are never adopted, deleted or re-levelled. (verify: 54 = 52 in 5.7 + set_position + jump)
+5. **Creator in the wheel.** One audible new thing at a time, keep / another / undo per layer, ask before moving the
+   set's tempo, and Training mode turns the same pipeline into a by-ear exercise with score and reveal.
 
-## 3 known limitations (say them out loud)
+## 3 honest limitations
 
-1. **Ears run on a shared ZeroGPU Space.** Quota can run out mid-demo; the agent then falls back to Gemini or skips the listen and says so.
-2. **Live 10's API cannot create group tracks or route a compressor sidechain.** "Sidechain the bass to the kick" is out of scope until Live 11+; we say that instead of faking it.
-3. **Simpler caches samples by filename.** Live will not reload a changed file with the same name, so sounds rotate through numbered slot files per role and the Place must be indexed once. Re-adding the folder is the known workaround.
+1. **Gemini is the only ear with budget.** Flash models have daily quotas; with keys exhausted the judge degrades to
+   a lite model and says so. Music Flamingo (ZeroGPU) is optional and often out of quota.
+2. **Live 10's API cannot create group or return tracks, route a sidechain, or reload a changed sample under the same
+   name.** Sounds rotate through 8 slot files per role; when every slot is in use the agent asks you to remove or
+   replace a layer instead of silently reusing a sound.
+3. **Whole-mix audio-to-audio smears at medium strength.** That is why the enhanced version is a reference and seed
+   only; the real layers are built per stem on 8-16 bar windows, and compose_track still takes 5-7 minutes on this Mac.

@@ -80,6 +80,32 @@
   .layer { display:flex; align-items:center; gap:8px; padding:8px; border:1px solid var(--line); border-radius:8px; background:var(--panel); font-size:13px; }
   .layer b { color:var(--accent); margin-right:4px; }
   .layer button { padding:4px 8px; font-size:12px; }
+  .layer .pill { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+  .layer .pill.audible { border-color:var(--accent2); color:var(--accent2); }
+  .layer .pill.solo { border-color:var(--accent); color:var(--accent); animation:pulse 1.2s infinite; }
+  .layer .pill.muted { border-color:var(--line); color:var(--muted); opacity:.8; }
+  .layer.is-muted b { color:var(--muted); }
+  body.busy .layer button { opacity:.4; pointer-events:none; }
+  .hearing { font-size:13px; color:var(--text); margin-top:8px; white-space:normal; }
+  .hearing b { color:var(--accent2); }
+  .hearing .m { color:var(--muted); }
+  .jbadge { display:inline-block; font-size:11px; padding:2px 8px; border-radius:999px; border:1px dashed var(--warn); color:var(--warn); margin:4px 0 0; white-space:normal; }
+  .jbadge.full { border-style:solid; border-color:var(--line); color:var(--muted); }
+  .tl li .jbadge { margin:0; }
+  nav.top { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  nav.top a { color:var(--muted); text-decoration:none; font-size:13px; padding:6px 12px; border:1px solid var(--line); border-radius:999px; }
+  nav.top a:hover { color:var(--text); border-color:var(--muted); }
+  nav.top a.training { color:var(--accent2); border-color:var(--accent2); }
+  nav.top button { padding:6px 12px; font-size:13px; }
+  nav.top button.on { border-color:var(--accent); color:var(--accent); }
+  /* projector mode: bigger type, more contrast for the demo screen */
+  body.projector { --bg:#000; --panel:#101217; --grey2:#07080a; --line:#3a3f4b; --muted:#aab0bd; --text:#f7f8fa; font-size:18px; }
+  body.projector .msg { font-size:19px; line-height:1.55; max-width:1100px; }
+  body.projector .tl, body.projector .layer, body.projector .chip, body.projector .hearing, body.projector .status, body.projector .sub { font-size:16px; }
+  body.projector .composer textarea { font-size:20px; }
+  body.projector header h1 { font-size:24px; }
+  body.projector .log { max-height:60vh; }
+  body.projector .layer button, body.projector .chip { padding:6px 12px; }
   .composer { display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; margin-top:8px; }
   .composer textarea { flex:1 1 320px; min-height:56px; font-size:16px; }
   .rooms { display:flex; flex-wrap:wrap; gap:8px; margin:4px 0 8px; }
@@ -124,12 +150,16 @@
   .build .big { font-size:16px; padding:12px 24px; }
   .steps { font-size:12px; color:var(--muted); margin-top:8px; }
   .steps .ok { color:var(--accent2); } .steps .bad { color:var(--danger); }
-  @media (max-width:640px) { .row3, .row { grid-template-columns:1fr; } .composer textarea { flex-basis:100%; } header { padding:16px; } main { padding:16px; } }
+  @media (max-width:640px) { .row3, .row { grid-template-columns:1fr; } .composer textarea { flex-basis:100%; } header { padding:16px; flex-wrap:wrap; gap:8px; } main { padding:16px; } body.projector { font-size:16px; } body.projector .msg { font-size:17px; } }
 </style>
 </head>
 <body>
 <header>
   <h1><span>ADE Hack</span> · Producing Assistant</h1>
+  <nav class="top" aria-label="Pages">
+    <a class="training" href="/training.html" title="Training mode: recreate a generated example by ear, then compare">Training</a>
+    <button id="c-projector" title="Bigger type and more contrast for the demo screen (P)">Projector</button>
+  </nav>
 </header>
 <main>
   <section class="wide chat">
@@ -398,10 +428,12 @@ async function pollHealth() {
   try { liveState = await (await fetch('/api/live/state')).json(); renderSession(liveState); renderStrip(); } catch {}
 }
 function renderSession(st) {
-  const el = $('c-session'); if (!el) return;
+  const el = $('c-session'); if (!el) return; st = st || liveState || {};
   const tracks = Object.values(st.tracks || {}).map(t => t.name); const sounds = Object.keys(st.samples || {}).length;
-  if (!tracks.length && !sounds) { el.style.display = 'none'; return; }
-  el.style.display = ''; el.innerHTML = `<b style="color:var(--text)">Session as the producer sees it</b> · ${st.bpm ? st.bpm + ' BPM · ' : ''}${tracks.length} tracks it built${tracks.length ? ': ' + tracks.map(escapeHtml).join(', ') : ''}${st.genreTarget ? ' · style: ' + escapeHtml(st.genreTarget.split(':')[0]) : ''}${st.groove ? ' · groove template loaded' : ''}`;
+  const names = aiLayerNames();
+  if (!tracks.length && !sounds && !names.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = ''; el.innerHTML = `<b style="color:var(--text)">Session as the producer sees it</b> · ${st.bpm ? st.bpm + ' BPM · ' : ''}${tracks.length} tracks it built${st.genreTarget ? ' · style: ' + escapeHtml(st.genreTarget.split(':')[0]) : ''}${st.groove ? ' · groove template loaded' : ''}${names.length ? ' <span style="color:var(--muted)">· Play hears one alone, Keep unmutes it, Another regenerates, Undo reverts</span>' : ''}`;
+  if (names.length) { const w = document.createElement('div'); w.className = 'layers'; names.forEach(n => w.appendChild(layerCard(n))); el.appendChild(w); const hl = hearingLine(); if (hl) el.appendChild(hl); }
 }
 pollHealth(); setInterval(pollHealth, 15000);   // the strip self-corrects after a Live or server restart
 (() => { const d = $('studio'); try { if (localStorage.getItem('studioOpen') === '1') d.open = true; } catch {} d.addEventListener('toggle', () => { try { localStorage.setItem('studioOpen', d.open ? '1' : '0'); } catch {} }); })();
@@ -922,6 +954,7 @@ function explainPanel(ex) {
 }
 function variantsPanel(ev) {
   const w = document.createElement('div'); w.className = 'variants';
+  const ji = judgeInfo(ev); if (ji && (ji.lite || ji.note)) { const b = judgeBadge(ji); if (b) { b.style.gridColumn = '1 / -1'; w.appendChild(b); } }
   (ev.items || []).forEach(v => {
     const d = document.createElement('div'); d.className = 'variant';
     d.innerHTML = `<b>${escapeHtml(v.label)}</b> <span style="color:var(--muted);font-size:12px">${escapeHtml(ev.role || '')}${v.match != null ? ` · ${v.match}/10` : ''}</span><audio controls src="${escapeHtml(v.url)}" style="width:100%;margin-top:4px"></audio><button style="margin-top:8px" title="Load this variation into the matching track in Live">use ${escapeHtml(v.label)}</button>`;
@@ -953,6 +986,12 @@ function profileCard(profile, title) {
   return wrap;
 }
 $('c-reset').onclick = async () => { await postJson('/api/chat/reset', {}); $('c-log').innerHTML = ''; addBot('New session. Live keeps whatever is already there.'); };
+// projector mode (demo screen): persisted per browser; P toggles it when nothing is focused
+function setProjector(on) { document.body.classList.toggle('projector', on); $('c-projector').classList.toggle('on', on); $('c-projector').textContent = on ? 'Projector on' : 'Projector'; try { localStorage.setItem('projector', on ? '1' : '0'); } catch {} }
+$('c-projector').onclick = () => setProjector(!document.body.classList.contains('projector'));
+try { setProjector(localStorage.getItem('projector') === '1'); } catch {}
+document.addEventListener('keydown', e => { if ((e.key === 'p' || e.key === 'P') && !e.metaKey && !e.ctrlKey && !e.altKey && !(e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))) setProjector(!document.body.classList.contains('projector')); });
+// layers already in Live from an earlier session show up with their controls on the first pollHealth (renderSession)
 // quoted moves in the reply ("make the kick dirtier") become one-click chips; plus always-on quick actions. Only on the final text.
 function renderMoves(bot, text) {
   const old = bot.querySelector('.moves'); if (old) old.remove();
@@ -964,19 +1003,104 @@ function renderMoves(bot, text) {
   }
   const w = document.createElement('div'); w.className = 'chips moves';
   moves.forEach(t => w.appendChild(mkChip(t, () => say(t))));
-  [['Play it', 'Play what you just built in Live for 4 bars, then stop. Do not change anything.'], ['Listen and judge', 'Listen to 4 bars of what is playing now and tell me honestly, as a producer, what works and the one thing you would change. Do not build.'], ['Undo last', 'Undo the last sound or pattern change you made and tell me what came back.'], ['Another take', 'Make another take of the last thing you built: same role and pattern idea, different sound and feel. Put it as an alternative I can A/B, keep the first.']].forEach(([label, msg]) => w.appendChild(mkChip(label, () => say(msg), 'quick')));
+  [['Play it', 'Play what you just built in Live for 4 bars, then stop. Do not change anything.'], ['Listen and judge', 'Listen to 4 bars of what is playing now and tell me honestly, as a producer, what works and the one thing you would change. Do not build.'], ['Keep it', 'Keep what you just built: unmute it, no solo, leave it in the set as it is. Change nothing else.'], ['Undo last', 'Undo the last sound or pattern change you made and tell me what came back.'], ['Another take', 'Make another take of the last thing you built: same role and pattern idea, different sound and feel. Put it as an alternative I can A/B, keep the first.']].forEach(([label, msg]) => w.appendChild(mkChip(label, () => say(msg), 'quick')));
   bot.appendChild(w);
 }
+// ---------- layer state (what is audible / muted / soloed), fed by the tool events of every turn ----------
+// Live state (/api/live/state) carries no mixer info, so the UI tracks mute/solo from set_mixer inputs, audition results,
+// describe_set/list_tracks outputs and enhance_project's presentation {audible, muted}. Scores and judge labels ride along.
+const layerState = new Map();   // lower-case name -> { name, muted, solo, score, scoreNote, lite, judge, soloUntil }
+function noteLayer(name, patch) {
+  if (!name) return; const k = String(name).toLowerCase(); const cur = layerState.get(k) || { name: String(name), muted: false, solo: false };
+  Object.assign(cur, patch); if (patch.name) cur.name = patch.name; layerState.set(k, cur); return cur;
+}
+const AI_NAME = /^(ai |ade |vox chop|drums|bass|tops|texture|kick|snare|hats|clap|perc|keys|pad|lead|synth|saw|melody)/i;
+function aiLayerNames() {
+  const names = new Map();
+  Object.values((liveState && liveState.tracks) || {}).forEach(t => { const n = t && t.name; if (n) names.set(String(n).toLowerCase(), n); });
+  layerState.forEach((v, k) => { if (!names.has(k) && (/^ai /i.test(v.name) || v.fromBuild)) names.set(k, v.name); });
+  return [...names.values()];
+}
+function judgeInfo(d) {
+  if (!d || typeof d !== 'object') return null;
+  const lite = Boolean(d.lite || (d.comparison && d.comparison.lite) || (d.best && d.best.lite) || /lite/i.test(String(d.provider || d.judge || (d.comparison && d.comparison.provider) || '')));
+  const judge = d.judge || (d.comparison && d.comparison.provider) || d.provider || null;
+  const note = d.scoreNote || null;
+  const score = d.score != null ? d.score : d.match != null ? d.match : d.overall != null ? d.overall : (d.best && d.best.score != null ? d.best.score : null);
+  if (!lite && !note && !judge && score == null) return null;
+  return { lite, judge, note, score };
+}
+function judgeBadge(info) {
+  if (!info || (!info.lite && !info.note && !info.judge)) return null;
+  const b = document.createElement('span'); b.className = 'jbadge' + (info.lite ? '' : ' full');
+  const who = info.judge ? String(info.judge).replace(/^models\//, '') : (info.lite ? 'lite judge' : 'judge');
+  b.textContent = (info.lite ? `judged by ${who} · lower confidence` : `judged by ${who}`) + (info.note ? ` · ${info.note}` : '');
+  b.title = info.note || (info.lite ? 'A smaller Gemini model scored this (daily quota on the flash models ran out). Treat the number as a hint; A/B comparisons are still reliable.' : 'Scored by the full judge model');
+  return b;
+}
+const SOLO_TIMERS = new Map();
+function soloFor(names, seconds, restore) {
+  names.forEach(n => noteLayer(n, { solo: true, muted: false }));
+  if (restore !== false) names.forEach(n => { const k = String(n).toLowerCase(); clearTimeout(SOLO_TIMERS.get(k)); SOLO_TIMERS.set(k, setTimeout(() => { noteLayer(n, { solo: false }); renderLayers(); }, (Number(seconds) || 8) * 1000 + 400)); });
+}
+function trackLayerEvent(ev, input) {
+  const d = ev.data || {}; if (ev.ok === false) return;
+  const name = ev.name;
+  if (name === 'set_mixer' && input && input.track) { const p = {}; if (input.mute != null) p.muted = Boolean(input.mute); if (input.solo != null) p.solo = Boolean(input.solo); noteLayer(input.track, p); }
+  else if (name === 'audition' && Array.isArray(d.auditioning)) soloFor(d.auditioning, d.seconds, d.restoreAfter);
+  else if ((name === 'describe_set' || name === 'list_tracks') && Array.isArray(d.tracks)) d.tracks.forEach(t => { if (!t || !t.name) return; const mx = t.mixer || {}; noteLayer(t.name, { muted: Boolean(mx.mute != null ? mx.mute : t.muted), solo: Boolean(mx.solo != null ? mx.solo : t.solo) }); });
+  else if (name === 'enhance_project') {
+    const pr = d.presentation || {};
+    (pr.muted || []).forEach(n => noteLayer(n, { muted: true, solo: false, fromBuild: true }));
+    (pr.audible || []).forEach(n => noteLayer(n, { muted: false, fromBuild: true }));
+    if (!pr.muted) { if (d.kit && !d.kit.error) noteLayer('AI Kit', { muted: true, fromBuild: true }); if (d.bass && !d.bass.error) noteLayer('AI Bass', { muted: true, fromBuild: true }); }
+    if (d.audition && Array.isArray(d.audition.auditioning)) soloFor(d.audition.auditioning, d.audition.seconds, d.audition.restoreAfter);
+    (d.layers || []).forEach(l => { if (l && l.track) { const ji = judgeInfo(l); noteLayer(l.track, { fromBuild: true, ...(ji ? { score: ji.score, scoreNote: ji.note, lite: ji.lite, judge: ji.judge } : {}) }); } });
+  }
+  else if (name === 'remove_layer' && input && (input.track || input.name)) layerState.delete(String(input.track || input.name).toLowerCase());
+  // scores: attach to the layer the tool worked on, when it names one
+  const ji = judgeInfo(d); const target = input && (input.track || input.name || input.layer);
+  if (ji && target && ji.score != null) noteLayer(target, { score: ji.score, scoreNote: ji.note, lite: ji.lite, judge: ji.judge });
+  renderLayers();
+}
+function layerPill(st) {
+  const p = document.createElement('span');
+  const mode = st && st.solo ? 'solo' : st && st.muted ? 'muted' : 'audible';
+  p.className = 'pill ' + mode; p.textContent = mode === 'solo' ? 'auditioning (solo)' : mode;
+  p.title = mode === 'solo' ? 'Soloed so you hear only this layer; the others come back when it stops' : mode === 'muted' ? 'Muted: it is in Live but not playing. Keep it to unmute.' : 'Playing with the rest of the set';
+  return p;
+}
+function layerControls(c, name) {
+  const st = layerState.get(String(name).toLowerCase());
+  const btns = [['Play', `Audition ${name}: solo it and play 4 bars, then restore the set. Change nothing.`, 'Hear this layer alone (solo + play 4 bars)'], ['Keep', `Keep ${name}: unmute it (no solo) and leave it in the set exactly as it is. Change nothing else.`, 'Unmute it and leave it in'], ['Another', `Another take of ${name}: same pattern, different sound, keep the first as a muted alternative`, 'Regenerate the sound, keep this one as an alternative'], ['Undo', `Undo the last change to ${name} (undo_sound if the sound changed, remove it if it was just added) and tell me what came back`, 'Undo the last change to this layer']];
+  btns.forEach(([label, msg, title]) => { const btn = document.createElement('button'); btn.textContent = label; btn.title = title; btn.onclick = () => say(msg); if (label === 'Keep' && st && !st.muted && !st.solo) btn.disabled = true; c.appendChild(btn); });
+}
+function layerCard(name) {
+  const st = layerState.get(String(name).toLowerCase());
+  const c = document.createElement('div'); c.className = 'layer' + (st && st.muted && !st.solo ? ' is-muted' : ''); const b = document.createElement('b'); b.textContent = name; c.appendChild(b);
+  c.appendChild(layerPill(st));
+  if (st && st.score != null) { const sc = document.createElement('span'); sc.style.cssText = 'font-size:12px;color:var(--muted)'; sc.textContent = `${st.score}/10`; sc.title = st.scoreNote || ''; c.appendChild(sc); const jb = judgeBadge({ lite: st.lite, judge: st.judge, note: null }); if (jb) { jb.textContent = st.lite ? 'lite judge' : (st.judge ? String(st.judge).replace(/^models\//, '') : ''); if (jb.textContent) c.appendChild(jb); } }
+  layerControls(c, name);
+  return c;
+}
+function hearingLine() {
+  const names = aiLayerNames(); if (!names.length) return null;
+  const solo = names.filter(n => (layerState.get(n.toLowerCase()) || {}).solo);
+  const muted = names.filter(n => { const s = layerState.get(n.toLowerCase()) || {}; return s.muted && !s.solo; });
+  const audible = names.filter(n => !solo.includes(n) && !muted.includes(n));
+  const d = document.createElement('div'); d.className = 'hearing';
+  if (solo.length) d.innerHTML = `What you are hearing: <b>${escapeHtml(solo.join(', '))}</b> alone (solo)${muted.length ? ` <span class="m">· muted: ${escapeHtml(muted.join(', '))}</span>` : ''}`;
+  else d.innerHTML = `What you are hearing: ${audible.length ? `<b>${escapeHtml(audible.join(', '))}</b> with your set` : '<span class="m">none of the AI layers (all muted)</span>'}${muted.length ? ` <span class="m">· muted: ${escapeHtml(muted.join(', '))} (press Keep to unmute)</span>` : ''}`;
+  return d;
+}
+function renderLayers() { renderSession(liveState); }
 function layerCards(bot, tracks, before) {
   const fresh = Object.entries(tracks || {}).filter(([k]) => !before.has(k)).map(([k, t]) => (t && t.name) || k);
   if (!fresh.length) return;
   const w = document.createElement('div'); w.className = 'layers';
-  fresh.forEach(name => {
-    const c = document.createElement('div'); c.className = 'layer'; const b = document.createElement('b'); b.textContent = name; c.appendChild(b);
-    [['Play', `Play ${name} alone for 4 bars, then stop`], ['Another', `Another take of ${name}: same pattern, different sound, keep the first as an alternative`], ['Undo', `Undo the last change to ${name}`]].forEach(([label, msg]) => { const btn = document.createElement('button'); btn.textContent = label; btn.onclick = () => say(msg); c.appendChild(btn); });
-    w.appendChild(c);
-  });
+  fresh.forEach(name => { noteLayer(name, { fromBuild: true }); w.appendChild(layerCard(name)); });
   bot.appendChild(w);
+  const hl = hearingLine(); if (hl) bot.appendChild(hl);
 }
 function addMsg(cls, text) { const log = $('c-log'); const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text; log.appendChild(d); while (log.children.length > 80) log.firstChild.remove(); log.scrollTop = 1e9; return d; }
 function addBot(text) { return addMsg('bot', text); }
@@ -988,6 +1112,8 @@ function toolDone(tools, ev) {
   return li;
 }
 function toolExtras(ctx, ev) {
+  const ji = judgeInfo(ev.data);
+  if (ji && (ji.lite || ji.note || (ji.judge && ji.score != null))) { const li = [...ctx.tools.children].reverse().find(l => l.dataset.name === ev.name); const b = judgeBadge(ji); if (b) { if (ji.score != null) b.textContent = `${ji.score}/10 · ` + b.textContent; (li || ctx.tools).appendChild(document.createTextNode(' ')); (li || ctx.tools).appendChild(b); } }
   const prof = ev.data && (ev.data.profile || (ev.data.ratings ? ev.data : null));
   if (prof) { const card = profileCard(prof, ev.name === 'render_preview' ? 'Preview render (no Live effects)' : 'Technical profile'); if (card) ctx.bot.insertBefore(card, ctx.body); }
   if (ev.name === 'render_preview' && ev.data && ev.data.url) { const a = document.createElement('audio'); a.controls = true; a.src = ev.data.url; a.style.width = '100%'; ctx.bot.insertBefore(a, ctx.body); }
@@ -996,7 +1122,8 @@ function finishTurn(ctx, text, tracks) {
   const { bot, body } = ctx;
   if (text) body.innerHTML = renderMd(text); else if (!body.textContent || body.textContent === 'thinking…') body.textContent = 'Done.';
   body.classList.remove('err');
-  if (tracks) { layerCards(bot, tracks, ctx.tracksBefore); liveState = Object.assign({}, liveState || {}, { tracks }); renderStrip(); }
+  if (tracks) { liveState = Object.assign({}, liveState || {}, { tracks }); layerCards(bot, tracks, ctx.tracksBefore); renderStrip(); }
+  renderLayers();
   renderMoves(bot, text || '');
   if (lastChatError) { lastChatError = ''; renderBanner(); }
   pollHealth();
@@ -1016,7 +1143,7 @@ async function sendChat() {
   const bot = addBot(''); const tools = document.createElement('ul'); tools.className = 'tl'; bot.appendChild(tools);
   const body = document.createElement('div'); body.className = 'reply'; body.textContent = 'thinking…'; bot.appendChild(body);
   const sentAt = Date.now(); let turnId = null, gotDone = false, gotError = false, lastText = '';
-  const ctx = { bot, tools, body, tracksBefore: new Set(Object.keys((liveState && liveState.tracks) || {})) };
+  const ctx = { bot, tools, body, tracksBefore: new Set(Object.keys((liveState && liveState.tracks) || {})), lastInput: {} };
   const addIntent = t => { const pl = document.createElement('div'); pl.className = 'intent'; pl.textContent = t; bot.insertBefore(pl, tools); };
   try {
     const r = await fetch('/api/chat', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ text: (room !== 'create' ? `[room: ${room}] ` : '') + (level !== 'intermediate' ? `[level: ${level}] ` : '') + (room === 'tweak' ? `[strength: ${strength}] ` : '') + (density !== 'standard' ? `[density: ${density}] ` : '') + text, beatId: beatUpload, humId: humUpload, refIds: refUploads.map(x => x.id) }) });
@@ -1031,8 +1158,8 @@ async function sendChat() {
         if (!chunk.startsWith('data: ')) continue;
         let ev; try { ev = JSON.parse(chunk.slice(6)); } catch { continue; }
         if (ev.type === 'turn') turnId = ev.id;
-        else if (ev.type === 'tool') toolRow(tools, ev);
-        else if (ev.type === 'tool_done') { toolDone(tools, ev); toolExtras(ctx, ev); }
+        else if (ev.type === 'tool') { toolRow(tools, ev); if (ev.input) ctx.lastInput[ev.name] = ev.input; }
+        else if (ev.type === 'tool_done') { toolDone(tools, ev); toolExtras(ctx, ev); trackLayerEvent(ev, ctx.lastInput[ev.name]); }
         else if (ev.type === 'explanation') bot.insertBefore(explainPanel(ev), body);
         else if (ev.type === 'variations') bot.insertBefore(variantsPanel(ev), body);
         else if (ev.type === 'text') { if (lastText) addIntent(lastText); lastText = ev.text || ''; body.innerHTML = renderMd(lastText); }   // earlier texts are the agent's intent lines; the last one is the reply
@@ -1062,7 +1189,8 @@ async function recoverLastTurn(ctx, turnId, sentAt) {
     if (!mine) continue;                   // an older turn, or one queued ahead of ours: keep waiting
     const events = t.events || [];
     tools.innerHTML = '';
-    for (const ev of events) { if (ev.type === 'tool') toolRow(tools, ev); else if (ev.type === 'tool_done') toolDone(tools, ev); }
+    ctx.lastInput = ctx.lastInput || {};
+    for (const ev of events) { if (ev.type === 'tool') { toolRow(tools, ev); if (ev.input) ctx.lastInput[ev.name] = ev.input; } else if (ev.type === 'tool_done') { toolDone(tools, ev); trackLayerEvent(ev, ctx.lastInput[ev.name]); } }
     if (t.status === 'running') { body.textContent = `Still working… (${Math.round((Date.now() - (t.startedAt || sentAt)) / 1000)} s)`; continue; }
     bot.querySelectorAll('.intent').forEach(x => x.remove());
     const texts = events.filter(e => e.type === 'text').map(e => e.text || '');

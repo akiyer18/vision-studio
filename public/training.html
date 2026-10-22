@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ADE Hack · Training</title>
+<style>
+  :root { --bg:#0e0f12; --panel:#16181d; --line:#262a33; --grey:#22252c; --grey2:#0b0c0f; --text:#e8e9ec; --muted:#8b919e; --accent:#ff6a3d; --accent2:#3ddc97; --danger:#ff4d4d; --warn:#f5c542; }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 -apple-system, "Inter", system-ui, sans-serif; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 24px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; letter-spacing:.02em; }
+  header h1 span { color:var(--accent); }
+  header a { color:var(--muted); text-decoration:none; font-size:13px; }
+  header a:hover { color:var(--text); }
+  .badges { display:flex; flex-wrap:wrap; gap:8px; font-size:12px; color:var(--muted); }
+  .badge { padding:4px 8px; border:1px solid var(--line); border-radius:999px; }
+  .badge.ok { border-color:var(--accent2); color:var(--accent2); }
+  .badge.bad { border-color:var(--danger); color:var(--danger); }
+  main { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:16px; max-width:1100px; margin:0 auto; }
+  @media (max-width:900px) { main { grid-template-columns:1fr; } }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; min-width:0; }
+  section.wide { grid-column:1 / -1; }
+  h2 { margin:0 0 4px; font-size:16px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:16px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:8px 0 4px; text-transform:uppercase; letter-spacing:.06em; }
+  select, input[type=number] { width:100%; background:var(--grey2); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  button { background:var(--grey); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px 16px; font:inherit; cursor:pointer; }
+  button:hover { border-color:var(--muted); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#111; font-weight:600; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .actions { display:flex; gap:8px; align-items:center; margin-top:16px; flex-wrap:wrap; }
+  .status { font-size:13px; color:var(--muted); min-height:18px; margin-top:8px; }
+  .status.err { color:var(--danger); }
+  .levels { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; }
+  @media (max-width:560px) { .levels { grid-template-columns:1fr; } }
+  .lvl { border:1px solid var(--line); border-radius:10px; padding:10px; cursor:pointer; background:var(--grey2); }
+  .lvl.on { border-color:var(--accent); }
+  .lvl b { display:block; margin-bottom:4px; }
+  .lvl small { color:var(--muted); font-size:12px; }
+  audio { width:100%; margin-top:8px; }
+  ul.hints { margin:8px 0 0; padding-left:18px; color:var(--text); }
+  ul.hints li { margin:2px 0; }
+  .timer { font-variant-numeric:tabular-nums; color:var(--muted); font-size:13px; }
+  .score { display:flex; align-items:baseline; gap:12px; margin:8px 0; }
+  .score .big { font-size:44px; font-weight:700; color:var(--accent2); line-height:1; }
+  .score .big.low { color:var(--warn); } .score .big.bad { color:var(--danger); }
+  .score small { color:var(--muted); }
+  .lists { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:560px) { .lists { grid-template-columns:1fr; } }
+  .lists h3 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 4px; }
+  .lists ul { margin:0; padding-left:18px; font-size:14px; }
+  .closest li { color:var(--accent2); } .off li { color:var(--warn); }
+  .hint { margin-top:12px; padding:10px 12px; border:1px solid var(--accent); border-radius:8px; background:var(--grey2); }
+  .hint b { color:var(--accent); }
+  .note { color:var(--muted); font-size:12px; margin-top:8px; }
+  .how { white-space:pre-wrap; background:var(--grey2); border:1px solid var(--line); border-radius:8px; padding:12px; font-size:14px; line-height:1.55; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .chip { font-size:12px; padding:3px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted); }
+  .prog { font-size:13px; color:var(--muted); margin-top:8px; min-height:18px; }
+  .prog::before { content:'› '; color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1><span>ADE Hack</span> · Training mode</h1>
+  <div class="badges"><span class="badge" id="b-live">Live: …</span><span class="badge" id="b-ears">ears: …</span><a href="/">← back to the producer</a></div>
+</header>
+<main>
+  <section>
+    <h2>1 · Pick a challenge</h2>
+    <div class="sub">Stable Audio writes a short piece. You rebuild it in Live by ear. Then we score it and show you how it was made.</div>
+    <div class="levels" id="levels"></div>
+    <div class="row">
+      <div><label>Genre</label><select id="genre"><option value="">random</option></select></div>
+      <div><label>Tempo (optional)</label><input type="number" id="bpm" min="60" max="180" placeholder="blueprint default" /></div>
+    </div>
+    <div class="actions"><button class="primary" id="start">Start challenge</button><span class="timer" id="timer"></span></div>
+    <div class="status" id="s-start"></div>
+    <div class="prog" id="p-start" hidden></div>
+  </section>
+
+  <section id="target" hidden>
+    <h2>2 · Listen, then rebuild it in Live</h2>
+    <div class="sub" id="t-brief"></div>
+    <audio id="t-audio" controls loop></audio>
+    <ul class="hints" id="t-hints"></ul>
+    <div class="note">Put the playhead at bar 1 with your clips playing before you press Check. Recording starts from bar 1 on ADEHack 5.8 (from the playhead on older scripts).</div>
+    <div class="actions"><button class="primary" id="check">Check my version</button><button id="reveal">Reveal the parts in Live</button><button id="again">New challenge</button></div>
+    <div class="status" id="s-check"></div>
+    <div class="prog" id="p-check" hidden></div>
+  </section>
+
+  <section class="wide" id="result" hidden>
+    <h2>3 · Score</h2>
+    <div class="score"><div class="big" id="r-score">–</div><div><div id="r-line"></div><small id="r-attempts"></small></div></div>
+    <div class="lists">
+      <div class="closest"><h3>Close</h3><ul id="r-close"></ul></div>
+      <div class="off"><h3>Off</h3><ul id="r-off"></ul></div>
+    </div>
+    <div class="hint"><b>Next:</b> <span id="r-hint"></span></div>
+    <div class="chips" id="r-chips"></div>
+    <div class="note" id="r-note" hidden></div>
+    <audio id="r-audio" controls hidden></audio>
+  </section>
+
+  <section class="wide" id="howsec" hidden>
+    <h2>4 · How this was built</h2>
+    <div class="sub" id="h-sub"></div>
+    <div class="how" id="h-text"></div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let session = null, level = 'beginner', t0 = null, timerIv = null, pollIv = null;
+
+async function j(url, body) {
+  const r = await fetch(url, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : undefined);
+  const d = await r.json().catch(() => ({ error: `${r.status} ${r.statusText}` }));
+  if (!r.ok || d.error) throw new Error(d.error || `${r.status}`);
+  return d;
+}
+function busy(on) { for (const id of ['start', 'check', 'reveal', 'again']) $(id).disabled = on; }
+function status(id, text, err) { const el = $(id); el.textContent = text || ''; el.classList.toggle('err', Boolean(err)); }
+function poll(id, progId) {
+  stopPoll(); $(progId).hidden = false;
+  pollIv = setInterval(async () => { try { const p = await j(`/api/training/${id}/progress`); const last = p.progress[p.progress.length - 1]; if (last) $(progId).textContent = last.label; } catch {} }, 1500);
+}
+function stopPoll() { if (pollIv) clearInterval(pollIv); pollIv = null; for (const id of ['p-start', 'p-check']) { $(id).hidden = true; $(id).textContent = ''; } }
+function startTimer() { t0 = Date.now(); if (timerIv) clearInterval(timerIv); timerIv = setInterval(() => { const s = Math.floor((Date.now() - t0) / 1000); $('timer').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; }, 1000); }
+
+async function init() {
+  try { const h = await j('/api/health'); const lv = h.live || {}; $('b-live').textContent = lv.reachable ? `Live: ADEHack ${lv.running}${lv.restartNeeded ? ' (restart for ' + lv.installed + ')' : ''}` : 'Live: not reachable'; $('b-live').className = 'badge ' + (lv.reachable ? 'ok' : 'bad'); const ears = h.ears || h.earsStatus || h.gemini; $('b-ears').textContent = `ears: ${typeof ears === 'string' ? ears : (h.gemini ? 'Gemini' : (ears ? 'ok' : 'off'))}`; } catch { $('b-live').textContent = 'server offline'; $('b-live').className = 'badge bad'; }
+  try { const { levels } = await j('/api/training/levels'); $('levels').innerHTML = levels.map((l) => `<div class="lvl${l.level === level ? ' on' : ''}" data-level="${l.level}"><b>${l.label}</b><small>${l.brief}</small></div>`).join(''); for (const el of document.querySelectorAll('.lvl')) el.onclick = () => { level = el.dataset.level; for (const x of document.querySelectorAll('.lvl')) x.classList.toggle('on', x === el); }; } catch {}
+  try { const { genres } = await j('/api/knowledge'); for (const g of genres) { const o = document.createElement('option'); o.value = g.slug; o.textContent = g.title + (g.tempo ? ` · ${g.tempo}` : ''); $('genre').appendChild(o); } } catch {}
+}
+
+$('start').onclick = async () => {
+  busy(true); status('s-start', 'generating the target (20-60 s)…'); $('result').hidden = true; $('howsec').hidden = true; $('target').hidden = true;
+  try {
+    const body = { level, genre: $('genre').value || undefined, bpm: Number($('bpm').value) || undefined };
+    const p = j('/api/training/start', body);
+    setTimeout(() => { $('p-start').hidden = false; $('p-start').textContent = 'Stable Audio composing…'; }, 300);
+    session = await p; stopPoll();
+    $('t-brief').textContent = `${session.title} · ${session.level} · ${session.bars} bars`;
+    $('t-audio').src = session.audioUrl; $('t-audio').play().catch(() => {});
+    $('t-hints').innerHTML = session.hints.map((h) => `<li>${h}</li>`).join('');
+    $('target').hidden = false; status('s-start', 'target ready. Rebuild it in Live, then Check.'); startTimer();
+  } catch (e) { stopPoll(); status('s-start', e.message, true); }
+  busy(false);
+};
+
+$('check').onclick = async () => {
+  if (!session) return; busy(true); status('s-check', 'recording your set and comparing (30-90 s)…'); poll(session.id, 'p-check');
+  try {
+    const r = await j('/api/training/check', { id: session.id });
+    stopPoll(); renderResult(r); status('s-check', '');
+  } catch (e) { stopPoll(); status('s-check', e.message, true); }
+  busy(false);
+};
+
+function renderResult(r) {
+  $('result').hidden = false;
+  const big = $('r-score'); big.textContent = `${r.score}`; big.className = 'big' + (r.score >= 75 ? '' : r.score >= 45 ? ' low' : ' bad');
+  const bits = [`tempo ${r.tempo.attempt} vs ${r.tempo.target} BPM`];
+  if (r.drums && !r.drums.error) bits.push(`drums ${Math.round(r.drums.overall * 100)}%`);
+  if (r.bass?.measured) bits.push(`bass ${Math.round(r.bass.agreement * 100)}%`);
+  $('r-line').textContent = bits.join(' · ');
+  $('r-attempts').textContent = `attempt ${r.attempts}, best ${r.best}/100 · ${$('timer').textContent || ''}`;
+  $('r-close').innerHTML = (r.closest || []).map((x) => `<li>${x}</li>`).join('') || '<li style="color:var(--muted)">nothing yet</li>';
+  $('r-off').innerHTML = (r.off || []).map((x) => `<li>${x}</li>`).join('') || '<li style="color:var(--muted)">nothing: it matches</li>';
+  $('r-hint').textContent = r.nextHint || '';
+  const chips = [];
+  if (r.drums?.yours) chips.push(`yours: ${r.drums.yours}`);
+  if (r.ears?.heard) chips.push(`target, as heard: ${r.ears.heard}`);
+  if (r.bass?.note) chips.push(r.bass.note);
+  $('r-chips').innerHTML = chips.map((c) => `<span class="chip">${c}</span>`).join('');
+  const note = r.scoreNote || r.ears?.scoreNote || (r.ears?.lite ? 'lite judge, lower confidence' : null);
+  $('r-note').hidden = !note; $('r-note').textContent = note ? `Ears: ${note}` : '';
+  if (r.capture?.url) { $('r-audio').src = r.capture.url; $('r-audio').hidden = false; }
+}
+
+$('reveal').onclick = async () => {
+  if (!session) return; busy(true); status('s-check', 'building the target parts in Live (1-3 min with stems)…'); poll(session.id, 'p-check');
+  try {
+    const r = await j('/api/training/reveal', { id: session.id });
+    stopPoll(); $('howsec').hidden = false;
+    $('h-sub').textContent = `${(r.built.tracks || []).join(', ') || 'nothing built'} · all muted: unmute one at a time against your own tracks.`;
+    $('h-text').textContent = r.howText + (r.built.drumsError ? `\n\n(drums: ${r.built.drumsError})` : '') + (r.built.bassError ? `\n(bass: ${r.built.bassError})` : '') + (r.built.stemsError ? `\n(stems: ${r.built.stemsError})` : '');
+    status('s-check', 'revealed in Live.');
+  } catch (e) { stopPoll(); status('s-check', e.message, true); }
+  busy(false);
+};
+
+$('again').onclick = () => { session = null; $('target').hidden = true; $('result').hidden = true; $('howsec').hidden = true; $('t-audio').pause(); if (timerIv) clearInterval(timerIv); $('timer').textContent = ''; status('s-start', ''); window.scrollTo(0, 0); };
+
+init();
+</script>
+</body>
+</html>

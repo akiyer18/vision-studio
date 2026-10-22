@@ -6,13 +6,14 @@ import errno
 import math
 import json
 import os
+import re
 import socket
 import time
 
 import Live
 from _Framework.ControlSurface import ControlSurface
 
-VERSION = '5.7'
+VERSION = '5.8'
 HOST = '127.0.0.1'
 PORT = 9004
 GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 42,
@@ -20,7 +21,7 @@ GM_DRUM_NOTES = {'kick': 36, 'snare': 38, 'clap': 39, 'rim': 37, 'hat_closed': 4
                  'crash': 49, 'perc': 54}
 WOULD_BLOCK = (errno.EAGAIN, errno.EWOULDBLOCK, errno.EINPROGRESS)
 PENDING = object()  # returned by a command that will reply later via schedule_message
-COMMANDS = ['arrangement_info', 'arrangement_record', 'browse', 'capture_midi', 'clip_edit', 'clip_info', 'create_clip', 'create_midi_track', 'create_scene', 'delete_device', 'delete_track', 'describe_set', 'duplicate_clip', 'duplicate_scene', 'duplicate_track', 'fire_scene', 'focus_clip', 'get_clip_notes', 'list_devices', 'list_scenes', 'list_tracks', 'load_audio_clip', 'load_device', 'load_sample', 'load_to_pad', 'meters', 'pad_info', 'ping', 'play', 'play_for', 'play_scene_for', 'redo', 'rename_scene', 'rename_track', 'sample_info', 'select_track', 'session_record', 'set_arm', 'set_clip_warp', 'set_device_param', 'set_mixer', 'set_send', 'set_simpler', 'set_tempo', 'set_track_color', 'show_view', 'stop', 'stop_clip', 'transport_setup', 'undo', 'version']
+COMMANDS = ['arrangement_info', 'arrangement_record', 'browse', 'capture_midi', 'clip_edit', 'clip_info', 'create_clip', 'create_midi_track', 'create_scene', 'delete_device', 'delete_track', 'describe_set', 'duplicate_clip', 'duplicate_scene', 'duplicate_track', 'fire_scene', 'focus_clip', 'get_clip_notes', 'list_devices', 'list_scenes', 'list_tracks', 'load_audio_clip', 'load_device', 'load_sample', 'load_to_pad', 'meters', 'pad_info', 'ping', 'play', 'play_for', 'play_scene_for', 'redo', 'rename_scene', 'rename_track', 'sample_info', 'select_track', 'session_record', 'set_arm', 'set_clip_warp', 'set_device_param', 'set_mixer', 'set_position', 'jump', 'set_send', 'set_simpler', 'set_tempo', 'set_track_color', 'show_view', 'stop', 'stop_clip', 'transport_setup', 'undo', 'version']
 LOAD_RETRY_TICKS = 3   # ~0.3 s between browser re-scans
 LOAD_RETRY_MAX = 8     # ~2.4 s total before replying not found
 STALE_SECONDS = 15.0   # commands whose client 'ts' is older than this are dropped
@@ -157,8 +158,9 @@ class ADEHack(ControlSurface):
             if cmd == 'version':
                 return {'ok': True, 'version': VERSION, 'cmds': COMMANDS}
             if cmd == 'set_tempo':
-                self.song().tempo = float(msg['bpm'])
-                return {'ok': True, 'tempo': self.song().tempo}
+                return self._cmd_set_tempo(msg)
+            if cmd == 'set_position' or cmd == 'jump':
+                return self._cmd_set_position(msg)
             if cmd == 'create_clip':
                 return self._cmd_create_clip(msg)
             if cmd == 'load_sample':
@@ -818,6 +820,9 @@ class ADEHack(ControlSurface):
         at = msg.get('at')
         if at is None or at == '':
             at = 'end'             # append after the last event; never the playhead unless asked
+        seek = self._seek_beats(msg)
+        if seek is not None:
+            at = seek              # v5.8: from_beat / from_bar win over 'at' (explicit opt-in)
         at_beats, from_bar = self._position_for_record(at)
         self._record_start = at_beats
         pre = {}
@@ -915,6 +920,149 @@ class ADEHack(ControlSurface):
 
     def _bars_seconds(self, bars):
         return float(bars) * 4.0 * 60.0 / float(self.song().tempo)
+
+    # ------------------------------------------------- v5.8: position / jump
+    def _bar_of(self, beats):
+        return int(float(beats) // self._beats_per_bar()) + 1
+
+    def _seek_beats(self, msg):
+        """Optional from_beat / from_bar on a command -> beats (None when neither is given).
+        beat 0.0 == bar 1; bar N == (N - 1) * beats_per_bar at the set's signature."""
+        beat = msg.get('from_beat')
+        bar = msg.get('from_bar')
+        if beat is None and bar is None:
+            return None
+        if beat is not None and beat != '':
+            return max(0.0, float(beat))
+        bar = int(bar)
+        if bar < 1:
+            raise ValueError('from_bar must be >= 1 (bar 1 is the start of the arrangement)')
+        return (bar - 1) * self._beats_per_bar()
+
+    def _cmd_set_position(self, msg):
+        """set_position {beat} | jump {bar}: both accept beat or bar; bar wins only when beat is absent."""
+        song = self.song()
+        bpb = self._beats_per_bar()
+        beat = msg.get('beat')
+        bar = msg.get('bar')
+        if beat is None and bar is None:
+            return {'ok': False, 'error': '%s needs beat:<float> (0.0 = bar 1) or bar:<int> (1-based)' % (msg.get('cmd'),)}
+        if beat is not None and beat != '':
+            beats = max(0.0, float(beat))
+        else:
+            bar = int(bar)
+            if bar < 1:
+                return {'ok': False, 'error': 'bar must be >= 1 (bar 1 is the start of the arrangement)'}
+            beats = (bar - 1) * bpb
+        song.current_song_time = beats
+        position = float(song.current_song_time)
+        return {'ok': True, 'position': position, 'bar': self._bar_of(position),
+                'beat_in_bar': position - math.floor(position / bpb) * bpb,
+                'beats_per_bar': bpb, 'is_playing': bool(song.is_playing)}
+
+    # ------------------------------------------------- v5.8: tempo + warp
+    # whole words only ('hat' must not match 'that', 'tom' not 'custom'); plural/underscore forms allowed
+    DRUM_RE = re.compile(r'(?<![a-z])(drum|breakbeat|kick|snare|hat|hihat|hi-hat|clap|perc|percussion|tom|rim|cymbal|ride|'
+                         r'crash|shaker|break|kit|groove|beat|rhythm|snap|conga|bongo|tabla)s?(?![a-z])')
+
+    def _looks_like_drums(self, *names):
+        for name in names:
+            text = (u'%s' % (name or u'',)).lower()
+            if self.DRUM_RE.search(text):
+                return True
+        return False
+
+    def _audio_clips(self):
+        """Yield (track, where, index, clip) for every audio clip: Session slots on every track, plus
+        Arrangement clips when the API exposes Track.arrangement_clips (Live 11+; Live 10 has no
+        arrangement clip access, in which case 'arrangement_scanned' is False in the caller's reply)."""
+        found = []
+        scanned_arrangement = True
+        for track in self.song().tracks:
+            try:
+                slots = list(track.clip_slots)
+            except Exception:
+                slots = []
+            for i, slot in enumerate(slots):
+                try:
+                    if slot.has_clip and bool(getattr(slot.clip, 'is_audio_clip', False)):
+                        found.append((track, 'session', i, slot.clip))
+                except Exception:
+                    continue
+            arr = getattr(track, 'arrangement_clips', None)
+            if arr is None:
+                scanned_arrangement = False
+                continue
+            try:
+                for i, clip in enumerate(list(arr)):
+                    if bool(getattr(clip, 'is_audio_clip', False)):
+                        found.append((track, 'arrangement', i, clip))
+            except Exception as e:
+                self.log_message('ADEHack: arrangement_clips on %r failed: %r' % (track.name, e))
+                scanned_arrangement = False
+        return found, scanned_arrangement
+
+    def _warp_unwarped_clips(self):
+        """Switch warping on for every UNWARPED audio clip at the CURRENT tempo (so the clip keeps the
+        timing it has now), beats mode for drum-looking names, complex_pro (fallback complex) otherwise."""
+        warped, left = [], []
+        clips, scanned = self._audio_clips()
+        for track, where, index, clip in clips:
+            entry = {'track': track.name, 'clip': u'%s' % (getattr(clip, 'name', u''),), 'where': where}
+            if where == 'session':
+                entry['slot'] = index
+            else:
+                try:
+                    entry['start_time'] = float(clip.start_time)
+                except Exception:
+                    entry['index'] = index
+            try:
+                if bool(getattr(clip, 'is_recording', False)):
+                    entry['error'] = 'recording'
+                    left.append(entry)
+                    continue
+                if bool(clip.warping):
+                    continue   # already warped: nothing to do, not reported
+                mode = 'beats' if self._looks_like_drums(entry['clip'], track.name) else 'complex_pro'
+                clip.warping = True
+                try:
+                    self._set_warp_mode(clip, mode)
+                except Exception as e:
+                    if mode == 'complex_pro':
+                        self.log_message('ADEHack: complex_pro unavailable (%r), using complex' % (e,))
+                        mode = 'complex'
+                        self._set_warp_mode(clip, mode)
+                    else:
+                        raise
+                try:
+                    entry['mode'] = self._warp_mode_name(clip.warp_mode)
+                except Exception:
+                    entry['mode'] = mode
+                if bool(clip.warping):
+                    warped.append(entry)
+                else:
+                    entry['error'] = 'warping did not stick'
+                    left.append(entry)
+            except Exception as e:
+                entry['error'] = '%s: %r' % (e.__class__.__name__, e)
+                self.log_message('ADEHack: warp %s/%s failed: %r' % (track.name, entry['clip'], e))
+                left.append(entry)
+        return {'warped': warped, 'unwarped_left': left, 'arrangement_scanned': scanned}
+
+    def _cmd_set_tempo(self, msg):
+        song = self.song()
+        bpm = float(msg['bpm'])
+        if not (20.0 <= bpm <= 999.0):
+            return {'ok': False, 'error': 'bpm %r out of range (20..999)' % (bpm,)}
+        reply = {'ok': True, 'previous_tempo': float(song.tempo)}
+        if msg.get('warp_clips'):
+            # warp BEFORE the tempo moves: enabling warp locks each clip to the grid it plays on now
+            reply.update(self._warp_unwarped_clips())
+            if not reply['arrangement_scanned']:
+                reply['note'] = 'Arrangement clips not scanned: Track.arrangement_clips is Live 11+; this Live only exposes Session clips'
+        song.tempo = bpm
+        reply['tempo'] = float(song.tempo)
+        return reply
 
     def _run_sequence(self, seq_id, steps, i, elapsed_bars):
         """Fire steps[i] now, schedule the next fire slightly EARLY so Live's launch
@@ -1542,6 +1690,11 @@ class ADEHack(ControlSurface):
         self._play_id += 1          # cancels any pending timed stop
         play_id = self._play_id
         reply = {'ok': True, 'stops_in_seconds': seconds}
+        seek = self._seek_beats(msg)
+        if seek is not None:        # v5.8: from_beat / from_bar seeks the arrangement before playing
+            song.current_song_time = seek
+            reply['position'] = float(song.current_song_time)
+            reply['from_bar'] = self._bar_of(reply['position'])
         if scene:
             scenes = list(song.scenes)
             index = int(msg.get('index', 0))
@@ -2257,6 +2410,11 @@ class ADEHack(ControlSurface):
         beats = bars * self._beats_per_bar()
         self._play_id += 1      # a pending play_for stop must not cut the take
         self._seq_id += 1
+        seek = self._seek_beats(msg)
+        position = None
+        if seek is not None:    # v5.8: from_beat / from_bar parks the transport before the take
+            song.current_song_time = seek
+            position = float(song.current_song_time)
         track.arm = True
         song.view.selected_track = track
         song.view.highlighted_clip_slot = slot
@@ -2270,6 +2428,7 @@ class ADEHack(ControlSurface):
         # count-in (up to 4 bars) + launch quantization (up to 1 bar) + slack before giving up on a start
         start_wait = self._bars_seconds(5.0) + 2.0
         job = {'conn': conn, 'track': track, 'slot': slot, 'slot_index': slot_index, 'bars': bars,
+               'position': position,
                'stop_after': bool(msg.get('stop_after')), 'started': False, 'ticks': 0,
                'start_limit': int(start_wait * 10.0),
                'max_ticks': int((start_wait + seconds * 1.5 + 2.0) * 10.0)}
@@ -2312,6 +2471,9 @@ class ADEHack(ControlSurface):
             if slot.has_clip:
                 reply = {'ok': True, 'track': track.name, 'slot': job['slot_index'], 'bars': job['bars'],
                          'timed_out': timed_out, 'seconds_waited': waited, 'clip': self._clip_summary(slot.clip)}
+                if job.get('position') is not None:
+                    reply['position'] = job['position']
+                    reply['from_bar'] = self._bar_of(job['position'])
             else:
                 why = 'started but produced no clip' if job['started'] \
                     else 'never started: check arm / input routing / count-in'

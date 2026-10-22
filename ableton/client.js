@@ -104,6 +104,71 @@ export function sendToLive(cmd, { host = DEFAULT_HOST, port = DEFAULT_PORT, time
   });
 }
 
+// ------------------------------------------------------------ v5.8 wrappers
+// Thin helpers that build the exact protocol messages (snake_case fields) the remote script expects.
+
+/** Optional seek before a transport command: {fromBar} (1-based) or {fromBeat} (0.0 = bar 1). */
+function withFrom(cmd, { fromBar, fromBeat } = {}) {
+  if (fromBeat !== undefined && fromBeat !== null) cmd.from_beat = Number(fromBeat);
+  else if (fromBar !== undefined && fromBar !== null) cmd.from_bar = Number(fromBar);
+  return cmd;
+}
+
+/** set_position {beat} (0.0 = bar 1) or {bar} (1-based). Reply: {ok, position, bar, beat_in_bar, beats_per_bar, is_playing}. */
+export function setPosition({ beat, bar } = {}, opts) {
+  const cmd = { cmd: 'set_position' };
+  if (beat !== undefined && beat !== null) cmd.beat = Number(beat);
+  else if (bar !== undefined && bar !== null) cmd.bar = Number(bar);
+  else throw new Error('setPosition needs {beat} or {bar}');
+  return sendToLive(cmd, opts);
+}
+
+/** jump to a 1-based bar: bar 1 -> beat 0, bar N -> (N-1) * beats_per_bar at the set's signature. */
+export function jump(bar, opts) {
+  const n = Number(bar);
+  if (!Number.isInteger(n) || n < 1) throw new Error('jump needs an integer bar >= 1');
+  return sendToLive({ cmd: 'jump', bar: n }, opts);
+}
+
+/**
+ * set_tempo {bpm, warp_clips?}. With warpClips:true every UNWARPED audio clip is warped at the current
+ * tempo first (beats for drum-looking names, complex_pro otherwise) and the reply adds
+ * {warped:[{track,clip,where,slot|start_time,mode}], unwarped_left:[...], arrangement_scanned}.
+ */
+export function setTempo(bpm, { warpClips = false, ...opts } = {}) {
+  const n = Number(bpm);
+  if (!Number.isFinite(n) || n <= 0) throw new Error('setTempo needs a numeric bpm');
+  const cmd = { cmd: 'set_tempo', bpm: n };
+  if (warpClips) cmd.warp_clips = true;
+  return sendToLive(cmd, opts);
+}
+
+/** arrangement_record with optional fromBar/fromBeat (seeks first, overriding `at`). */
+export function arrangementRecord({ bars, scenes, at, stop, fromBar, fromBeat } = {}, opts) {
+  const cmd = { cmd: 'arrangement_record' };
+  if (stop) cmd.stop = true;
+  if (bars !== undefined) cmd.bars = Number(bars);
+  if (scenes !== undefined) cmd.scenes = scenes;
+  if (at !== undefined) cmd.at = at;
+  return sendToLive(withFrom(cmd, { fromBar, fromBeat }), opts);
+}
+
+/** play_for {seconds} with optional fromBar/fromBeat. */
+export function playFor(seconds, { fromBar, fromBeat, ...opts } = {}) {
+  return sendToLive(withFrom({ cmd: 'play_for', seconds: Number(seconds) }, { fromBar, fromBeat }), opts);
+}
+
+/** session_record {track, slot, bars, monitoring, overwrite, stop_after} with optional fromBar/fromBeat. */
+export function sessionRecord({ track = 'selected', slot, bars, monitoring, overwrite, stopAfter, fromBar, fromBeat } = {}, opts) {
+  const cmd = { cmd: 'session_record', track };
+  if (slot !== undefined) cmd.slot = Number(slot);
+  if (bars !== undefined) cmd.bars = Number(bars);
+  if (monitoring !== undefined) cmd.monitoring = monitoring;
+  if (overwrite) cmd.overwrite = true;
+  if (stopAfter) cmd.stop_after = true;
+  return sendToLive(withFrom(cmd, { fromBar, fromBeat }), opts);
+}
+
 /** Ping Live with a short timeout. Never throws. */
 export async function isLiveReachable(opts = {}) {
   try {
@@ -160,7 +225,10 @@ function usage() {
   return [
     'Usage:',
     '  node ableton/client.js ping',
-    '  node ableton/client.js set_tempo <bpm>',
+    '  node ableton/client.js set_tempo <bpm> [--warp-clips]',
+    '  node ableton/client.js set_position <beat>   (0.0 = bar 1)',
+    '  node ableton/client.js jump <bar>            (1-based)',
+    '  node ableton/client.js play_for <seconds> [--from-bar N | --from-beat B]',
     '  node ableton/client.js load_sample </abs/file.wav>',
     "  node ableton/client.js create_clip '<json notes array | pattern json>' [--track selected|N] [--slot N] [--length beats] [--mapping gm|single] [--no-fire]",
     '  node ableton/client.js load_audio_clip <file.wav | name> [--track name|N] [--slot N] [--warp-mode complex_pro] [--overwrite]',
@@ -182,6 +250,7 @@ function parseFlags(args) {
       const key = a.slice(2);
       if (key === 'no-fire') { flags.fire = false; continue; }
       if (key === 'overwrite') { flags.overwrite = true; continue; }
+      if (key === 'warp-clips') { flags.warpClips = true; continue; }
       const next = args[i + 1];
       if (next !== undefined && !next.startsWith('--')) { flags[key] = next; i++; }
       else flags[key] = true;
@@ -208,6 +277,25 @@ async function main(argv) {
       const bpm = Number(rest[0]);
       if (!Number.isFinite(bpm) || bpm <= 0) throw new Error('set_tempo needs a numeric bpm');
       cmd = { cmd: 'set_tempo', bpm };
+      if (flags.warpClips) cmd.warp_clips = true;
+      break;
+    }
+    case 'set_position': {
+      const beat = Number(rest[0]);
+      if (!Number.isFinite(beat) || beat < 0) throw new Error('set_position needs a beat >= 0 (0.0 = bar 1)');
+      cmd = { cmd: 'set_position', beat };
+      break;
+    }
+    case 'jump': {
+      const bar = Number(rest[0]);
+      if (!Number.isInteger(bar) || bar < 1) throw new Error('jump needs an integer bar >= 1');
+      cmd = { cmd: 'jump', bar };
+      break;
+    }
+    case 'play_for': {
+      const seconds = Number(rest[0]);
+      if (!Number.isFinite(seconds) || seconds <= 0) throw new Error('play_for needs seconds > 0');
+      cmd = withFrom({ cmd: 'play_for', seconds }, { fromBar: flags['from-bar'], fromBeat: flags['from-beat'] });
       break;
     }
     case 'load_sample': {

@@ -60,6 +60,12 @@ function buildPrompt(prompt, mode, kind) {
 }
 const LOOP_MODEL = process.env.STABILITY_LOOP_MODEL || 'stable-audio-3';   // async but longer/better for loops, textures, restyles
 
+const scriptState = { running: null, at: 0 };   // the ADEHack version Live is actually running (health handshake), cached 30 s
+function versionAtLeast(have, want) {
+  const a = String(have || '0').split('.').map((x) => parseInt(x, 10) || 0), b = String(want).split('.').map((x) => parseInt(x, 10) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) { const d = (a[i] || 0) - (b[i] || 0); if (d) return d > 0; }
+  return true;
+}
 async function liveVersion() {
   let installed = null, running = null, reachable = false;
   try { installed = (await fs.readFile(path.join(here, 'ableton', 'VERSION'), 'utf8')).trim(); } catch {}
@@ -68,8 +74,14 @@ async function liveVersion() {
     const r = await sendToLive({ cmd: 'version' }, { timeoutMs: 1500 });
     reachable = true;
     running = r?.ok ? String(r.version) : 'pre-5';   // older scripts answer "unknown cmd"
+    scriptState.running = running; scriptState.at = Date.now();
   } catch { reachable = false; }
   return { reachable, running, installed, restartNeeded: Boolean(reachable && installed && running !== installed) };
+}
+/** True when the script Live runs supports `want` (e.g. '5.8'); refreshes the handshake when the cache is older than 30 s. */
+async function scriptAtLeast(want) {
+  if (!scriptState.running || Date.now() - scriptState.at > 30000) { try { await liveVersion(); } catch {} }
+  return Boolean(scriptState.running && scriptState.running !== 'pre-5' && versionAtLeast(scriptState.running, want));
 }
 app.get('/api/health', async (_req, res) => {
   res.json({
@@ -79,6 +91,8 @@ app.get('/api/health', async (_req, res) => {
     ears: Boolean(process.env.HF_TOKEN || process.env.HUGGING_FACE_HUB_TOKEN || process.env.GEMINI_API_KEY),
     earsStatus: (await import('./lib/ears.js')).earsStatus(),
     earsProviders: (await import('./lib/ears.js')).earsProviders(),
+    gemini: (await import('./lib/ears.js')).geminiStatus(),
+    geminiStatus: (await import('./lib/ears.js')).geminiStatusText(),
     outDir: OUT_DIR,
   });
 });
@@ -193,7 +207,10 @@ app.post('/api/reveal', (req, res) => {
 // Each role has numbered slots (ADE Kick 1..6, ADE Synth 1..8); we rotate through them (counter persisted in .tmp).
 const ROLE_OF = { kick: 'Kick', snare: 'Snare', clap: 'Clap', hat_closed: 'Hat', hat: 'Hat', hat_open: 'OpenHat', rim: 'Rim', perc: 'Perc', tom_low: 'Tom', tom_high: 'Tom', tom: 'Tom', ride: 'Perc', crash: 'Perc', drum: 'Snare', shaker: 'Perc', snap: 'Clap', cowbell: 'Perc', conga: 'Perc', vox: 'Synth', fx: 'Synth', texture: 'Synth',
   synth: 'Synth', saw: 'Synth', bass: 'Synth', pad: 'Synth', pluck: 'Synth', lead: 'Synth', keys: 'Synth', melody: 'Synth', rhodes: 'Synth', piano: 'Synth' };
-const POOL_SIZE = { Kick: 6, Snare: 6, Clap: 6, Hat: 6, OpenHat: 6, Rim: 6, Perc: 6, Tom: 6, Synth: 8 };
+// Slot files per role ("ADE Kick 1..N.wav" in the ADE Hack Place). Live indexes a Place once, so more slots need: create the
+// extra numbered files (scripts/ or `touch`), then Places > remove + re-add "ADE Hack" (or restart Live) so they get indexed.
+const SLOT_POOL = clamp(parseInt(process.env.SLOT_POOL, 10) || 8, 2, 32);
+const POOL_SIZE = { Kick: SLOT_POOL, Snare: SLOT_POOL, Clap: SLOT_POOL, Hat: SLOT_POOL, OpenHat: SLOT_POOL, Rim: SLOT_POOL, Perc: SLOT_POOL, Tom: SLOT_POOL, Synth: Math.max(SLOT_POOL, 8) };
 const COUNTER_FILE = path.join(TMP, 'slot-counter.json');
 const LIVE_DB = path.join(os.homedir(), 'Library/Application Support/Ableton/Live Database/Live-files-36.db');
 let indexedSlots = null, indexedAt = 0;
@@ -242,7 +259,18 @@ async function nextSlotUnlocked(role) {
     const name = `ADE ${role} ${k}.wav`;
     if ((!indexed || indexed.has(name)) && !inUse.has(name)) { pick = { name, k }; break; }
   }
-  if (!pick && (!indexed || [...Array(n)].some((_, i) => indexed.has(`ADE ${role} ${i + 1}.wav`)))) throw new Error(`all ${n} ${role} sound slots are in use by tracks in this set; remove an unused AI ${role} track (remove_layer) or reuse its sound instead of generating a new one`);
+  if (!pick && (!indexed || [...Array(n)].some((_, i) => indexed.has(`ADE ${role} ${i + 1}.wav`)))) {
+    // pool exhausted: recycle the slot that is NOT loaded in any track of this set, oldest retirement first (retired = loaded in a
+    // previous set; Live may still hold the old audio under that filename, so this is the last resort before refusing)
+    const loaded = new Set([...Object.values(lastBuild.samples || {}).map((s) => path.basename(s.slotPath || '')), ...reservedSlots.keys()]);
+    const retired = Object.entries(lastBuild.retiredSlots || {}).filter(([k]) => k.startsWith(`ADE ${role} `) && !loaded.has(k) && (!indexed || indexed.has(k))).sort((a, b) => a[1] - b[1]);
+    if (retired.length) {
+      const [name] = retired[0]; delete lastBuild.retiredSlots[name];
+      const k = parseInt(name.match(/(\d+)\.wav$/)?.[1], 10) || 1;
+      console.warn(`[slot] ${role} pool exhausted, recycling ${name} (not loaded in this set)`);
+      pick = { name, k, recycled: true };
+    } else throw new Error(`all ${n} ${role} sound slots are loaded by tracks in this set; remove_layer an unused AI ${role} track or replace_sound on one instead of generating a new one (SLOT_POOL env raises the cap after indexing more files)`);
+  }
   if (!pick) {   // pool not indexed yet (user must re-add the Place once); fall back to the old single role slot
     const legacy = `ADE ${role === 'OpenHat' ? 'Hat Open' : role}.wav`;
     console.warn(`[slot] pool for ${role} not indexed by Live, falling back to ${legacy}`);
@@ -463,7 +491,16 @@ app.post('/api/live/build', async (req, res) => {
 });
 
 // ---- live tweaking: replace clips / samples / tempo in place while Live plays ----
-app.get('/api/live/state', (_req, res) => res.json(lastBuild));
+// lastBuild + per-track mute/solo from Live (cheap describe_set, 2.5 s budget) so the session panel is exact after a reload
+app.get('/api/live/state', async (_req, res) => {
+  let liveTracks = null;
+  try {
+    const { sendToLive } = await import('./ableton/client.js');
+    const set = await sendToLive({ cmd: 'describe_set' }, { timeoutMs: 2500 });
+    if (set?.ok) liveTracks = (set.tracks || []).map((t) => ({ index: t.index, name: t.name, muted: Boolean(t.mute ?? t.muted ?? t.mixer?.mute), solo: Boolean(t.solo ?? t.mixer?.solo), is_midi: Boolean(t.is_midi) }));
+  } catch {}
+  res.json({ ...lastBuild, ...(liveTracks ? { liveTracks } : {}) });
+});
 // drop a generated/processed wav into Live as a warped audio clip (UI cards and tests; the agent uses add_loop_layer)
 app.post('/api/live/loop-clip', async (req, res) => {
   try { const { path: p, track = 'AI Loop', slot = 0, warpMode = 'complex_pro', overwrite = true } = req.body || {}; if (!p || !audioPathOk(p)) throw new Error('path missing or outside project audio'); res.json({ ok: true, ...(await makeCtx(() => {}).live.loadAudioClip({ track, slot, samplePath: p, warpMode, overwrite })) }); }
@@ -744,9 +781,10 @@ function makeCtx(emit) {
       let lp = null; try { const k = await import('./lib/knowledge.js'); const slug = lastBuild.genreTarget ? k.matchGenre(String(lastBuild.genreTarget).split(':')[0]) : null; lp = slug && k.getLoopPrompts ? k.getLoopPrompts(slug) : null; } catch {}
       const genreTitle = lastBuild.genreTarget ? String(lastBuild.genreTarget).split(':')[0].replace(/\s*\(.*\)\s*$/, '') : undefined;
       const hasBpm = /\bBPM\b/i.test(body), hasProd = /dry|wet|room|tape|vinyl|saturat|reverb|lo-fi|clean|gritty|crunch/i.test(body);
-      const composed = (() => { try { return composePrompt({ kind: kind === 'drums' || kind === 'tops' ? 'drums' : 'texture', title: genreTitle, bpm, body: kind === 'fx' ? `${body}, transition sound, wide stereo` : kind === 'tops' ? `${body}, hi-hats shakers and percussion only, no kick drum, no snare` : kind === 'drums' ? body : `${body}, wide stereo`, production: lp?.production || undefined }); } catch { return null; } })();
+      const composed = (() => { try { return composePrompt({ kind: kind === 'drums' || kind === 'tops' ? 'drums' : 'texture', title: genreTitle, bpm, body: kind === 'fx' ? `${body}, transition sound, wide stereo` : kind === 'tops' ? `${body}, hi-hats shakers and percussion only, no kick drum, no snare` : kind === 'drums' ? body : kind === 'bass' ? `${body}, bass line only, mono, centred` : `${body}, wide stereo`, production: lp?.production || undefined }); } catch { return null; } })();
       const full = composed ? composed : kind === 'drums' ? `TrackType: Instrument, ${body}${hasBpm ? '' : `, drum loop at ${Math.round(bpm)} BPM`}${hasProd ? '' : ', tight and dry'}${/no vocals/i.test(body) ? '' : ', no vocals'}${/no melody/i.test(body) ? '' : ', no melody'}`
         : kind === 'fx' ? `TrackType: SFX, ${body}, transition sound, wide stereo, no drums`
+        : kind === 'bass' ? `TrackType: Instrument, ${body}${hasBpm ? '' : ` at ${Math.round(bpm)} BPM`}, bass line only, mono, no drums`
         : `TrackType: Instrument, ${body}${hasBpm ? '' : `, evolving texture layer at ${Math.round(bpm)} BPM`}, wide stereo, no drums`;
       // audio-to-audio: when a seed is given (the set's capture, our render, the kit loop, a user sample) the new loop inherits its
       // tempo, key and sonic world instead of being a text-only guess; strength = how far it may move away (0.3 subtle .. 0.85 new)
@@ -799,7 +837,8 @@ function makeCtx(emit) {
       return out;
     },
     // ---- v9: hear and read the producer's own session ----
-    async captureLive({ bars = 4, scene } = {}) {
+    /** Record what Live plays. fromBar (default 1) seeks the arrangement there first on ADEHack 5.8+; fromBar:null keeps the playhead. */
+    async captureLive({ bars = 4, scene, fromBar = 1 } = {}) {
       const cap = await import('./lib/capture.js');
       if (!cap.captureAvailable()) throw new Error('Live audio capture not built: run `bash tools/capture/build.sh` (needs Xcode command line tools), then grant System Audio Recording to the terminal app in System Settings > Privacy & Security');
       const send = await liveClient();
@@ -807,8 +846,13 @@ function makeCtx(emit) {
       const seconds = Math.ceil(clamp(Number(bars) || 4, 1, 64) * 4 * 60 / bpm) + 1;
       const barSec = 4 * 60 / bpm;
       const total = seconds + Math.ceil(barSec) + 2;   // pre-roll: launch quantization can delay the start up to a bar
+      let seekNote = null;
+      if (scene == null && fromBar != null) {
+        if (await scriptAtLeast('5.8')) { const j = await send({ cmd: 'jump', bar: Math.max(1, Math.round(Number(fromBar))) }).catch((e) => ({ error: e.message })); seekNote = j?.ok ? `capture from bar ${Math.max(1, Math.round(Number(fromBar)))}` : `capture from playhead (jump failed: ${String(j?.error || '').slice(0, 60)})`; }
+        else seekNote = 'capture from playhead (script < 5.8)';
+      }
       if (scene != null) await send({ cmd: 'play_scene_for', index: Number(scene), seconds: total });
-      else await send({ cmd: 'play_for', seconds: total });
+      else await send({ cmd: 'play_for', seconds: total, ...(seekNote?.startsWith('capture from bar') ? { from_bar: Math.max(1, Math.round(Number(fromBar))) } : {}) });
       for (let i = 0; i < 20; i++) { const st = await send({ cmd: 'ping' }); if (st?.is_playing !== false) break; await new Promise((r) => setTimeout(r, 150)); }
       const rawPath = path.join(TMP, `live-capture-raw-${Date.now()}.wav`);
       const r = await cap.captureLive({ seconds: total - 1, outPath: rawPath });
@@ -828,22 +872,34 @@ function makeCtx(emit) {
       } catch {}
       const silent = Boolean(r.silent) || dur < 0.5 || (r.peakDbfs != null && r.peakDbfs < -30) || sounding < Math.min(barSec, dur * 0.3);
       const out = { path: outPath, url: `/out/${encodeURIComponent(path.basename(outPath))}`, bars, bpm, seconds: Number(dur.toFixed(2)), soundingSeconds: Number(sounding.toFixed(2)), silent, peakDbfs: r.peakDbfs, note: silent ? `Live produced (almost) no sound: peak ${r.peakDbfs != null ? r.peakDbfs.toFixed(1) + ' dBFS' : 'none'}, ${sounding.toFixed(1)} s sounding of ${dur.toFixed(1)} s. Check: is the playhead on a section with clips, are the audio files online (no orange missing clips), is Back to Arrangement lit, is Live's output device the one it plays through?` : 'leading silence trimmed to the first downbeat' };
+      if (seekNote) out.note = `${out.note}; ${seekNote}`;
       if (!silent) { try { out.profile = await (await import('./lib/analyze.js')).analyzeAudio(outPath); } catch (e) { out.profileError = e.message; } }
       lastBuild.lastCapture = outPath; lastBuild.lastCaptureAt = Date.now();
       return out;
     },
+    /**
+     * enhance_project v2. The whole-mix audio-to-audio result is a REFERENCE + SEED ("AI Enhance", muted after the audition), never
+     * the final sound: a full mix regenerated at medium strength smears. Real layers come from PER-STEM audio-to-audio on short
+     * windows (8-16 bars from bar 1): drums stem -> "AI Tops" loop (0.8), other stem -> "AI Texture" loop (0.6), bass stem ->
+     * notes on a Live bass preset ("AI Bass"), clean generated kick/snare/hats on a Drum Rack with the stem's groove ("AI Kit").
+     * Every new layer is scored against the original stem (order-swapped A/B, lite-judge labelled) and regenerated once on a clear loss.
+     * Non-destructive: new tracks only, user faders untouched, nothing of theirs recorded over.
+     */
     async enhanceProject({ intent = '', strength = 0.55, bars, deconstruct = true, genre } = {}) {
       const t0 = Date.now();
       const stage = (label, extra) => emit({ type: 'tool_done', name: 'enhance_project', ok: true, summary: `enhance: ${label}`, ...(extra ? { data: extra } : {}) });
       const send = await liveClient();
       const bpm = await syncTempo();
       let info = null; try { info = await send({ cmd: 'arrangement_info' }); } catch {}
-      const totalBars = clamp(Number(bars) || Number(info?.bars) || 8, 1, 64);
-      const maxBarsBySeconds = Math.floor(170 / (240 / bpm));   // Stable Audio 2.5 caps at 190 s; keep headroom
-      const useBars = Math.min(totalBars, Math.max(2, maxBarsBySeconds));
-      stage(`recording ${useBars} bars of the whole set from the playhead (${Math.round(useBars * 240 / bpm)} s)`);
-      const cap = await this.captureLive({ bars: useBars });
-      if (cap.silent) throw new Error(`the capture was silent (${cap.note || 'nothing playing'}); put the playhead at the start of the section and make sure the set plays`);
+      const totalBars = Number(bars) || Number(info?.bars) || 8;
+      const useBars = clamp(totalBars, 4, 16);   // short windows: Stable Audio keeps structure better and Demucs/transcription stay quick
+      const windowBars = Math.min(useBars, 8);   // the loop layers are 8 bars max (Live loops them)
+      const peakOf = async (file) => { try { const se = await new Promise((resolve) => { execFileCb('ffmpeg', ['-hide_banner', '-nostdin', '-i', file, '-af', 'volumedetect', '-f', 'null', '-'], { maxBuffer: 4e6 }, (_e, _o, err) => resolve(String(err || ''))); }); const m = se.match(/max_volume:\s*(-?[\d.]+)\s*dB/); return m ? Number(m[1]) : null; } catch { return null; } };
+      const sounding = (peak) => peak != null && peak > -40;
+      stage(`recording ${useBars} bars of the whole set from bar 1 (${Math.round(useBars * 240 / bpm)} s)`);
+      const cap = await this.captureLive({ bars: useBars, fromBar: 1 });
+      if (cap.silent) throw new Error(`the capture was silent (${cap.note || 'nothing playing'}); make sure the set plays from bar 1 (Back to Arrangement lit, clips present)`);
+      const genreTarget = lastBuild.genreTarget || '';
       // 1) Gemini: what is actually in the recording
       let dna = null; try { stage('Gemini listening to the recording'); dna = await (await import('./lib/ears.js')).productionDna(cap.path); } catch (e) { stage(`Gemini unavailable (${e.message.slice(0, 60)}), prompting from the set structure`); }
       // 2) Claude: one Stable Audio prompt from what was heard + the intent + the blueprint
@@ -858,67 +914,116 @@ function makeCtx(emit) {
         promptText = r.content.filter((b) => b.type === 'text').map((b) => b.text).join(' ').replace(/^["'\s]+|["'\s]+$/g, '').split('\n')[0];
       } catch (e) { stage(`prompt writer unavailable (${e.message.slice(0, 60)})`); }
       if (!promptText) promptText = composePrompt({ kind: 'track', title: bp?.title, bpm, body: `${intent}, keeps the original melody and arrangement` });
-      // 3) Stable Audio 3 regenerates the recording audio-to-audio
-      stage(`Stable Audio audio-to-audio (strength ${strength}): ${promptText.slice(0, 90)}`);
+      const body = promptText.replace(/^(TrackType|Genre|Format):[^,]+,\s*/gi, '').replace(/,?\s*\d+\s*BPM\s*$/i, '');
+      // 3) Stable Audio 3 regenerates the recording audio-to-audio: the REFERENCE (what the whole thing could sound like)
+      stage(`Stable Audio audio-to-audio reference (strength ${strength}): ${promptText.slice(0, 90)}`);
       const seconds = clamp(Math.ceil(cap.seconds || useBars * 240 / bpm), 6, 190);
       const st = clamp(Number(strength) || 0.55, 0.2, 0.9);
       let res; try { res = await audioToAudio({ wavPath: cap.path, prompt: promptText, strength: st, duration: seconds, model: LOOP_MODEL }); } catch (e) { stage(`Stable Audio 3 refused (${e.message.slice(0, 60)}), using 2.5`); res = await audioToAudio({ wavPath: cap.path, prompt: promptText, strength: st, duration: seconds, model: 'stable-audio-2.5' }); }
       const f = await publish(res.buffer, 'enhance', '.wav', 'loop');
       const ref = this.addRef(`enhanced version of the set (${intent.slice(0, 30)})`, f.path);
-      // 4) into Live as a warped clip next to their material
-      stage('placing the enhanced version in Live');
+      stage('placing the enhanced reference in Live');
       const clip = await this.live.loadAudioClip({ track: 'AI Enhance', slot: 0, samplePath: f.path, warpMode: 'complex_pro', overwrite: true }).catch((e) => ({ error: e.message }));
-      const out = { capture: { url: cap.url, seconds: cap.seconds, bars: useBars }, heard: dna ? { style: dna.styleRead || dna.style || dna.genre, drums: dna.drums, bass: dna.bass, harmony: dna.harmonyMelody || dna.harmony, key: dna.key } : null, prompt: promptText, strength: st, enhanced: { url: f.url, path: f.path, ref: ref.name, clip: clip?.clip ? { track: 'AI Enhance', length: clip.clip.length } : clip }, ms: Date.now() - t0 };
-      // 5) make it editable: stems -> kit + groove, bass -> notes
+      const out = { capture: { url: cap.url, seconds: cap.seconds, bars: useBars, from: cap.note }, heard: dna ? { style: dna.styleRead || dna.style || dna.genre, drums: dna.drums, bass: dna.bass, harmony: dna.harmonyMelody || dna.harmony, key: dna.key } : null, prompt: promptText, strength: st, enhanced: { url: f.url, path: f.path, ref: ref.name, clip: clip?.clip ? { track: 'AI Enhance', length: clip.clip.length } : clip, role: 'reference + seed, not the final sound' }, built: {}, scores: {}, ms: Date.now() - t0 };
+      const created = ['AI Enhance'];
+      // 4) real layers: per-stem audio-to-audio on the ORIGINAL capture (clean source), scored against the original stem
       if (deconstruct) {
         try {
           const py = await import('./lib/pytools.js');
           if (!py.pyAvailable()) throw new Error('python toolbelt not installed');
-          stage('separating stems (Demucs)');
-          const stR = await py.stems(f.path, { outDir: path.join(TMP, `stems-${Date.now()}`) }); const stems = stR.stems || stR;
-          out.stems = {}; for (const [k, p] of Object.entries(stems)) if (p) out.stems[k] = this.addRef(`${k} stem of the enhanced version`, p).name;
-          if (stems.drums) {
-            // the GROOVE comes from the enhanced drums; the SOUNDS come from the clean hit pipeline (a stem of a regenerated
-            // full mix is smeared, so its slices would be mushy) described by what Gemini heard in the enhanced version
-            stage('groove from the drum stem, clean sounds from the hit generator');
-            const rhythm = await this.loopToPattern(stems.drums, { bpm, bars: Math.min(useBars, 4) });
+          stage('separating the recording into stems (Demucs)');
+          const stR = await py.stems(cap.path, { outDir: path.join(TMP, `stems-${Date.now()}`) }); const stems = stR.stems || stR;
+          out.stems = {}; const stemPeak = {};
+          for (const [k, p] of Object.entries(stems)) if (p) { out.stems[k] = this.addRef(`${k} stem of the recording`, p).name; stemPeak[k] = await peakOf(p); }
+          out.stemPeaks = stemPeak;
+          let ears = null; try { ears = await import('./lib/ears.js'); if (!ears.geminiAvailable?.()) ears = null; } catch { ears = null; }
+          // a candidate loop vs the original stem: A = original, B = ours. "B wins" = the new layer is more genre-true than what they had.
+          const judge = async (origPath, candPath, scope) => { if (!ears) return { skipped: 'no Gemini key' }; try { return await ears.compareAuthenticity(origPath, candPath, { genreTarget, scope }); } catch (e) { return { error: e.message.slice(0, 120) }; } };
+          const loopLayer = async ({ name, kind, stem, strength: lst, prompt, scope }) => {
+            if (!stems[stem] || !sounding(stemPeak[stem])) return { skipped: `${stem} stem is (near) silent in the recording (peak ${stemPeak[stem] ?? 'n/a'} dBFS)` };
+            stage(`${name}: audio-to-audio on the ${stem} stem (strength ${lst})`);
+            const gen = () => this.generateLoop({ prompt, bpm, bars: windowBars, kind, init: stems[stem], strength: lst });
+            let a = await gen();
+            let score = await judge(stems[stem], a.loop.path, scope);
+            let retried = null;
+            if (score?.winner === 'A' && (score.confidence ?? 0) >= 0.7) {   // clear loss against the original: one more take, keep the better one
+              stage(`${name}: judged weaker than the original (${String(score.why || '').slice(0, 60)}), one more take`);
+              const b = await gen();
+              const ab = await judge(a.loop.path, b.loop.path, scope);
+              retried = { secondTake: b.loop.url, verdict: ab?.winner ? `take ${ab.winner === 'B' ? 2 : 1} kept (${ab.confidence})` : 'order-dependent, first take kept' };
+              if (ab?.winner === 'B') { a = b; score = await judge(stems[stem], b.loop.path, scope); }
+            }
+            const warpMode = kind === 'tops' ? 'beats' : 'complex_pro';
+            const r = await this.live.loadAudioClip({ track: name, slot: 0, samplePath: a.loop.path, warpMode, overwrite: true });
+            rememberClip(name, { audio: true, bars: windowBars, slot: 0 });
+            created.push(name);
+            return { track: r.track || name, loop: a.loop.url, bars: windowBars, strength: lst, seededFrom: `${stem} stem`, score: score && !score.skipped ? { vsOriginal: score.winner === 'B' ? 'better' : score.winner === 'A' ? 'weaker' : 'even', confidence: score.confidence, why: score.why, lite: score.lite, scoreNote: score.scoreNote } : score, ...(retried ? { retried } : {}) };
+          };
+          const drumWords = String(dna?.drums || '').slice(0, 140);
+          const harmonyWords = String(dna?.harmonyMelody || dna?.harmony || '').slice(0, 140);
+          const bassWords = String(dna?.bass || '').slice(0, 100);
+          // tops + texture generate in parallel (two Stability jobs), Live loads are serialized by the client queue
+          const [tops, texture] = await Promise.all([
+            loopLayer({ name: 'AI Tops', kind: 'tops', stem: 'drums', strength: 0.8, scope: 'drums', prompt: `${body}${drumWords ? ', ' + drumWords : ''}` }).catch((e) => ({ error: e.message.slice(0, 160) })),
+            loopLayer({ name: 'AI Texture', kind: 'texture', stem: 'other', strength: 0.6, scope: 'full', prompt: `${body}${harmonyWords ? ', ' + harmonyWords : ''}` }).catch((e) => ({ error: e.message.slice(0, 160) })),
+          ]);
+          out.built.tops = tops; out.built.texture = texture;
+          if (stems.drums && sounding(stemPeak.drums)) {
+            // the GROOVE comes from their own drums; the SOUNDS come from the clean hit pipeline described by what Gemini heard
+            stage('AI Kit: groove from the drum stem, clean sounds from the hit generator');
+            const rhythm = await this.loopToPattern(stems.drums, { bpm, bars: Math.min(windowBars, 4) });
             this.setGroove(rhythm.groove);
-            let drumWords = ''; try { const d2 = await (await import('./lib/ears.js')).productionDna(f.path); drumWords = String(d2?.drums || '').slice(0, 160); out.heardEnhanced = { style: d2?.styleRead || d2?.style, drums: d2?.drums, bass: d2?.bass, harmony: d2?.harmonyMelody || d2?.harmony }; } catch {}
             const lanes = (rhythm.pattern?.lanes || []).map((l) => l.instrument);
             const roles = ['kick', lanes.some((l) => /clap/.test(l)) && !lanes.some((l) => /snare/.test(l)) ? 'clap' : 'snare', lanes.some((l) => /hat_open/.test(l)) ? 'hat_open' : null, 'hat_closed'].filter(Boolean);
-            const made = await Promise.all(roles.map(async (role) => { try { const r = await this.synth({ prompt: `${drumWords ? drumWords + ', ' : ''}${intent}`, role, variations: 1 }); return { kind: role, label: role, samplePath: r.path, path: r.path, url: r.url, subShare: r.subShare }; } catch (e) { return null; } }));
+            const made = await Promise.all(roles.map(async (role) => { try { const r = await this.synth({ prompt: `${drumWords ? drumWords + ', ' : ''}${intent}`, role, variations: 1 }); return { kind: role, label: role, samplePath: r.path, path: r.path, url: r.url, subShare: r.subShare }; } catch { return null; } }));
             let kit = made.filter(Boolean);
             const kickHit = kit.find((k) => k.kind === 'kick');
             if (kickHit && kickHit.subShare != null && kickHit.subShare < 0.25) { try { const sub = await this.synthLocal({ kind: 'sub', name: 'enh-sub' }); const layered = await this.layerSamples({ layers: [{ path: kickHit.samplePath, gainDb: 0 }, { path: sub.path, gainDb: -3 }], name: 'enh-kick' }).catch(() => null); if (layered?.path) { kickHit.samplePath = layered.path; kickHit.path = layered.path; } } catch {} }
             if (!kit.length) { const kitR = await this.sliceKitFromAudio(stems.drums, { name: 'enh' }); kit = kitR.kit.filter((k) => !k.alt); }
-            // pattern lanes must map onto the kit we have: snare lane -> clap pad when that is what we made, hats -> hat_closed
             const have = new Set(kit.map((k) => k.kind));
             const pattern = { ...rhythm.pattern, lanes: (rhythm.pattern?.lanes || []).map((l) => ({ ...l, instrument: have.has(l.instrument) ? l.instrument : /snare|clap|rim/.test(l.instrument) ? (have.has('snare') ? 'snare' : 'clap') : /hat|ride|crash|perc|shaker/.test(l.instrument) ? (have.has(l.instrument) ? l.instrument : 'hat_closed') : 'kick' })) };
-            if (kit.length && pattern.lanes.length) out.kit = await this.live.buildKit({ name: 'AI Kit', kit, pattern, bars: pattern.bars, slot: 0, useGroove: true, humanize: 0.15 }).catch((e) => ({ error: e.message }));
+            if (kit.length && pattern.lanes.length) { out.built.kit = await this.live.buildKit({ name: 'AI Kit', kit, pattern, bars: pattern.bars, slot: 0, useGroove: true, humanize: 0.15 }).catch((e) => ({ error: e.message })); if (!out.built.kit?.error) created.push('AI Kit'); }
             out.kitSounds = kit.map((k) => k.kind);
-          }
-          if (stems.bass) {
-            stage('bass line from the bass stem');
-            const normP = path.join(TMP, `enh-bass-norm-${Date.now()}.wav`); await ffmpeg(['-i', stems.bass, '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11', '-ar', '44100', normP]).catch(() => {});
-            const tr = await this.transcribeLocal(await fs.access(normP).then(() => normP).catch(() => stems.bass), { onset: 0.35, frame: 0.25, minNoteMs: 70, bpm });
+          } else out.built.kit = { skipped: 'no audible drums in the recording' };
+          if (stems.bass && sounding(stemPeak.bass)) {
+            // bass: audio-to-audio on the bass stem (0.5 keeps their line, moves the tone), transcribed onto a Live preset so it is editable
+            stage('AI Bass: audio-to-audio on the bass stem, then notes onto a Live bass preset');
+            let bassSrc = stems.bass, bassLoop = null;
+            try { const g = await this.generateLoop({ prompt: `${body}${bassWords ? ', ' + bassWords : ''}, bass line only, no drums`, bpm, bars: windowBars, kind: 'bass', init: stems.bass, strength: 0.5 }); bassSrc = g.loop.path; bassLoop = g.loop.url; } catch (e) { out.built.bassNote = `bass stem audio-to-audio failed (${e.message.slice(0, 60)}); transcribed their own bass stem`; }
+            const normP = path.join(TMP, `enh-bass-norm-${Date.now()}.wav`); await ffmpeg(['-i', bassSrc, '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11', '-ar', '44100', normP]).catch(() => {});
+            const tr = await this.transcribeLocal(await fs.access(normP).then(() => normP).catch(() => bassSrc), { onset: 0.35, frame: 0.25, minNoteMs: 70, bpm });
             const byOnset = new Map();
             for (const n of tr.notes) { if (n.pitch < 28 || n.pitch > 55) continue; const k = Math.round(n.startBeats * 4); const prev = byOnset.get(k); if (!prev || n.pitch < prev.pitch) byOnset.set(k, n); }
-            const notes = [...byOnset.values()].map((n) => ({ pitch: n.pitch, startBeats: Math.round(n.startBeats * 4) / 4, durationBeats: Math.max(0.25, Math.round(n.durationBeats * 4) / 4), velocity: n.velocity })).sort((a, b) => a.startBeats - b.startBeats).filter((n) => n.startBeats < Math.min(useBars, 8) * 4);
+            const notes = [...byOnset.values()].map((n) => ({ pitch: n.pitch, startBeats: Math.round(n.startBeats * 4) / 4, durationBeats: Math.max(0.25, Math.round(n.durationBeats * 4) / 4), velocity: n.velocity })).sort((a, b) => a.startBeats - b.startBeats).filter((n) => n.startBeats < windowBars * 4);
             if (notes.length >= 2) {
               let preset = 'Bass'; try { const k = await import('./lib/knowledge.js'); const pr = bp && k.getPresets ? k.getPresets(bp.slug) : null; const list = pr?.bass || pr?.bassPresets; if (Array.isArray(list) && list.length) preset = list[0]; else if (typeof list === 'string' && list) preset = list.split(/[,|/]/)[0].trim(); } catch {}
               try { await this.live.loadDevice({ track: 'AI Bass', name: preset }); } catch { try { await this.live.loadDevice({ track: 'AI Bass', name: 'Bass' }); } catch {} }
-              out.bass = await this.live.buildMelody({ name: 'AI Bass', notes, bars: Math.min(useBars, 8), slot: 0 }).catch((e) => ({ error: e.message }));
-              out.bass.notes = notes.length;
-            } else out.bass = { note: 'no clear bass line found in the enhanced version' };
-          }
+              out.built.bass = await this.live.buildMelody({ name: 'AI Bass', notes, bars: windowBars, slot: 0 }).catch((e) => ({ error: e.message }));
+              out.built.bass.notes = notes.length; out.built.bass.preset = preset; if (bassLoop) out.built.bass.loop = bassLoop;
+              if (!out.built.bass.error) created.push('AI Bass');
+            } else out.built.bass = { note: 'no clear bass line found' };
+          } else out.built.bass = { skipped: 'no audible bass in the recording' };
         } catch (e) { out.deconstructError = e.message.slice(0, 160); }
       }
-      // never stack: a regenerated full mix on top of the original (plus a kit, plus a bass) is a wall of doubled sound.
-      // The kit and bass start muted (the user asks for them), and the enhanced version is auditioned soloed.
-      try { if (out.kit && !out.kit.error) await send({ cmd: 'set_mixer', track: 'AI Kit', mute: true }); } catch {}
-      try { if (out.bass && !out.bass.error) await send({ cmd: 'set_mixer', track: 'AI Bass', mute: true }); } catch {}
-      try { out.audition = await this.live.audition({ tracks: ['AI Enhance'], bars: Math.min(useBars, 8) }); } catch (e) { out.audition = { error: e.message }; }
-      out.listening = 'AI Enhance is playing SOLOED for a few bars so the user hears it alone; AI Kit and AI Bass are muted until asked for. Offer: "A/B it against my original", "use the AI kit instead of my drums", "unmute the bass".';
+      // 5) never stack: everything we made starts MUTED; the reference is auditioned soloed (restores afterwards), then presentation is verified
+      for (const n of created) { try { await send({ cmd: 'set_mixer', track: n, mute: true }); } catch {} }
+      try { await send({ cmd: 'set_mixer', track: 'AI Enhance', mute: false }); out.audition = await this.live.audition({ tracks: ['AI Enhance'], bars: Math.min(windowBars, 8) }); } catch (e) { out.audition = { error: e.message }; }
+      try {
+        const set = await send({ cmd: 'describe_set' });
+        const ours = new Set(created.map((n) => n.toLowerCase()));
+        const audible = [], muted = [];
+        for (const t of set?.tracks || []) { if (!ours.has(String(t.name).toLowerCase())) continue; const m = Boolean(t.mute ?? t.muted ?? t.mixer?.mute); (m ? muted : audible).push(t.name); }
+        const wrong = audible.filter((n) => n !== 'AI Enhance');
+        out.presentation = { audible, muted, verified: wrong.length === 0, ...(wrong.length ? { warning: `${wrong.join(', ')} unexpectedly audible; muting` } : {}) };
+        for (const n of wrong) { try { await send({ cmd: 'set_mixer', track: n, mute: true }); } catch {} }
+      } catch (e) { out.presentation = { error: e.message.slice(0, 100) }; }
+      out.scores = Object.fromEntries(Object.entries(out.built).filter(([, v]) => v && v.score).map(([k, v]) => [k, v.score]));
+      // UI contract: layers = [{track, status, score, lite, judge, scoreNote}] (status: built | skipped | error)
+      const TRACK_OF = { tops: 'AI Tops', texture: 'AI Texture', kit: 'AI Kit', bass: 'AI Bass' };
+      out.layers = [{ track: 'AI Enhance', status: clip?.error ? 'error' : 'built', role: 'reference', score: null, lite: null, judge: null, scoreNote: null }, ...Object.entries(out.built).filter(([k]) => TRACK_OF[k]).map(([k, v]) => { const sc = v?.score && !v.score.skipped && !v.score.error ? v.score : null; return { track: v?.track?.name || v?.track || TRACK_OF[k], status: v?.error ? 'error' : v?.skipped || v?.note ? 'skipped' : 'built', score: sc ? sc.vsOriginal : null, confidence: sc?.confidence ?? null, lite: sc?.lite ?? null, judge: sc?.why || v?.score?.skipped || v?.score?.error || null, scoreNote: sc?.scoreNote ?? null, ...(v?.error ? { error: v.error } : {}), ...(v?.skipped ? { why: v.skipped } : {}) }; })];
+      out.scoreNote = Object.values(out.scores).map((sc) => sc?.scoreNote).find(Boolean) || (Object.keys(out.scores).length ? undefined : 'layers not scored (no Gemini judge available)');
+      out.note = `${out.layers.filter((l) => l.status === 'built').map((l) => l.track).join(', ')} built${out.capture?.from ? ` (${out.capture.from})` : ''}; only AI Enhance audible now`;
+      out.listening = 'AI Enhance (the reference) plays SOLOED for a few bars so the user hears the direction alone; AI Tops, AI Texture, AI Kit and AI Bass are muted until asked for. Offer: "A/B it against my original", "unmute the tops", "use the AI kit instead of my drums", "unmute the bass", "another take of the texture".';
       out.ms = Date.now() - t0;
       return out;
     },
@@ -1084,7 +1189,7 @@ function makeCtx(emit) {
       }
       const r = await this.loopToPattern(best.path, { bpm, bars });
       this.setGroove(r.groove);
-      return { genre: bp?.title || genre, best: { path: best.path, url: best.url, prompt: best.prompt, verdict: best.verdict, score: best.score, why: best.why }, comparison, scoreNote: (best.lite || comparison?.lite) ? 'LITE JUDGE: treat scores as hints; the order-swapped A/B comparison decided the pick' : 'the order-swapped A/B comparison decided the pick', candidates: cands.map((c) => ({ url: c.url, verdict: c.verdict, score: c.score, why: c.why, error: c.error })), kit: best.kit, pattern: r.pattern, groove: r.groove };
+      return { genre: bp?.title || genre, best: { path: best.path, url: best.url, prompt: best.prompt, verdict: best.verdict, score: best.score, why: best.why }, comparison, scoreNote: (best.lite || comparison?.lite) ? (await import('./lib/ears.js')).LITE_SCORE_NOTE + '; the order-swapped A/B comparison decided the pick' : 'the order-swapped A/B comparison decided the pick', candidates: cands.map((c) => ({ url: c.url, verdict: c.verdict, score: c.score, why: c.why, error: c.error })), kit: best.kit, pattern: r.pattern, groove: r.groove };
     },
     // slice the best hit per drum class out of any drum audio (loop or Demucs drum stem)
     async sliceKitFromAudio(srcPath, { name = 'kit' } = {}) {
@@ -1438,7 +1543,41 @@ function makeCtx(emit) {
     beatboxToPattern: async (p, o) => (await import('./lib/rhythm.js')).beatboxToPattern(p, o),
     humToNotes: async (p, o) => (await import('./lib/melody.js')).humToNotes(p, o),
     live: {
-      setTempo: async (bpm) => { const send = await liveClient(); const r = okOrThrow(await send({ cmd: 'set_tempo', bpm }), 'set_tempo'); lastBuild.bpm = bpm; return r; },
+      /** setTempo(bpm) or setTempo({ bpm, warpClips }): with warpClips the user's unwarped audio clips are warped first so they follow the new tempo. */
+      setTempo: async (arg) => {
+        const { bpm, warpClips = false } = typeof arg === 'object' && arg ? arg : { bpm: arg };
+        const target = clamp(Number(bpm), 40, 300);
+        const send = await liveClient();
+        let warped = [], unwarpedLeft = [];
+        if (warpClips && await scriptAtLeast('5.8')) {
+          const r = okOrThrow(await send({ cmd: 'set_tempo', bpm: target, warp_clips: true }), 'set_tempo');
+          warped = r.warped || []; unwarpedLeft = r.unwarped_left || r.unwarpedLeft || [];
+          lastBuild.bpm = target; tempoCache.at = Date.now();
+          const note = [r.note, r.arrangement_scanned === false ? 'Live 10 warps only Session clips from the API: audio clips in the Arrangement keep their old speed (warp them by hand)' : null].filter(Boolean).join('; ') || undefined;
+          return { ...r, bpm: target, warped, unwarpedLeft, ...(note ? { note } : {}) };
+        }
+        if (warpClips) {   // older script: find the unwarped audio clips ourselves and warp each before moving the tempo
+          const set = await send({ cmd: 'describe_set' });
+          for (const t of set?.tracks || []) {
+            if (t.is_midi) continue;
+            const clips = Array.isArray(t.clips) ? t.clips : [];
+            for (const c of clips) {
+              if (!c || !(c.name != null || c.has_clip)) continue;
+              const slot = c.slot ?? c.index ?? clips.indexOf(c);
+              if (c.is_audio === false || c.warping === true) continue;   // describe_set reports is_audio + warping per clip
+              const mode = /drum|beat|loop|perc|kit|kick|snare|hat/i.test(`${t.name} ${c.name || ''}`) ? 'beats' : 'complex_pro';
+              const w = await send({ cmd: 'set_clip_warp', track: t.name, slot, warp: true, warp_mode: mode }).catch((e) => ({ error: e.message }));
+              if (w?.ok) warped.push({ track: t.name, clip: c.name || `slot ${slot}`, mode }); else unwarpedLeft.push({ track: t.name, clip: c.name || `slot ${slot}`, error: w?.error });
+            }
+          }
+        }
+        const r = okOrThrow(await send({ cmd: 'set_tempo', bpm: target }), 'set_tempo');
+        lastBuild.bpm = target; tempoCache.at = Date.now();
+        return { ...r, bpm: target, warped, unwarpedLeft };
+      },
+      /** ADEHack 5.8: move the song position. beat 0 = bar 1. Older scripts: throws a clear error. */
+      setPosition: async (arg = {}) => { const beat = typeof arg === 'object' && arg ? arg.beat : arg; if (!(await scriptAtLeast('5.8'))) throw new Error('set_position needs ADEHack 5.8 (installed; relaunch Live)'); return okOrThrow(await (await liveClient())({ cmd: 'set_position', beat: Math.max(0, Number(beat) || 0) }), 'set_position'); },
+      jump: async (arg = {}) => { const bar = typeof arg === 'object' && arg ? arg.bar : arg; if (!(await scriptAtLeast('5.8'))) throw new Error('jump needs ADEHack 5.8 (installed; relaunch Live)'); return okOrThrow(await (await liveClient())({ cmd: 'jump', bar: Math.max(1, Math.round(Number(bar) || 1)) }), 'jump'); },
       listTracks: async () => {
         const r = okOrThrow(await (await liveClient())({ cmd: 'list_tracks' }), 'list_tracks');
         const present = new Set(r.tracks.map((t) => t.name.toLowerCase()));
@@ -1645,12 +1784,13 @@ function makeCtx(emit) {
       },
       meters: async ({ ticks = 10 } = {}) => okOrThrow(await (await liveClient())({ cmd: 'meters', ticks: clamp(Number(ticks) || 10, 2, 40) }), 'meters'),
       setArm: async ({ track, arm = true, monitoring }) => okOrThrow(await (await liveClient())({ cmd: 'set_arm', track, arm: Boolean(arm), ...(monitoring ? { monitoring } : {}) }), 'set_arm'),
-      sessionRecord: async ({ track, slot = 0, bars = 4 }) => okOrThrow(await (await liveClient())({ cmd: 'session_record', track, slot: Number(slot) || 0, bars: clamp(Number(bars) || 4, 1, 32) }), 'session_record'),
-      recordArrangement: async ({ bars, scenes, stop } = {}) => {
+      sessionRecord: async ({ track, slot = 0, bars = 4, fromBar } = {}) => okOrThrow(await (await liveClient())({ cmd: 'session_record', track, slot: Number(slot) || 0, bars: clamp(Number(bars) || 4, 1, 32), ...(fromBar != null && await scriptAtLeast('5.8') ? { from_bar: Math.max(1, Math.round(Number(fromBar))) } : {}) }), 'session_record'),
+      recordArrangement: async ({ bars, scenes, stop, fromBar } = {}) => {
         const send = await liveClient();
         if (stop) return okOrThrow(await send({ cmd: 'arrangement_record', stop: true }), 'arrangement_record');
-        if (Array.isArray(scenes) && scenes.length) return okOrThrow(await send({ cmd: 'arrangement_record', at: 'end', scenes: scenes.map((sc) => ({ index: Number(sc.index) || 0, bars: clamp(Number(sc.bars) || 8, 1, 64) })) }), 'arrangement_record');
-        return okOrThrow(await send({ cmd: 'arrangement_record', at: 'end', bars: clamp(Number(bars) || 8, 1, 64) }), 'arrangement_record');
+        const seek = fromBar != null && await scriptAtLeast('5.8') ? { from_bar: Math.max(1, Math.round(Number(fromBar))) } : {};
+        if (Array.isArray(scenes) && scenes.length) return okOrThrow(await send({ cmd: 'arrangement_record', at: 'end', scenes: scenes.map((sc) => ({ index: Number(sc.index) || 0, bars: clamp(Number(sc.bars) || 8, 1, 64) })), ...seek }), 'arrangement_record');
+        return okOrThrow(await send({ cmd: 'arrangement_record', at: 'end', bars: clamp(Number(bars) || 8, 1, 64), ...seek }), 'arrangement_record');
       },
       async loadSample({ name, samplePath, role }) {
         const send = await liveClient();
@@ -1782,7 +1922,7 @@ async function runChatTurn(req, res, emit0) {
       const startsBuild = chat.history.length === 0 || /\b(make|build|turn|compose|start|create|produce|give me|let's|lets)\b/i.test(userText.replace(/\[[^\]]*\]/g, ''));
       let slug = explicit ? k.matchGenre(explicit[1]) : (startsBuild ? k.matchGenre(userText) : null);
       if (!slug && explicit) { try { emit({ type: 'tool', name: 'style', summary: `writing a blueprint for ${explicit[1].trim()}` }); slug = (await k.ensureBlueprint(explicit[1])).slug; } catch (e) { emit({ type: 'tool_done', name: 'style', ok: false, summary: `blueprint generation failed: ${e.message.slice(0, 80)}` }); } }
-      if (slug) { const bp = k.getBlueprint(slug); if (bp?.summary) { userText += `\n\n[genre blueprint: ${bp.title}] ${bp.summary}`; lastBuild.genreTarget = `${bp.title}: ${bp.summary}`; emit({ type: 'tool_done', name: 'style', ok: true, summary: `style guide loaded: ${bp.title}` }); } }
+      if (slug) { const bp = k.getBlueprint(slug); if (bp?.summary) { userText += `\n\n[genre blueprint: ${bp.title}] ${bp.summary}${bp.intro ? `\n[genre history: ${bp.intro}]` : ''}`; lastBuild.genreTarget = `${bp.title}: ${bp.summary}`; emit({ type: 'tool_done', name: 'style', ok: true, summary: `style guide loaded: ${bp.title}` }); } }
     } catch {}
     chat.room = (userText.match(/\[room:\s*(create|analyse|tweak)\]/i) || [])[1]?.toLowerCase() || 'create';
     await syncTempo();   // defaults inside this turn follow the set's tempo, not the last build's
@@ -1843,6 +1983,9 @@ app.use((err, req, res, _next) => {   // multer limits, bad JSON, anything throw
 
 process.on('unhandledRejection', (e) => console.error('[unhandledRejection]', e?.message || e));
 process.on('uncaughtException', (e) => console.error('[uncaughtException]', e?.message || e));
+// Training mode ("recreate this by ear"): routes under /api/training/* and /training-audio/*, page at /training.html.
+try { const { mountTraining } = await import('./lib/training.js'); mountTraining(app, { makeCtx, tmpDir: TMP }); }
+catch (e) { console.warn('[training] not mounted:', e.message); }
 const server = app.listen(PORT, () => {
   console.log(`ADE Hack running at http://localhost:${PORT}`);
   console.log(`Ableton sees: ${OUT_DIR}`);

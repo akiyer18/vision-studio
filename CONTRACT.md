@@ -304,3 +304,32 @@ Producer feedback: style not accurate (2000s hip hop sounded generic); no bass /
 7. Build: Drums via buildKit (Drum Rack; slot 0 = A bars, slot 1 = B bars pattern slices), Bass via buildMelody with blueprint preset (load_device) and A/B note slices, Keys likewise; optional Texture = other stem as a warped loop layer (buildLoopLayer, muted by default); set tempo; scene names "<Genre> A" / "<Genre> B"; mix_balance; set colors; return { track:{path,url}, verdict, stems, kit, pattern, bassNotes, keysNotes, sections, built:{...} , timings }.
 - Progress: emit tool_done events per stage ("composing 16 bars", "judging", "separating stems", "extracting drums MIDI", ...), since this takes 3-6 minutes on this Mac.
 ## agent tool compose_track { genre?, bpm?, bars 8-32, prompt?, candidates 1-2 } ; PLAYBOOK: for "make me a <genre> beat/track" with Demucs available, compose_track is the primary path (then refine with the usual tools); design_kit when only drums are wanted; say what was derived from the generated track vs authored.
+
+# ---- v14 (22 Oct 2026, final day): capture from bar 1, tempo intent, enhance v2, no stacking, slot pool, Gemini keys, Training mode ----
+## ableton/ (ADEHack 5.8)
+- {"cmd":"set_position","beat":<float>} -> song.current_song_time = beat (0.0 = bar 1); reply {ok, position:<beats>, bar:<int>}. Alias {"cmd":"jump","bar":<int>} (bar N -> (N-1)*beats_per_bar).
+- arrangement_record / session_record / play_for accept optional from_beat | from_bar: seek first, then record/play, so captures start at bar 1 instead of the playhead.
+- {"cmd":"set_tempo","bpm":<n>,"warp_clips":true} -> before changing tempo, warp every unwarped audio clip (session + arrangement; beats mode for drum-like names, complex_pro otherwise) -> {ok, tempo, warped:[{track,clip,mode}], unwarped_left:[...]}. Without the flag: unchanged behaviour. (verify)
+- VERSION 5.8; version/ping reply lists the new cmds. Everything from 5.7 (non-destructive recording/loading/clip creation, name-first lookup, undo, clip_info, set_clip_warp, load_audio_clip, meters, set_arm, session_record) unchanged.
+## server ctx (makeCtx)
+- live.setPosition(beat) / live.jump(bar) -> the commands above. scriptAtLeast('5.8') gates them; older scripts: captures run from the playhead and the result carries note "capture from playhead (script < 5.8)".
+- setTempo({ bpm, warpClips }) (old positional setTempo(bpm) still works) -> 5.8: set_tempo warp_clips; older: describe_set full -> set_clip_warp on each unwarped audio clip -> set_tempo. Returns { bpm, warped, unwarpedLeft }.
+- enhanceProject v2: capture 8-16 bars from bar 1 -> Gemini describes -> Claude writes the Stable Audio prompt -> whole-mix audio-to-audio = "AI Enhance" (reference + seed) -> Demucs stems of the capture -> per-stem audio-to-audio: drums 0.8 -> "AI Tops" warped loop clip, other 0.6 -> "AI Texture" clip, bass -> transcribed MIDI on a Live bass preset "AI Bass", clean hit-pipeline "AI Kit" -> each layer compareAuthenticity / scoreGenre vs the original (retry once on a clear loss) -> result { layers:[{name, score, scoreNote, kept}], presentation:{ audible:[...], muted:[...] }, listening }. New tracks and scenes only; user faders untouched. (verify: result shape)
+- No stacking: every enhance layer starts muted except the audited one; after the build describe_set asserts mute/solo and fills `presentation`.
+- Slot pool: SLOT_POOL env (default 8) indexed slot files per role; nextSlot(role) recycles the oldest slot not loaded in any Live track (sample/pad registry) when the pool is exhausted; errors only when every slot is in use ("remove_layer or replace_sound first").
+## lib/ears.js
+- Keys: GEMINI_API_KEY + GEMINI_API_KEYS (comma list); daily-quota errors block (key, model) pairs and rotate to the next key on the same model before falling to lite models. GEMINI_PAID=1 | GEMINI_TIER=paid: no lite fallback, hard error instead.
+- Exports: earsStatus() (string, unchanged for the health badge) + geminiStatus() -> { activeKeyIndex, keysTotal, flashAvailable, blocked:[{key, model, until}], tier }. scoreNote = "lite judge, lower confidence" when a lite model answered, absent otherwise. (verify: names)
+## lib/agent.js
+- set_tempo { bpm, warpClips?, confirmed? }; TEMPO INTENT rule: ask before moving the tempo of a set with user tracks unless the user named a BPM / said "change the tempo"; pass warpClips:true and report unwarpedLeft; never during enhance_project or project scan.
+- set_position { bar } -> ctx.live.jump(bar) (guarded for < 5.8). Capturing tools document "recording starts at bar 1 on 5.8+".
+- CREATOR IN CONTROL: every layer build ends with quoted "keep" / "another take" / "undo" (UI turns them into chips); enhance replies say what is audible from `presentation`.
+- GENRE HISTORY: first mention of a genre in a session -> 2 sentences of history + 3 references from the blueprint (lib/knowledge.getBlueprint exposes "history" and "artists" sections when the file has them).
+## server routes
+- POST /api/training/start { level:"beginner"|"intermediate"|"advanced", genre? } -> { id, audioUrl:"/training-audio/<id>.wav", bpm, key?, bars, hints } (Stable Audio 3; beginner 4 bars drums, intermediate 8 bars drums+bass, advanced 8 bars drums+bass+chords/texture; hints shrink with level).
+- POST /api/training/check { id, bars? } -> capture Live from bar 1 -> { score, closest:[...], off:[...], nextHint, scoreNote? } (pairwise A/B + tempo / kick-snare pattern similarity via loopToPattern + bass note match for intermediate+).
+- POST /api/training/reveal { id } -> builds the target's parts on new muted "Target *" tracks (stems -> kit pads + drum MIDI, bass MIDI, loop clip) -> { built:[...], explanation } ("how this was built", production language).
+- Mounted by `mountTraining(app, deps)` from lib/training.js (deps = server.js closures it needs; list at the top of that file). (verify: exact route and result shapes)
+- GET /api/health additionally reports `gemini: geminiStatus()` and the 5.8 handshake (`live.running`). (verify)
+## public/index.html
+- Layer cards: Play (solo + play via audition), Keep (unmute), Another (refine / another take), Undo (undo_sound / remove_layer); buttons disabled while a turn runs. Audible/muted state per layer + "what you are hearing" line from `presentation`. scoreNote / judge-model badge next to every score. Projector mode toggle (localStorage). "Training" link to /training.html. (verify: which actions go through /api/chat canned messages vs direct endpoints)
