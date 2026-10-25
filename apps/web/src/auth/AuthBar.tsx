@@ -1,4 +1,4 @@
-import { SignedIn, SignedOut, SignInButton, UserButton, useAuth } from "@clerk/react"
+import { SignedIn, SignedOut, SignInButton, UserButton, useAuth } from "@clerk/clerk-react"
 import { useEffect } from "react"
 
 import { importLocalDataOnce } from "./cloudSync.ts"

@@ -110,5 +110,6 @@ Migrations use Alembic under `services/api`. Session files under `data/sessions/
 ## CI and deploy
 
 - Every push and pull request: lint, typecheck, tests, build.
-- Merge to `main`: deploy API and worker to Fly staging, run migrations, deploy the web app to Cloudflare Pages staging.
+- Merge to `main`: the `deploy-staging` job builds the web app, deploys the API with Fly (`fly.toml`), runs Alembic migrations, and deploys `apps/web/dist` to Cloudflare Pages project `vision-studio-staging`.
+- Required GitHub secrets when deploying: `FLY_API_TOKEN`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`. Steps no-op when a secret is missing so forks still pass CI.
 - Production deploy stays manual until the staging path is proven.

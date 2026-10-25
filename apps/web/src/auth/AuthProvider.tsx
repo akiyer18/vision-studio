@@ -1,4 +1,4 @@
-import { ClerkProvider } from "@clerk/react"
+import { ClerkProvider } from "@clerk/clerk-react"
 import type { ReactNode } from "react"
 
 import { clerkEnabled, clerkPublishableKey } from "./token.ts"

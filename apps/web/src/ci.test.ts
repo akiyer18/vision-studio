@@ -10,3 +10,11 @@ test("CI runs lint, typecheck, tests, and the build on every push", () => {
     assert.ok(workflow.includes(step), step)
   }
 })
+
+test("CI deploys staging on merge to main", () => {
+  assert.match(workflow, /deploy-staging:/)
+  assert.match(workflow, /refs\/heads\/main/)
+  assert.match(workflow, /flyctl deploy/)
+  assert.match(workflow, /wrangler@4 pages deploy/)
+  assert.match(workflow, /alembic upgrade head/)
+})
