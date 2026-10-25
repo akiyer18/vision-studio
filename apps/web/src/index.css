@@ -19,13 +19,13 @@
   --quiet: #6f6c8a;
   --text-hero: 4rem;
   --text-page: 2rem;
-  --text-section: 1.333rem;
-  --text-card: 1.056rem;
-  --text-body: 0.944rem;
-  --text-nav: 0.889rem;
-  --text-label: 0.833rem;
-  --text-small: 0.833rem;
-  --text-readout: 1.556rem;
+  --text-section: 1.3333rem;
+  --text-card: 1.0556rem;
+  --text-body: 0.9444rem;
+  --text-nav: 0.8889rem;
+  --text-label: 0.8334rem;
+  --text-small: 0.8334rem;
+  --text-readout: 1.5556rem;
   --leading-hero: 1.05;
   --leading-body: 1.6;
   --tracking-hero: -0.03em;
@@ -80,7 +80,9 @@
     --text-section: 1.2rem;
     --text-card: 0.95rem;
     --text-body: 0.85rem;
-    --text-nav: 0.833rem;
+    --text-nav: 0.8334rem;
+    --text-label: 0.8334rem;
+    --text-small: 0.8334rem;
     --text-readout: 1.4rem;
   }
 }
@@ -98,6 +100,7 @@ body {
   font-size: var(--text-body);
   font-weight: 400;
   line-height: var(--leading-body);
+  overflow-wrap: break-word;
 }
 
 :focus-visible {
@@ -1312,6 +1315,11 @@ h4.section-title,
 }
 
 @media (max-width: 1023px) {
+  html,
+  body {
+    overflow-x: clip;
+  }
+
   .studio-root,
   .studio-shell,
   .studio-pages,
@@ -1656,6 +1664,16 @@ h4.section-title,
 
 .home-skills {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 1023px) {
+  .home-rooms,
+  .home-steps ol,
+  .home-room-board,
+  .home-people,
+  .home-skills {
+    grid-template-columns: 1fr;
+  }
 }
 
 .side-level {
