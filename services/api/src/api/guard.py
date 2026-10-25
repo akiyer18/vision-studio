@@ -28,7 +28,7 @@ _SECRET_NAMES = (
 _BANNED = re.compile(
     r"STABILITY_API_KEY|AWS_SECRET_ACCESS_KEY|AWS_ACCESS_KEY_ID|SOUNDCHARTS_API_KEY|SOUNDCHARTS_TOKEN|FAL_KEY|FAL_API_KEY"
 )
-_VITE_SECRET = re.compile(r"import\.meta\.env\.VITE_(?!API_URL\b)[A-Za-z0-9_]+")
+_VITE_SECRET = re.compile(r"import\.meta\.env\.VITE_(?!API_URL\b|CLERK_PUBLISHABLE_KEY\b)[A-Za-z0-9_]+")
 _TEXT = {".js", ".mjs", ".cjs", ".ts", ".tsx", ".css", ".html", ".json", ".map"}
 
 

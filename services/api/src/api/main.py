@@ -45,6 +45,7 @@ from api.audio import (
 from api.guard import BODY_LIMIT, RateLimiter, allowed_origins, assert_frontend_clean, cleanup_old_sessions, content_too_large
 from api.renderer import MockRenderer, Renderer, pin_chord_audio
 from api.stability import StabilityAPIRenderer
+from api.auth import attach_user, resolve_request_user
 from api.job_handlers import register_default_handlers
 from api.jobs import create_job, enqueue, get_job, job_public, register_handler
 from api.storage import build_store, session_object_key
@@ -162,6 +163,10 @@ def create_app(data_root: Path | None = None) -> FastAPI:
             host = request.client.host if request.client else "unknown"
             if not request.app.state.ip_limit.allow(host):
                 return JSONResponse(status_code=429, content={"detail": "Too many requests. Try again shortly."})
+        try:
+            attach_user(request, resolve_request_user(request))
+        except HTTPException as error:
+            return JSONResponse(status_code=error.status_code, content={"detail": error.detail})
         try:
             return await call_next(request)
         except (HTTPException, StarletteHTTPException):
@@ -375,6 +380,13 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         if local is not None:
             return FileResponse(local)
         return RedirectResponse(store.signed_url(object_key), status_code=307)
+
+    @app.get("/me")
+    def me(request: Request) -> dict[str, object]:
+        user = getattr(request.state, "user", None)
+        if user is None:
+            return {"user": None}
+        return {"user": {"id": user.id, "email": user.email, "plan": user.plan}}
 
     @app.post("/jobs")
     def start_job(body: dict[str, object], request: Request) -> dict[str, object]:

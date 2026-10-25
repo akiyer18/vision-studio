@@ -120,3 +120,10 @@ def test_boot_refuses_a_vite_secret(tmp_path: Path) -> None:
     (web / "env.ts").write_text("export const key = import.meta.env.VITE_SECRET\n")
     with pytest.raises(RuntimeError, match="frontend bundle"):
         assert_frontend_clean(tmp_path)
+
+
+def test_boot_allows_the_clerk_publishable_key(tmp_path: Path) -> None:
+    web = tmp_path / "apps" / "web" / "src"
+    web.mkdir(parents=True)
+    (web / "clerk.ts").write_text("export const key = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY\n")
+    assert_frontend_clean(tmp_path)

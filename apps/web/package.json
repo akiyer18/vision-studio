@@ -8,10 +8,11 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "lint": "oxlint",
-    "test": "node --test src/recentIdeas.test.ts src/studio/trainCopy.test.ts src/navigation.test.ts src/typeScale.test.ts src/ci.test.ts",
+    "test": "node --test src/recentIdeas.test.ts src/studio/trainCopy.test.ts src/navigation.test.ts src/typeScale.test.ts src/ci.test.ts src/auth/auth.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@clerk/react": "^5.54.0",
     "@fontsource/inter": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@fontsource/plus-jakarta-sans": "^5.3.0",

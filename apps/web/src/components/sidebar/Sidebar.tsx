@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { CircleHelp, GraduationCap, House, PenLine, ScanSearch, type LucideIcon } from "lucide-react"
 
+import { AuthControls } from "../../auth/AuthControls.tsx"
 import { Logo } from "../Logo.tsx"
 
 import { features } from "../../features.ts"
@@ -102,6 +103,7 @@ export function Sidebar({ page, onReplay }: Props) {
       <RecentList onOpen={openRecent} />
       <div className="relative mt-auto flex flex-col gap-3">
         {showBuildTip(page) ? <p className="tip-card">Press Build now at any time, your details stay exactly as you said them</p> : null}
+        <AuthControls />
         <p className="side-level">{level ? `Level: ${levelCopy[level].title}` : "Choose a level"}</p>
         <button
           ref={helpRef}

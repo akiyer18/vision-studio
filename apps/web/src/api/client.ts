@@ -1,3 +1,4 @@
+import { authHeaders } from "../auth/token.ts"
 import type { AudioFeatures } from "../types/audio_features.ts"
 import type { InputType } from "../types/input_type.ts"
 import type { RenderResult } from "../types/render_result.ts"
@@ -50,11 +51,20 @@ function baseUrl(): string {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${baseUrl()}${path}`, init)
+  const headers = new Headers(init?.headers)
+  const auth = await authHeaders()
+  for (const [key, value] of Object.entries(auth)) {
+    if (!headers.has(key)) headers.set(key, value)
+  }
+  const response = await fetch(`${baseUrl()}${path}`, { ...init, headers })
   if (!response.ok) {
     throw new ApiError(await errorMessage(response), response.status)
   }
   return response.json() as Promise<T>
+}
+
+export function fetchMe(): Promise<{ user: { id: string; email: string; plan: string } | null }> {
+  return request("/me")
 }
 
 async function errorMessage(response: Response): Promise<string> {
