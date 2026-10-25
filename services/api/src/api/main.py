@@ -24,7 +24,7 @@ from agent.turn import run_turn
 from contracts import AudioFeatures, LayerPrompt, RenderJob, RenderResult, SongBrief, TraceStep, TurnRequest, TurnResponse
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -45,6 +45,7 @@ from api.audio import (
 from api.guard import BODY_LIMIT, RateLimiter, allowed_origins, assert_frontend_clean, cleanup_old_sessions, content_too_large
 from api.renderer import MockRenderer, Renderer, pin_chord_audio
 from api.stability import StabilityAPIRenderer
+from api.storage import build_store, session_object_key
 from api.train import register_train
 
 logger = logging.getLogger("api")
@@ -145,6 +146,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     app.state.data_root = data_root or default_data_root()
+    app.state.store = build_store(app.state.data_root / "objects")
     app.state.ip_limit = RateLimiter()
     app.state.session_limit = RateLimiter()
     cleanup_old_sessions(app.state.data_root)
@@ -339,8 +341,8 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         result = explain_result(body.brief, body.prompts, body.trace, complete, depth=body.depth)
         return ExplainResponse(how=result.how, steps=list(result.steps), source=result.source)
 
-    @app.get("/files/{session_id}/{file_path:path}")
-    def files(session_id: str, file_path: str, request: Request) -> FileResponse:
+    @app.get("/files/{session_id}/{file_path:path}", response_model=None)
+    def files(session_id: str, file_path: str, request: Request) -> FileResponse | RedirectResponse:
         try:
             root = session_dir(request.app.state.data_root, session_id).resolve()
         except ValueError as error:
@@ -348,9 +350,28 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         if file_path.startswith(("/", "\\")) or "\x00" in file_path or ".." in Path(file_path).parts:
             raise HTTPException(404, "File not found")
         target = (root / file_path).resolve()
-        if not target.is_relative_to(root) or not target.is_file():
+        if target.is_relative_to(root) and target.is_file():
+            return FileResponse(target)
+        key = session_object_key(session_id, file_path)
+        store = request.app.state.store
+        if not store.exists(key):
             raise HTTPException(404, "File not found")
-        return FileResponse(target)
+        local = store.local_path(key)
+        if local is not None:
+            return FileResponse(local)
+        return RedirectResponse(store.signed_url(key), status_code=307)
+
+    @app.get("/objects/{object_key:path}", response_model=None)
+    def objects(object_key: str, request: Request) -> FileResponse | RedirectResponse:
+        if object_key.startswith(("/", "\\")) or "\x00" in object_key or ".." in Path(object_key).parts:
+            raise HTTPException(404, "File not found")
+        store = request.app.state.store
+        if not store.exists(object_key):
+            raise HTTPException(404, "File not found")
+        local = store.local_path(object_key)
+        if local is not None:
+            return FileResponse(local)
+        return RedirectResponse(store.signed_url(object_key), status_code=307)
 
     @app.get("/debug/{session_id}")
     def debug(session_id: str, request: Request) -> dict[str, object]:
