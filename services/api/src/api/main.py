@@ -45,6 +45,8 @@ from api.audio import (
 from api.guard import BODY_LIMIT, RateLimiter, allowed_origins, assert_frontend_clean, cleanup_old_sessions, content_too_large
 from api.renderer import MockRenderer, Renderer, pin_chord_audio
 from api.stability import StabilityAPIRenderer
+from api.job_handlers import register_default_handlers
+from api.jobs import create_job, enqueue, get_job, job_public, register_handler
 from api.storage import build_store, session_object_key
 from api.train import register_train
 
@@ -149,6 +151,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     app.state.store = build_store(app.state.data_root / "objects")
     app.state.ip_limit = RateLimiter()
     app.state.session_limit = RateLimiter()
+    register_default_handlers(register_handler)
     cleanup_old_sessions(app.state.data_root)
 
     @app.middleware("http")
@@ -372,6 +375,28 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         if local is not None:
             return FileResponse(local)
         return RedirectResponse(store.signed_url(object_key), status_code=307)
+
+    @app.post("/jobs")
+    def start_job(body: dict[str, object], request: Request) -> dict[str, object]:
+        kind = str(body.get("kind") or "")
+        if kind not in {"render", "analyse", "train_reference", "train_grade"}:
+            raise HTTPException(400, "Unknown job kind")
+        payload = body.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
+        user_id = getattr(request.state, "user_id", None)
+        job = create_job(kind, payload, user_id=user_id)
+        enqueue(job)
+        found = get_job(job.id)
+        assert found is not None
+        return job_public(found)
+
+    @app.get("/jobs/{job_id}")
+    def job_status(job_id: str) -> dict[str, object]:
+        found = get_job(job_id)
+        if found is None:
+            raise HTTPException(404, "Job not found")
+        return job_public(found)
 
     @app.get("/debug/{session_id}")
     def debug(session_id: str, request: Request) -> dict[str, object]:
