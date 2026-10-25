@@ -924,19 +924,28 @@ def _facet_rows(session: Session) -> list[dict[str, object]]:
     for facet in catalog():
         if facet.id not in session.facet_values:
             continue
-        if _is_exercise_text(session.facet_values[facet.id]):
+        value = session.facet_values[facet.id]
+        if _is_exercise_text(value):
             continue
+        descriptor = _descriptor(session, facet.id)
         rows.append(
             {
                 "id": facet.id,
                 "layer": facet.layer,
                 "label": facet.label,
-                "value": session.facet_values[facet.id],
-                "descriptor": session.facet_descriptors.get(facet.id, ""),
+                "value": value,
+                "descriptor": descriptor,
                 "options": list(facet.labels),
             }
         )
     return rows
+
+
+def _descriptor(session: Session, facet_id: str) -> str:
+    text = session.facet_descriptors.get(facet_id, "")
+    if _is_exercise_text(text) or _is_exercise_text(session.facet_values.get(facet_id, "")):
+        return ""
+    return text
 
 
 def _facet_texts(session: Session) -> dict[str, str]:
@@ -944,19 +953,15 @@ def _facet_texts(session: Session) -> dict[str, str]:
     for facet in catalog():
         if facet.layer == "sound":
             continue
-        descriptor = session.facet_descriptors.get(facet.id, "")
+        descriptor = _descriptor(session, facet.id)
         if descriptor:
             grouped.setdefault(facet.layer, []).append(descriptor)
     return {layer: _without_all(", ".join(parts), session.references) for layer, parts in grouped.items()}
 
 
 def _facet_text(session: Session, layer: str) -> str:
-    parts = [
-        session.facet_descriptors[facet.id]
-        for facet in catalog()
-        if facet.layer == layer and facet.id in session.facet_descriptors
-    ]
-    return _without_all(", ".join(parts), session.references)
+    parts = [_descriptor(session, facet.id) for facet in catalog() if facet.layer == layer]
+    return _without_all(", ".join(part for part in parts if part), session.references)
 
 
 def _style_descriptors(session: Session, hooks: TurnHooks) -> str:

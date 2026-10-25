@@ -6,6 +6,7 @@ import { SLOT_LABEL, SLOT_ORDER } from "../../brief/slots.ts"
 import { inFlight } from "../../conversation/flight.ts"
 import { postTurn } from "../../conversation/postTurn.ts"
 import { features } from "../../features.ts"
+import { isTrainExerciseText } from "../../studio/trainCopy.ts"
 import { LANES } from "../../studio/lanes.ts"
 import { layerTitle } from "../../studio/output.ts"
 import { renderCurrent } from "../../studio/renderSession.ts"
@@ -145,7 +146,7 @@ export function ReviewStage({ bubbles = [] }: { bubbles?: RecentMessage[] }) {
                 const negative = edit?.negative ?? prompt?.negative ?? ""
                 const facets = (brief.facets ?? [])
                   .filter((facet) => facet.layer === layer || facet.layer === layer.replace(/_[ab]$/, ""))
-                  .filter((facet) => !looksLikeExercise(facet.value))
+                  .filter((facet) => !isTrainExerciseText(facet.value) && !isTrainExerciseText(facet.descriptor))
                 return (
                   <article key={layer} className="card review-layer">
                     <h3 className="section-title">{layerTitle(layer)}</h3>
@@ -315,11 +316,6 @@ function plainSentence(brief: SongBrief, summary?: string): string {
   const line = parts.join(", ")
   if (!line) return "The idea is ready to build."
   return `${line.charAt(0).toUpperCase()}${line.slice(1)}.`
-}
-
-function looksLikeExercise(value: string): boolean {
-  const text = value.trim().toLowerCase()
-  return text.length >= 24 && (text.startsWith("create a ") || text.includes("recreate it in logic"))
 }
 
 function layerNames(output: OutputChoice[], prompted: string[]): string[] {

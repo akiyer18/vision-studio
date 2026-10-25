@@ -10,6 +10,7 @@ import type { SlotName } from "../../types/slot_name.ts"
 import type { SlotSource } from "../../types/slot_source.ts"
 import type { SongBrief } from "../../types/song_brief.ts"
 import { layerTitle } from "../../studio/output.ts"
+import { isTrainExerciseText } from "../../studio/trainCopy.ts"
 import { LayersCard } from "../layers/LayersCard.tsx"
 import { Skeleton } from "../Skeleton.tsx"
 import { SourceBadge } from "../SourceBadge.tsx"
@@ -29,7 +30,7 @@ export function BriefCard({ mark, hot = false }: Props) {
   const ready = useStudio((state) => state.turn?.status === "ready")
   const overrides = useStudio((state) => state.overrides)
   const queueOverride = useStudio((state) => state.queueOverride)
-  const facets = brief?.facets ?? []
+  const facets = (brief?.facets ?? []).filter((facet) => !isTrainExerciseText(facet.value) && !isTrainExerciseText(facet.descriptor))
   const arc = brief?.arc
   const working = useStudio((state) => state.status === "working")
   const [open, setOpen] = useState(true)

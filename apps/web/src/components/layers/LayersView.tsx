@@ -12,6 +12,7 @@ import { lanePaint } from "../../studio/lanes.ts"
 import { LANES } from "../../studio/lanes.ts"
 import { regenerateLayer, renderCurrent } from "../../studio/renderSession.ts"
 import { layerTitle } from "../../studio/output.ts"
+import { isTrainExerciseText } from "../../studio/trainCopy.ts"
 import { traceSentence } from "../../studio/traceMark.ts"
 import type { SongBrief } from "../../types/song_brief.ts"
 import { useStudio } from "../../state/studio.ts"
@@ -519,6 +520,11 @@ function barCount(structure: string | undefined, result: RenderResult | undefine
 function detailLines(brief: SongBrief | null, layer: string): string[] {
   if (!brief) return []
   const lines = Object.entries(brief.slots).flatMap(([name, slot]) => (slot?.value ? [`${name.replaceAll("_", " ")}: ${slot.value}`] : []))
-  const facets = (brief.facets ?? []).filter((facet) => facet.layer === layer || facet.layer === layer.replace(/_[ab]$/, ""))
+  const facets = (brief.facets ?? []).filter(
+    (facet) =>
+      (facet.layer === layer || facet.layer === layer.replace(/_[ab]$/, "")) &&
+      !isTrainExerciseText(facet.value) &&
+      !isTrainExerciseText(facet.descriptor),
+  )
   return [...lines, ...facets.map((facet) => `${facet.id.replaceAll("_", " ")}: ${facet.value}`)]
 }
