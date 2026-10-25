@@ -1,6 +1,15 @@
-.PHONY: dev test lint typecheck build contracts
+.PHONY: dev test lint typecheck build contracts compose migrate worker
 
 # The web app is served on port 5173. The API on port 8000 starts once it exists.
+compose:
+	docker compose up -d postgres redis minio minio-init
+
+migrate:
+	cd services/api && uv run alembic upgrade head
+
+worker:
+	uv run --package api python -m api.worker
+
 dev:
 	@set -e; \
 	if [ -f services/api/src/api/main.py ]; then \

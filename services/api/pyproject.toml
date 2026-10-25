@@ -5,12 +5,18 @@ description = "Vision Studio API."
 requires-python = ">=3.12"
 dependencies = [
     "agent",
+    "alembic>=1.14",
+    "boto3>=1.35",
     "contracts",
     "fastapi>=0.115",
     "librosa>=0.10",
     "numpy>=2",
+    "psycopg[binary]>=3.2",
+    "pyjwt[crypto]>=2.9",
     "python-dotenv>=1.2.4",
     "python-multipart>=0.0.9",
+    "redis>=5.2",
+    "sqlalchemy>=2.0",
     "uvicorn>=0.32",
 ]
 
