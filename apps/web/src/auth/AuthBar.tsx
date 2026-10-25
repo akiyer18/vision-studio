@@ -1,6 +1,7 @@
 import { SignedIn, SignedOut, SignInButton, UserButton, useAuth } from "@clerk/react"
 import { useEffect } from "react"
 
+import { importLocalDataOnce } from "./cloudSync.ts"
 import { setAuthTokenGetter } from "./token.ts"
 
 /** Wires Clerk session tokens into the API client and shows sign-in controls. */
@@ -14,6 +15,11 @@ export function AuthBar() {
     })
     return () => setAuthTokenGetter(null)
   }, [getToken, isSignedIn])
+
+  useEffect(() => {
+    if (!isSignedIn) return
+    void importLocalDataOnce()
+  }, [isSignedIn])
 
   return (
     <div className="auth-bar flex items-center gap-2">

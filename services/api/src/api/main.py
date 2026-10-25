@@ -45,6 +45,7 @@ from api.audio import (
 from api.guard import BODY_LIMIT, RateLimiter, allowed_origins, assert_frontend_clean, cleanup_old_sessions, content_too_large
 from api.renderer import MockRenderer, Renderer, pin_chord_audio
 from api.stability import StabilityAPIRenderer
+from api.account import register_account
 from api.auth import attach_user, resolve_request_user
 from api.job_handlers import register_default_handlers
 from api.jobs import create_job, enqueue, get_job, job_public, register_handler
@@ -425,6 +426,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         }
 
     register_train(app)
+    register_account(app)
     return app
 
 

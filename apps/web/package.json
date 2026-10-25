@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "lint": "oxlint",
-    "test": "node --test src/recentIdeas.test.ts src/studio/trainCopy.test.ts src/navigation.test.ts src/typeScale.test.ts src/ci.test.ts src/auth/auth.test.ts",
+    "test": "node --test src/recentIdeas.test.ts src/studio/trainCopy.test.ts src/navigation.test.ts src/typeScale.test.ts src/ci.test.ts src/auth/auth.test.ts src/auth/cloudSync.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

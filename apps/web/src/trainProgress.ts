@@ -35,6 +35,7 @@ export function recordCompletion(record: TrainRecord) {
   const rest = readProgress().filter((item) => item.templateId !== record.templateId)
   localStorage.setItem(KEY, JSON.stringify([record, ...rest]))
   emit()
+  void import("./auth/cloudSync.ts").then((mod) => mod.pushTrainRecord(record)).catch(() => undefined)
 }
 
 let counts = { rhythm: 0, harmony: 0 }

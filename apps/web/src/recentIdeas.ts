@@ -160,6 +160,7 @@ export function saveRecent(draft: RecentDraft, now = new Date()): RecentIdea | n
   try {
     const saved = saveRecentTo(store, draft, now)
     publish()
+    void import("./auth/cloudSync.ts").then((mod) => mod.pushIdea(saved)).catch(() => undefined)
     return saved
   } catch {
     return null
