@@ -51,6 +51,7 @@ from api.job_handlers import register_default_handlers
 from api.jobs import create_job, enqueue, get_job, job_public, register_handler
 from api.storage import build_store, session_object_key
 from api.train import register_train
+from api.usage import assert_within_quota, plan_for, record_job_usage
 
 logger = logging.getLogger("api")
 _LIMITED = {"/turn", "/render", "/upload"}
@@ -387,7 +388,15 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         user = getattr(request.state, "user", None)
         if user is None:
             return {"user": None}
-        return {"user": {"id": user.id, "email": user.email, "plan": user.plan}}
+        limits = plan_for(user.plan)
+        return {
+            "user": {"id": user.id, "email": user.email, "plan": user.plan},
+            "limits": {
+                "renders_per_day": limits.renders_per_day,
+                "turns_per_day": limits.turns_per_day,
+                "analyse_per_day": limits.analyse_per_day,
+            },
+        }
 
     @app.post("/jobs")
     def start_job(body: dict[str, object], request: Request) -> dict[str, object]:
@@ -397,12 +406,17 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         payload = body.get("payload")
         if not isinstance(payload, dict):
             payload = {}
+        user = getattr(request.state, "user", None)
         user_id = getattr(request.state, "user_id", None)
+        assert_within_quota(user_id, kind, getattr(user, "plan", None) if user else "free")
         job = create_job(kind, payload, user_id=user_id)
         enqueue(job)
+        cents = record_job_usage(user_id, kind, job_id=job.id)
         found = get_job(job.id)
         assert found is not None
-        return job_public(found)
+        public = job_public(found)
+        public["cost_cents"] = cents
+        return public
 
     @app.get("/jobs/{job_id}")
     def job_status(job_id: str) -> dict[str, object]:
