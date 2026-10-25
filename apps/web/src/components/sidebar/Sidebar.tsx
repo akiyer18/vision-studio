@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
-import { CircleHelp, GraduationCap, House, PenLine, ScanSearch } from "lucide-react"
+import { CircleHelp, GraduationCap, House, PenLine, ScanSearch, type LucideIcon } from "lucide-react"
 
 import { Logo } from "../Logo.tsx"
 
 import { features } from "../../features.ts"
+import { showBuildTip, visibleRooms } from "../../navigation.ts"
 import { chooseLevel, levelCopy, useLevel } from "../../level.ts"
 import { go } from "../../route.ts"
 import { transport } from "../../playback/transport.ts"
@@ -12,6 +13,13 @@ import { useStudio } from "../../state/studio.ts"
 import { RecentList } from "./RecentList.tsx"
 
 type Room = "home" | "create" | "train" | "analyse"
+
+const roomIcons: Record<Room, LucideIcon> = {
+  home: House,
+  train: GraduationCap,
+  create: PenLine,
+  analyse: ScanSearch,
+}
 
 type Props = {
   page: Room
@@ -74,43 +82,26 @@ export function Sidebar({ page, onReplay }: Props) {
         <span className="wordmark-copy">Vision Studio</span>
       </button>
       <nav aria-label="Studio" className="side-nav flex flex-col gap-1">
-        <RoomButton
-          icon={<House aria-hidden="true" size={16} />}
-          label="Home"
-          live
-          current={page === "home"}
-          onClick={() => go("/")}
-        />
-        <RoomButton
-          icon={<GraduationCap aria-hidden="true" size={16} />}
-          label="Train"
-          live
-          current={page === "train"}
-          onClick={() => go("/train")}
-        />
-        <RoomButton
-          icon={<PenLine aria-hidden="true" size={16} />}
-          label="Create"
-          live={features.create}
-          current={page === "create"}
-          onClick={() => {
-            go("/create")
-            document.getElementById("idea")?.focus()
-          }}
-        />
-        {features.analyser ? (
-          <RoomButton
-            icon={<ScanSearch aria-hidden="true" size={16} />}
-            label="Analyse"
-            live
-            current={page === "analyse"}
-            onClick={() => go("/analyse")}
-          />
-        ) : null}
+        {visibleRooms(features).map((room) => {
+          const Icon = roomIcons[room.room]
+          return (
+            <RoomButton
+              key={room.room}
+              icon={<Icon aria-hidden="true" size={16} />}
+              label={room.label}
+              live={room.room === "create" ? features.create : true}
+              current={page === room.room}
+              onClick={() => {
+                go(room.path)
+                if (room.room === "create") document.getElementById("idea")?.focus()
+              }}
+            />
+          )
+        })}
       </nav>
       <RecentList onOpen={openRecent} />
       <div className="relative mt-auto flex flex-col gap-3">
-        {page === "create" ? <p className="tip-card">Press Build now at any time, your details stay exactly as you said them</p> : null}
+        {showBuildTip(page) ? <p className="tip-card">Press Build now at any time, your details stay exactly as you said them</p> : null}
         <p className="side-level">{level ? `Level: ${levelCopy[level].title}` : "Choose a level"}</p>
         <button
           ref={helpRef}
